@@ -1,0 +1,8 @@
+{
+  "name": "tryitout",
+  "description": "输入你的副业或项目想法，生成AI多智能体角色沙盘，模拟30天推演过程并输出决策评估报告。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
