@@ -1,22 +1,57 @@
-MIT License
+TryItOut Non-Commercial Source License
 
-Copyright (c) 2026 sdflysd
+Copyright (c) 2026 sdflysd. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Required Notice: Copyright (c) 2026 sdflysd. TryItOut is licensed for non-commercial use only unless a separate written commercial license is granted by the copyright holder.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+This repository is source-available, but it is not MIT licensed and it is not open source under the Open Source Definition.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## 1. Grant
+
+You may view, copy, run, study, modify, and distribute this software only for non-commercial purposes, subject to this license.
+
+Permitted non-commercial purposes include:
+
+- personal study, research, experimentation, and evaluation;
+- educational demonstrations and coursework;
+- non-commercial prototypes, hobby projects, and internal learning;
+- public discussion, review, and issue reproduction.
+
+## 2. Commercial Use Requires Permission
+
+You may not use this software for any commercial purpose without a separate written commercial license from the copyright holder.
+
+Commercial use includes, but is not limited to:
+
+- operating the software as part of a paid product, paid service, SaaS, agency delivery, consulting delivery, internal business workflow, lead generation funnel, or client project;
+- selling, sublicensing, white-labeling, renting, leasing, hosting, or reselling the software or any derivative work;
+- using the software to support commercial decision-making, revenue generation, paid reports, paid subscriptions, advertising products, or business operations;
+- embedding the software or substantial portions of it into a commercial application, website, workflow, or product.
+
+Commercial licensing terms are described in `COMMERCIAL-LICENSE.md`.
+
+## 3. Redistribution
+
+If you distribute copies or modified versions for a permitted non-commercial purpose, you must:
+
+- include this license file;
+- preserve the required copyright notice above;
+- clearly mark any material changes you made;
+- not imply that the original author endorses your version.
+
+## 4. No Trademark Or Brand Rights
+
+This license does not grant rights to use the TryItOut name, logo, product identity, screenshots, marketing copy, or other brand assets for commercial purposes.
+
+## 5. No Warranty
+
+The software is provided as-is, without warranty of any kind. The copyright holder is not liable for any claim, damage, loss, cost, or other liability arising from the software or its use.
+
+## 6. Termination
+
+If you violate this license, your rights under this license end immediately. The copyright holder may restore your rights in writing after the violation is corrected.
+
+## 7. Commercial License
+
+For commercial use, private deployment, white-labeling, resale, paid reports, paid SaaS, or client delivery, obtain a written commercial license from the copyright holder before use.
 

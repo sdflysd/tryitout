@@ -4,6 +4,8 @@ This folder contains the React app, Express server, AI gateway, simulation engin
 
 For product context, screenshots, and repository-level setup, see the root [`README.md`](../README.md).
 
+Chinese documentation is available at [`README.zh-CN.md`](../README.zh-CN.md). Current versions of this repository use a non-commercial source license; commercial use requires separate written authorization.
+
 ## Local Development
 
 ```bash

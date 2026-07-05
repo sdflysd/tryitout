@@ -28,3 +28,6 @@ npm run build
 - Do not commit `.env`, logs, debug traces, raw user inputs, or generated model output.
 - Note which AI provider and runtime flags you used when testing AI-related changes.
 
+## License Of Contributions
+
+By submitting a contribution, you agree that your contribution may be distributed under the current project license. This repository is no longer MIT licensed; current versions use the TryItOut Non-Commercial Source License, with separate written authorization required for commercial use.

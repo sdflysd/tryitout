@@ -2,6 +2,8 @@
 
 > Simulate before you decide.
 
+[中文说明](README.zh-CN.md) | [Commercial licensing](COMMERCIAL-LICENSE.md)
+
 TryItOut is a multi-agent decision sandbox for side-hustle ideas, dating conversations, and major life choices. Instead of asking one AI for advice, you drop a real situation into a small simulated world, let multiple AI agents debate the risks and trade-offs, then get a practical report with next steps.
 
 ![TryItOut desktop home](docs/assets/desktop-home-lifeform-starmap.png)
@@ -68,6 +70,9 @@ The goal is not to predict the future. The goal is to make assumptions, risks, h
 ├── docs/
 │   ├── assets/                # Curated README screenshots
 │   └── plans/                 # Design and implementation notes
+├── COMMERCIAL-LICENSE.md      # Commercial licensing terms
+├── LICENSE                    # Current non-commercial source license
+├── README.zh-CN.md
 ├── PRD-人生试错机-搞钱模拟器.md
 └── README.md
 ```
@@ -172,5 +177,8 @@ Generated content is for simulation and decision support only. It is not financi
 
 ## License
 
-MIT
+Current versions of TryItOut are **not MIT licensed**.
 
+This repository is released under the [TryItOut Non-Commercial Source License](LICENSE). You may use it for personal study, research, evaluation, education, and non-commercial experimentation. Commercial use requires a separate written commercial license from the copyright holder.
+
+Commercial use includes SaaS, paid reports, paid subscriptions, client delivery, agency or consulting work, private business deployment, white-labeling, resale, lead generation, or any revenue-related use. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for commercial authorization terms.
