@@ -34,6 +34,12 @@ output/
 frontend/output/
 *.jsonl
 
+# Private planning and product docs
+docs/plans/
+docs/superpowers/plans/
+frontend/docs/plans/
+PRD-*.md
+
 # Test and browser artifacts
 coverage/
 test-results/
