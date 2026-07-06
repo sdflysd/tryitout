@@ -38,6 +38,63 @@ test("createSimulationTask posts to durable task endpoint", async () => {
   assert.equal((calls[0] as { init: RequestInit }).init.method, "POST");
 });
 
+test("createSimulationTask includes credentials and normalizes commercial queued task response", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify({ taskId: "task_1", status: "queued" }), {
+      status: 202,
+    });
+  };
+
+  const result = await createSimulationTask(
+    {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "AI 简历优化",
+      },
+      interactionMode: "legacy",
+    },
+    fetchImpl as typeof fetch,
+  );
+
+  assert.equal(result.simulationId, "task_1");
+  assert.equal(result.status, "queued");
+  assert.equal(calls[0].init?.credentials, "include");
+});
+
+test("commercial task status and report use the same polling shape as progress UI", async () => {
+  const fetchImpl = async (url: string) => {
+    if (url === "/api/simulation-tasks/task_1/status") {
+      return new Response(
+        JSON.stringify({
+          taskId: "task_1",
+          status: "running",
+          scenario: "side_hustle",
+          interactionMode: "enabled",
+          creditCost: 3,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url === "/api/simulation-tasks/task_1/report") {
+      return new Response(JSON.stringify({ report: makeReport("task_1") }), { status: 200 });
+    }
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  const status = await getSimulationTaskStatus("task_1", fetchImpl as typeof fetch);
+  const report = await getSimulationTaskReport("task_1", fetchImpl as typeof fetch);
+
+  assert.equal(status.simulationId, "task_1");
+  assert.equal(status.scenarioType, "side_hustle");
+  assert.equal(status.mode, "enabled");
+  assert.equal(status.progressPercent, 10);
+  assert.equal(report.simulationId, "task_1");
+  assert.equal(report.status, "completed");
+  assert.equal(report.report?.id, "task_1");
+});
+
 test("getSimulationTaskStatus fetches status endpoint", async () => {
   const fetchImpl = async () =>
     new Response(

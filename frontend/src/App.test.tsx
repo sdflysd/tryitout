@@ -27,6 +27,15 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
+test("app can render compact commercial account and credit controls", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(<App commercialMode />);
+
+  assert.match(html, /Commercial account/);
+  assert.match(html, /Access code/);
+  assert.match(html, /Credit balance/);
+});
+
 test("view changes can reset scroll before showing a new workflow", async () => {
   const { scrollToTopForViewChange } = await import("./App.js");
   const calls: ScrollToOptions[] = [];

@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, Sparkles } from "lucide-react";
+import { Flame, KeyRound, LogOut, Sparkles, WalletCards } from "lucide-react";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import HomeView from "./components/HomeView";
@@ -16,6 +16,18 @@ import {
   getNextLanguage,
   parseStoredLanguage,
 } from "./language";
+import {
+  getSimulationCreditCost,
+} from "./contracts/commercial";
+import {
+  getCommercialCredits,
+  getCommercialUser,
+  loginCommercialUser,
+  logoutCommercialUser,
+  redeemCommercialAccessCode,
+  registerCommercialUser,
+  type CommercialUser,
+} from "./commercial-client";
 import { buildSimulationRequestBody } from "./simulation-request";
 import {
   buildSimulationCompletedEvent,
@@ -37,6 +49,10 @@ import { postValidationEvent } from "./validation-events";
 import type { ClientValidationEvent } from "./validation-events";
 
 type ViewState = "home" | "input" | "generating" | "report";
+
+interface AppProps {
+  commercialMode?: boolean;
+}
 
 export const HISTORY_STORAGE_KEY = "money_simulator_history";
 export const LAST_INPUT_DRAFT_STORAGE_KEY = "money_simulator_last_input_draft";
@@ -96,7 +112,7 @@ export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidat
   };
 }
 
-export default function App() {
+export default function App({ commercialMode = isCommercialClientModeEnabled() }: AppProps = {}) {
   const [view, setView] = useState<ViewState>("home");
   const [historyList, setHistoryList] = useState<Simulation[]>([]);
   const [currentSimulation, setCurrentSimulation] = useState<Simulation | null>(null);
@@ -112,6 +128,12 @@ export default function App() {
   const [deepModeNotice, setDeepModeNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<AgentRuntimeCapabilities | undefined>(undefined);
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
+  const [commercialUser, setCommercialUser] = useState<CommercialUser | undefined>(undefined);
+  const [creditBalance, setCreditBalance] = useState(0);
+  const [commercialEmail, setCommercialEmail] = useState("");
+  const [commercialPassword, setCommercialPassword] = useState("");
+  const [accessCode, setAccessCode] = useState("");
+  const [commercialMessage, setCommercialMessage] = useState("");
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
     deepModeRequested: boolean;
@@ -137,6 +159,27 @@ export default function App() {
       console.error("Failed to load history from localStorage:", e);
     }
   }, []);
+
+  useEffect(() => {
+    if (!commercialMode) return;
+
+    let cancelled = false;
+    void refreshCommercialAccount()
+      .catch(() => undefined);
+
+    async function refreshCommercialAccount() {
+      const userResult = await getCommercialUser();
+      if (cancelled) return;
+      setCommercialUser(userResult.user);
+      const credits = await getCommercialCredits();
+      if (cancelled) return;
+      setCreditBalance(credits.balance);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [commercialMode]);
 
   useEffect(() => {
     try {
@@ -383,10 +426,59 @@ export default function App() {
   };
 
   const handleSubmitSimulation = (input: UserInput) => {
+    if (commercialMode && creditBalance < requiredCredits) {
+      setErrorMsg("insufficient_credits");
+      return;
+    }
     setSelectedType(input.type);
     setTemplateInput(input);
     void handleStartSimulation(input);
   };
+
+  const handleCommercialAuth = async (mode: "login" | "register") => {
+    setCommercialMessage("");
+    try {
+      const result = mode === "login"
+        ? await loginCommercialUser({
+            email: commercialEmail,
+            password: commercialPassword,
+          })
+        : await registerCommercialUser({
+            email: commercialEmail,
+            password: commercialPassword,
+          });
+      setCommercialUser(result.user);
+      const credits = await getCommercialCredits();
+      setCreditBalance(credits.balance);
+      setCommercialPassword("");
+    } catch (error) {
+      setCommercialMessage(error instanceof Error ? error.message : "auth_failed");
+    }
+  };
+
+  const handleRedeemAccessCode = async (event: FormEvent) => {
+    event.preventDefault();
+    setCommercialMessage("");
+    try {
+      const result = await redeemCommercialAccessCode(accessCode);
+      setCreditBalance(result.balance);
+      setAccessCode("");
+      setCommercialMessage("Access code redeemed.");
+    } catch (error) {
+      setCommercialMessage(error instanceof Error ? error.message : "redeem_failed");
+    }
+  };
+
+  const handleCommercialLogout = async () => {
+    await logoutCommercialUser();
+    setCommercialUser(undefined);
+    setCreditBalance(0);
+  };
+
+  const requiredCredits = getSimulationCreditCost({
+    interactionMode: deepAgentMode ? "enabled" : "legacy",
+    providerMode: "platform",
+  });
 
   const handleOpenShareCard = () => {
     if (currentSimulation) {
@@ -439,6 +531,100 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {commercialMode && (
+        <section
+          id="commercial-account-bar"
+          className="border-b border-white/10 bg-[#0a0f1f] px-4 py-3 text-white"
+          aria-label="Commercial account"
+        >
+          <div className="mx-auto grid max-w-4xl gap-3 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <div className="inline-flex items-center gap-2 text-xs font-black text-white/80">
+                <WalletCards className="h-4 w-4 text-emerald-300" />
+                <span>Commercial account</span>
+              </div>
+              <span className="inline-flex w-fit items-center gap-1 rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">
+                Credit balance: {creditBalance}
+              </span>
+              {commercialUser ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/66">
+                  <span>{commercialUser.email}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleCommercialLogout()}
+                    className="inline-flex min-h-9 items-center gap-1 rounded-md border border-white/12 bg-white/7 px-2 text-white/70 transition-colors hover:bg-white/12"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="sr-only" htmlFor="commercial-email">Email</label>
+                  <input
+                    id="commercial-email"
+                    type="email"
+                    value={commercialEmail}
+                    onChange={(event) => setCommercialEmail(event.target.value)}
+                    placeholder="Email"
+                    className="h-9 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
+                  />
+                  <label className="sr-only" htmlFor="commercial-password">Password</label>
+                  <input
+                    id="commercial-password"
+                    type="password"
+                    value={commercialPassword}
+                    onChange={(event) => setCommercialPassword(event.target.value)}
+                    placeholder="Password"
+                    className="h-9 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleCommercialAuth("login")}
+                      className="h-9 rounded-md bg-amber-300 px-3 text-xs font-black text-slate-950 transition-colors hover:bg-amber-200"
+                    >
+                      Login
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCommercialAuth("register")}
+                      className="h-9 rounded-md border border-white/14 bg-white/8 px-3 text-xs font-black text-white transition-colors hover:bg-white/12"
+                    >
+                      Register
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <form onSubmit={handleRedeemAccessCode} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="inline-flex items-center gap-2 text-xs font-black text-white/72" htmlFor="commercial-access-code">
+                <KeyRound className="h-4 w-4 text-amber-300" />
+                <span>Access code</span>
+              </label>
+              <input
+                id="commercial-access-code"
+                value={accessCode}
+                onChange={(event) => setAccessCode(event.target.value)}
+                placeholder="TIO-XXXX-XXXX-XXXX"
+                className="h-9 min-w-0 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
+              />
+              <button
+                type="submit"
+                className="h-9 rounded-md bg-emerald-400 px-3 text-xs font-black text-emerald-950 transition-colors hover:bg-emerald-300"
+              >
+                Redeem
+              </button>
+            </form>
+            {commercialMessage && (
+              <div className="text-xs font-semibold text-amber-100" aria-live="polite">
+                {commercialMessage}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Main Container */}
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
@@ -494,6 +680,9 @@ export default function App() {
                 onDeepAgentModeChange={setDeepAgentMode}
                 runtimeCapabilities={runtimeCapabilities}
                 language={language}
+                commercialMode={commercialMode}
+                creditBalance={creditBalance}
+                requiredCredits={requiredCredits}
               />
             </motion.div>
           )}
@@ -568,4 +757,10 @@ export default function App() {
       </AnimatePresence>
     </div>
   );
+}
+
+function isCommercialClientModeEnabled(): boolean {
+  const metaEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  const value = metaEnv?.VITE_COMMERCIAL_MODE_ENABLED?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes";
 }

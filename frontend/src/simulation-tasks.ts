@@ -8,6 +8,7 @@ import type {
   SimulationApiResponse,
   SimulationProgressEvent,
   SimulationProgressStep,
+  SimulationType,
 } from "./types";
 
 export async function createSimulationTask(
@@ -17,9 +18,11 @@ export async function createSimulationTask(
   return readJsonResponse(
     await fetchImpl("/api/simulation-tasks", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     }),
+    normalizeCreateSimulationTaskResponse,
   );
 }
 
@@ -28,7 +31,10 @@ export async function getSimulationTaskStatus(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SimulationTaskStatusResponse> {
   return readJsonResponse(
-    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/status`),
+    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/status`, {
+      credentials: "include",
+    }),
+    normalizeSimulationTaskStatusResponse,
   );
 }
 
@@ -37,7 +43,10 @@ export async function getSimulationTaskReport(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SimulationReportResponse> {
   return readJsonResponse(
-    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/report`),
+    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/report`, {
+      credentials: "include",
+    }),
+    normalizeSimulationReportResponse,
   );
 }
 
@@ -48,6 +57,7 @@ export async function resumeSimulationTask(
   return readJsonResponse(
     await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/resume`, {
       method: "POST",
+      credentials: "include",
     }),
   );
 }
@@ -59,7 +69,9 @@ export async function cancelSimulationTask(
   return readJsonResponse(
     await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/cancel`, {
       method: "POST",
+      credentials: "include",
     }),
+    normalizeSimulationTaskStatusResponse,
   );
 }
 
@@ -193,7 +205,10 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readJsonResponse<T>(response: Response): Promise<T> {
+async function readJsonResponse<T>(
+  response: Response,
+  normalize?: (body: unknown) => T,
+): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message =
@@ -201,5 +216,93 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
     throw new Error(message);
   }
 
-  return body as T;
+  return normalize ? normalize(body) : body as T;
+}
+
+interface CommercialCreateTaskResponse {
+  taskId: string;
+  status: string;
+}
+
+interface CommercialTaskStatusResponse {
+  taskId: string;
+  status: string;
+  scenario: SimulationType;
+  interactionMode: "legacy" | "enabled";
+  creditCost: number;
+  reportId?: string;
+  errorCode?: string;
+}
+
+function normalizeCreateSimulationTaskResponse(body: unknown): CreateSimulationTaskResponse {
+  const commercial = body as Partial<CommercialCreateTaskResponse>;
+  if (typeof commercial.taskId === "string") {
+    return {
+      simulationId: commercial.taskId,
+      status: normalizeTaskStatus(commercial.status),
+    };
+  }
+
+  return body as CreateSimulationTaskResponse;
+}
+
+function normalizeSimulationTaskStatusResponse(body: unknown): SimulationTaskStatusResponse {
+  const commercial = body as Partial<CommercialTaskStatusResponse>;
+  if (typeof commercial.taskId === "string") {
+    return {
+      simulationId: commercial.taskId,
+      scenarioType: commercial.scenario ?? "side_hustle",
+      mode: commercial.interactionMode ?? "legacy",
+      status: normalizeTaskStatus(commercial.status),
+      currentStageIndex: commercial.status === "completed" ? undefined : 1,
+      currentStepName: commercial.status === "completed" ? "generate_report" : "generate_agents",
+      progressPercent: getCommercialTaskProgressPercent(commercial.status),
+      recoverable: commercial.status === "failed",
+      errorCode: commercial.errorCode,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  return body as SimulationTaskStatusResponse;
+}
+
+function normalizeSimulationReportResponse(body: unknown): SimulationReportResponse {
+  const reportBody = body as Partial<SimulationReportResponse> & {
+    report?: SimulationApiResponse;
+  };
+  if (!("simulationId" in reportBody) && reportBody.report?.id) {
+    return {
+      simulationId: reportBody.report.id,
+      status: "completed",
+      report: reportBody.report,
+    };
+  }
+
+  return body as SimulationReportResponse;
+}
+
+function normalizeTaskStatus(status: unknown): CreateSimulationTaskResponse["status"] {
+  if (
+    status === "queued" ||
+    status === "running" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+  ) {
+    return status;
+  }
+  if (status === "refunded") {
+    return "cancelled";
+  }
+  return "queued";
+}
+
+function getCommercialTaskProgressPercent(status: unknown): number {
+  if (status === "completed") {
+    return 100;
+  }
+  if (status === "failed" || status === "cancelled") {
+    return 100;
+  }
+  return 10;
 }

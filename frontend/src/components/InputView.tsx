@@ -39,6 +39,9 @@ interface InputViewProps {
   onDeepAgentModeChange?: (enabled: boolean) => void;
   runtimeCapabilities?: AgentRuntimeCapabilities;
   language?: Language;
+  commercialMode?: boolean;
+  creditBalance?: number;
+  requiredCredits?: number;
 }
 
 interface InputViewInitialState {
@@ -489,6 +492,9 @@ export default function InputView({
   onDeepAgentModeChange,
   runtimeCapabilities,
   language = DEFAULT_LANGUAGE,
+  commercialMode = false,
+  creditBalance,
+  requiredCredits = 1,
 }: InputViewProps) {
   // Side Hustle States
   const [projectIdea, setProjectIdea] = useState("");
@@ -530,6 +536,11 @@ export default function InputView({
     ? getDeepModeDisabledCopy(runtimeCapabilities.reason, language)
     : deepModeCopy.description;
   const privacySafetyCopy = getPrivacySafetyCopy(language);
+  const hasInsufficientCredits =
+    commercialMode &&
+    typeof creditBalance === "number" &&
+    creditBalance < requiredCredits;
+  const simulationSubmitDisabled = isGenerating || hasInsufficientCredits;
 
   useEffect(() => {
     if (!initialInput) return;
@@ -1647,6 +1658,26 @@ export default function InputView({
 
         {/* Submit Action */}
         <div id="form-actions" className="pt-4 space-y-4">
+          {commercialMode && (
+            <div
+              id="commercial-credit-gate"
+              className={`rounded-xl border p-3 text-xs font-semibold ${
+                hasInsufficientCredits
+                  ? "border-rose-200 bg-rose-50 text-rose-800"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              }`}
+              aria-live="polite"
+            >
+              <span className="block font-black">
+                {requiredCredits} credits required
+              </span>
+              <span className="mt-1 block">
+                {hasInsufficientCredits
+                  ? "Redeem an access code or choose a lower-cost mode before starting."
+                  : `Credit balance: ${creditBalance ?? 0}`}
+              </span>
+            </div>
+          )}
           <label className="flex items-start gap-3 bg-gray-50 border border-gray-150 rounded-2xl p-4 cursor-pointer">
             <input
               type="checkbox"
@@ -1663,9 +1694,9 @@ export default function InputView({
           <button
             id="btn-trigger-simulation"
             type="submit"
-            disabled={isGenerating}
+            disabled={simulationSubmitDisabled}
             className={`w-full inline-flex items-center justify-center gap-2.5 text-white font-bold px-8 py-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-155 active:scale-98 cursor-pointer text-base ${
-              isGenerating ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
+              simulationSubmitDisabled ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
             }`}
           >
             <Play className="w-5 h-5 fill-white" />

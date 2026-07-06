@@ -207,3 +207,23 @@ test("deep mode toggle explains unavailable server capability", () => {
   assert.match(html, /服务端未启用深度 Agent 模式/);
   assert.match(html, /disabled=""/);
 });
+
+test("commercial insufficient credits disables simulation submission with user-facing copy", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      creditBalance={0}
+      requiredCredits={3}
+      commercialMode
+      language="en-US"
+    />,
+  );
+
+  assert.match(html, /3 credits required/);
+  assert.match(html, /Redeem an access code or choose a lower-cost mode/);
+  assert.match(html, /disabled=""/);
+});
