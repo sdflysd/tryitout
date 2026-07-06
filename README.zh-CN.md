@@ -142,6 +142,43 @@ ENABLE_AGENT_INTERACTION_MODE="true"
 
 深度模式会产生更多模型调用，因此更慢，也更贵。
 
+### 商用 MVP 模式
+
+商用模式是付费路径，不是内存演示路径。开启后账号、服务端 session、访问码、积分、任务、报告、反馈、分析事件、系统设置和审计日志都必须落到 Postgres；队列必须使用 Redis/BullMQ。
+
+同时开启服务端和前端标记：
+
+```bash
+COMMERCIAL_MODE_ENABLED="true"
+VITE_COMMERCIAL_MODE_ENABLED="true"
+```
+
+必需的外部服务和密钥：
+
+```bash
+DATABASE_URL="postgres://tryitout:tryitout@localhost:5432/tryitout"
+REDIS_URL="redis://localhost:6379"
+SESSION_SECRET="long-random-secret"
+ACCESS_CODE_PEPPER="long-random-pepper"
+USER_SECRET_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+迁移文件在 `frontend/db/migrations/`，按文件名顺序执行；数据库说明见 [`frontend/db/README.md`](frontend/db/README.md)。缺少必需环境变量时，商用模式启动会直接失败。
+
+商用任务必须有服务端 session、足够积分和事务化 credit hold。`COMMERCIAL_MODE_ENABLED=true` 时，未认证的旧版 `/api/simulation-tasks`、`/api/simulations`、`/api/simulations/stream` 不允许绕过积分路径。
+
+队列和价格配置：
+
+```bash
+MAX_WEIGHTED_CONCURRENCY="6"
+PLATFORM_LEGACY_CREDIT_COST="1"
+PLATFORM_DEEP_CREDIT_COST="3"
+BYOK_LEGACY_CREDIT_COST="1"
+BYOK_DEEP_CREDIT_COST="2"
+```
+
+BYOK 自定义模型服务只开放给带有 `custom_model_provider` 权益的用户。用户 API Key 使用 `USER_SECRET_ENCRYPTION_KEY` 做 AES-GCM 加密；Provider URL 必须是 HTTPS、显式允许的 Host，且不能指向 localhost、私网、链路本地地址、云元数据 IP 或不安全重定向。
+
 ## 常用命令
 
 在 `frontend/` 目录运行：
@@ -157,7 +194,7 @@ npm start        # 运行构建后的服务
 ## 当前验证状态
 
 - `npm run lint` 通过。
-- `npm test` 通过，306 个测试全部通过。
+- `npm test` 通过，商用 MVP 分支已扩展到 400+ 个测试。
 - `npm run build` 通过。当前 Vite 会提示主 JS chunk 超过 500 kB，这是后续性能优化项，不影响当前发布。
 
 ## 隐私与安全
