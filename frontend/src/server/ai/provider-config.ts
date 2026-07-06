@@ -2,7 +2,7 @@ import { AnthropicAdapter } from "./adapters/anthropic.adapter.js";
 import { GeminiAdapter } from "./adapters/gemini.adapter.js";
 import { OpenAiCompatibleAdapter } from "./adapters/openai-compatible.adapter.js";
 import type { AiProviderAdapter } from "./adapters/provider-adapter.js";
-import type { AiProviderType, ModelQuality } from "./types.js";
+import type { AiProviderType, ModelProfile, ModelQuality } from "./types.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -113,6 +113,72 @@ export function createProviderAdapters(env: Env = process.env): AiProviderAdapte
   }
 
   return adapters;
+}
+
+export function createOpenAiCompatibleProviderAdapter(input: {
+  apiKey: string;
+  baseUrl: string;
+}): AiProviderAdapter {
+  return new OpenAiCompatibleAdapter({
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+}
+
+export function createUserOpenAiCompatibleProfile(input: {
+  quality: ModelQuality;
+  baseUrl: string;
+  model: string;
+}): ModelProfile {
+  const maxOutputTokens = input.quality === "fast"
+    ? 4_096
+    : input.quality === "balanced"
+      ? 8_192
+      : 16_384;
+  const baseUrl = input.baseUrl.trim().replace(/\/+$/, "");
+  return {
+    id: `user_openai_compatible_${input.quality}`,
+    name: `User OpenAI Compatible ${input.quality}`,
+    provider: "openai_compatible",
+    displayName: input.quality === "fast" ? "Fast" : input.quality === "balanced" ? "Standard" : "Deep",
+    modelId: input.model,
+    visibleToUser: false,
+    allowUserModelOverride: false,
+    allowUserApiKey: true,
+    allowCustomBaseUrl: true,
+    allowedBaseUrls: [baseUrl],
+    baseUrl,
+    capabilities: {
+      supportsJsonMode: true,
+      supportsStructuredOutput: true,
+      supportsStreaming: true,
+      supportsVision: false,
+      supportsToolUse: false,
+      supportsSystemPrompt: true,
+      supportsReasoningEffort: false,
+      supportsThinking: false,
+      maxInputTokens: 128_000,
+      maxOutputTokens,
+      recommendedForLongReport: input.quality !== "fast",
+      recommendedForFastTasks: input.quality === "fast",
+      recommendedForDeepSimulation: input.quality === "deep",
+    },
+    defaults: {
+      maxOutputTokens,
+      quality: input.quality,
+      responseFormat: "json",
+      stream: true,
+      timeoutMs: input.quality === "fast" ? 30_000 : 120_000,
+      maxRetries: input.quality === "deep" ? 1 : 3,
+    },
+    limits: {
+      maxInputChars: 20_000,
+      maxOutputTokens,
+    },
+    status: "active",
+    createdAt: "2026-07-06T00:00:00.000Z",
+    updatedAt: "2026-07-06T00:00:00.000Z",
+  };
 }
 
 export function getMissingProviderConfigMessage(

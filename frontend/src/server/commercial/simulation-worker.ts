@@ -1,18 +1,22 @@
 import type { Report } from "../../types.js";
-import type { CommercialTaskStatusDto } from "./commercial-task-service.js";
+import type { CommercialTaskProviderRuntime, CommercialTaskStatusDto } from "./commercial-task-service.js";
 import type { SimulationQueueJob, WeightedConcurrencyLimiter } from "./simulation-queue.js";
 
 export interface CommercialSimulationWorkerTaskService {
   markRunning(taskId: string): Promise<CommercialTaskStatusDto>;
   markCompleted(input: { taskId: string; report: Report }): Promise<CommercialTaskStatusDto>;
   markFailed(input: { taskId: string; errorCode: string }): Promise<CommercialTaskStatusDto>;
+  resolveProviderForTask(taskId: string): Promise<CommercialTaskProviderRuntime>;
 }
 
 export interface RunCommercialSimulationQueueJobInput {
   job: SimulationQueueJob;
   taskService: CommercialSimulationWorkerTaskService;
   limiter: WeightedConcurrencyLimiter;
-  runSimulation: (job: SimulationQueueJob) => Promise<Report>;
+  runSimulation: (
+    job: SimulationQueueJob,
+    providerRuntime: CommercialTaskProviderRuntime,
+  ) => Promise<Report>;
 }
 
 export type CommercialSimulationWorkerResult =
@@ -33,7 +37,8 @@ export async function runCommercialSimulationQueueJob(
 
   try {
     await input.taskService.markRunning(input.job.data.taskId);
-    const report = await input.runSimulation(input.job);
+    const providerRuntime = await input.taskService.resolveProviderForTask(input.job.data.taskId);
+    const report = await input.runSimulation(input.job, providerRuntime);
     await input.taskService.markCompleted({
       taskId: input.job.data.taskId,
       report,

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { runCommercialSimulationQueueJob } from "./simulation-worker.js";
 import { WeightedConcurrencyLimiter, type SimulationQueueJob } from "./simulation-queue.js";
-import type { CommercialTaskStatusDto } from "./commercial-task-service.js";
+import type { CommercialTaskProviderRuntime, CommercialTaskStatusDto } from "./commercial-task-service.js";
 import type { Report } from "../../types.js";
 
 const sampleReport: Report = {
@@ -31,6 +31,7 @@ const sampleReport: Report = {
 class FakeTaskService {
   calls: string[] = [];
   completedCount = 0;
+  providerRuntime: CommercialTaskProviderRuntime = { providerMode: "platform" };
 
   async markRunning(taskId: string): Promise<CommercialTaskStatusDto> {
     this.calls.push(`running:${taskId}`);
@@ -46,6 +47,10 @@ class FakeTaskService {
   async markFailed(input: { taskId: string; errorCode: string }): Promise<CommercialTaskStatusDto> {
     this.calls.push(`failed:${input.taskId}:${input.errorCode}`);
     return status(input.taskId, "failed");
+  }
+
+  async resolveProviderForTask(_taskId: string): Promise<CommercialTaskProviderRuntime> {
+    return this.providerRuntime;
   }
 }
 
@@ -107,6 +112,51 @@ test("worker marks task running before calling simulation and completes on succe
   assert.equal(result.status, "completed");
   assert.deepEqual(taskService.calls, ["running:task_1", "completed:task_1:Launch"]);
   assert.deepEqual(calls, ["simulation"]);
+});
+
+test("worker passes BYOK provider runtime to simulation execution", async () => {
+  const limiter = new WeightedConcurrencyLimiter(3);
+  const taskService = new FakeTaskService();
+  taskService.providerRuntime = {
+    providerMode: "byok",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    apiKey: "sk-user-secret",
+  };
+  const seenProviders: CommercialTaskProviderRuntime[] = [];
+
+  const result = await runCommercialSimulationQueueJob({
+    job: job(1),
+    taskService,
+    limiter,
+    runSimulation: async (_job, providerRuntime) => {
+      seenProviders.push(providerRuntime);
+      return sampleReport;
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(seenProviders, [taskService.providerRuntime]);
+});
+
+test("worker marks failed when BYOK provider resolution fails", async () => {
+  const limiter = new WeightedConcurrencyLimiter(3);
+  const taskService = new FakeTaskService();
+  taskService.resolveProviderForTask = async () => {
+    throw new Error("missing provider");
+  };
+
+  const result = await runCommercialSimulationQueueJob({
+    job: job(1),
+    taskService,
+    limiter,
+    runSimulation: async () => sampleReport,
+  });
+
+  assert.equal(result.status, "failed");
+  assert.deepEqual(taskService.calls, ["running:task_1", "failed:task_1:provider_error"]);
+  assert.equal(limiter.activeWeight, 0);
 });
 
 test("worker calls markFailed on provider errors", async () => {

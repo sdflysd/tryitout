@@ -6,12 +6,14 @@ import {
   CommercialSimulationTaskServiceError,
 } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
+import { ModelProviderService } from "./model-provider-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue, type EnqueueSimulationJobInput, type SimulationQueueJob } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
 import type { Report } from "../../types.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
+const masterKey = Buffer.alloc(32, 3).toString("base64");
 
 const sampleReport: Report = {
   projectName: "Launch",
@@ -41,13 +43,20 @@ class FailingQueue extends InMemorySimulationQueue {
   }
 }
 
-async function seedUser(repository: CommercialRepository, options: { disabled?: boolean } = {}): Promise<void> {
+async function seedUser(
+  repository: CommercialRepository,
+  options: {
+    disabled?: boolean;
+    tier?: "basic" | "pro" | "business";
+    features?: Array<"custom_model_provider">;
+  } = {},
+): Promise<void> {
   await repository.saveUser({
     id: "user_1",
     email: "founder@tryitout.ai",
     passwordHash: "hash",
-    tier: "basic",
-    features: [],
+    tier: options.tier ?? "basic",
+    features: options.features ?? [],
     isAdmin: false,
     disabledAt: options.disabled ? now : undefined,
     createdAt: now,
@@ -64,6 +73,9 @@ async function seedUser(repository: CommercialRepository, options: { disabled?: 
 function createService(
   repository = new InMemoryCommercialRepository(),
   queue = new InMemorySimulationQueue(),
+  options: {
+    modelProviderService?: ModelProviderService;
+  } = {},
 ): CommercialSimulationTaskService {
   const creditService = new CreditService(repository, {
     accessCodePepper: "pepper",
@@ -71,6 +83,7 @@ function createService(
   });
   return new CommercialSimulationTaskService(repository, creditService, queue, {
     now: () => now,
+    modelProviderService: options.modelProviderService,
   });
 }
 
@@ -214,8 +227,25 @@ test("completing and failing tasks settle held credits once without exposing use
 
 test("retrying a failed task creates a new hold and queue job", async () => {
   const repository = new InMemoryCommercialRepository();
-  await seedUser(repository);
-  const service = createService(repository);
+  await seedUser(repository, {
+    tier: "pro",
+    features: ["custom_model_provider"],
+  });
+  const modelProviderService = new ModelProviderService(repository, {
+    masterKey,
+    now: () => now,
+    allowedHosts: ["api.openai.com"],
+  });
+  await modelProviderService.saveProvider({
+    userId: "user_1",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    apiKey: "sk-user-secret",
+  });
+  const service = createService(repository, new InMemorySimulationQueue(), {
+    modelProviderService,
+  });
 
   const created = await service.createTask({
     userId: "user_1",
@@ -232,4 +262,90 @@ test("retrying a failed task creates a new hold and queue job", async () => {
   assert.equal((await repository.getCommercialTask(retried.taskId))?.providerMode, "byok");
   assert.equal((await repository.getCommercialTask(retried.taskId))?.creditCost, 2);
   assert.equal((await repository.getCommercialTask(retried.taskId))?.status, "queued");
+});
+
+test("BYOK tasks require custom model provider entitlement", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await seedUser(repository, { tier: "basic" });
+  const service = createService(repository);
+
+  await assert.rejects(
+    service.createTask({
+      userId: "user_1",
+      scenario: "side_hustle",
+      userInput: "launch",
+      interactionMode: "legacy",
+      providerMode: "byok",
+    }),
+    new CommercialSimulationTaskServiceError(
+      "custom_provider_not_allowed",
+      "User is not entitled to custom model providers.",
+    ),
+  );
+  assert.equal((await repository.getCreditAccount("user_1"))?.balance, 10);
+});
+
+test("BYOK provider configuration failures release held credits", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await seedUser(repository, {
+    tier: "pro",
+    features: ["custom_model_provider"],
+  });
+  const service = createService(repository);
+
+  await assert.rejects(
+    service.createTask({
+      userId: "user_1",
+      scenario: "side_hustle",
+      userInput: "launch",
+      interactionMode: "enabled",
+      providerMode: "byok",
+    }),
+    new CommercialSimulationTaskServiceError("provider_not_found", "BYOK provider was not found."),
+  );
+
+  assert.equal((await repository.getCreditAccount("user_1"))?.balance, 10);
+  assert.equal((await repository.listLedgerEntriesForUser("user_1")).filter((entry) => entry.type === "hold").length, 1);
+  assert.equal((await repository.listLedgerEntriesForUser("user_1")).filter((entry) => entry.type === "release").length, 1);
+});
+
+test("BYOK tasks record provider mode and expose decrypted provider metadata", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await seedUser(repository, {
+    tier: "pro",
+    features: ["custom_model_provider"],
+  });
+  const modelProviderService = new ModelProviderService(repository, {
+    masterKey,
+    now: () => now,
+    allowedHosts: ["api.openai.com"],
+  });
+  await modelProviderService.saveProvider({
+    userId: "user_1",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    apiKey: "sk-user-secret",
+  });
+  const service = createService(repository, new InMemorySimulationQueue(), {
+    modelProviderService,
+  });
+
+  const created = await service.createTask({
+    userId: "user_1",
+    scenario: "side_hustle",
+    userInput: "launch",
+    interactionMode: "legacy",
+    providerMode: "byok",
+  });
+  const provider = await service.resolveProviderForTask(created.taskId);
+
+  assert.equal((await repository.getCommercialTask(created.taskId))?.providerMode, "byok");
+  assert.deepEqual(provider, {
+    providerMode: "byok",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    apiKey: "sk-user-secret",
+  });
 });
