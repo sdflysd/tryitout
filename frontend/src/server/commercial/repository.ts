@@ -186,6 +186,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       .map((task) => cloneRecord(task));
   }
 
+  async listCommercialTasksForUserForTest(userId: string): Promise<CommercialSimulationTaskRecord[]> {
+    return [...this.tasks.values()]
+      .filter((task) => task.userId === userId)
+      .map((task) => cloneRecord(task));
+  }
+
   async saveSimulationReport(report: SimulationReportRecord): Promise<void> {
     this.reports.set(report.id, cloneRecord(report));
   }
