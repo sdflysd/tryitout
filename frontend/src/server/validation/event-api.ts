@@ -1,8 +1,13 @@
 import { appendValidationEvent, sanitizeValidationEvent } from "./event-store.js";
 import type { ValidationEvent } from "./event-store.js";
+import {
+  analyticsRecordToValidationEvent,
+  type AnalyticsService,
+} from "../commercial/analytics-service.js";
 
 interface Deps {
   appendEvent?: (event: unknown) => Promise<ValidationEvent>;
+  analyticsService?: Pick<AnalyticsService, "recordValidationEvent">;
 }
 
 export async function handleValidationEventRequest(
@@ -12,7 +17,9 @@ export async function handleValidationEventRequest(
   try {
     const appendEvent = deps.appendEvent ?? appendValidationEvent;
     const sanitized = sanitizeValidationEvent(body);
-    const event = await appendEvent(sanitized);
+    const event = deps.analyticsService
+      ? analyticsRecordToValidationEvent(await deps.analyticsService.recordValidationEvent(sanitized))
+      : await appendEvent(sanitized);
     return { status: 200, body: { ok: true, event } };
   } catch (error) {
     return {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { CommercialAdminService } from "./admin-service.js";
 import { CommercialAdminServiceError } from "./admin-service.js";
+import type { AnalyticsService } from "./analytics-service.js";
 import type { CommercialAuthService, PublicCommercialUser } from "./auth-service.js";
 import { CommercialAuthServiceError } from "./auth-service.js";
 import type { CommercialSimulationTaskService } from "./commercial-task-service.js";
@@ -17,6 +18,7 @@ export interface CommercialApiServices {
   creditService: CreditService;
   taskService: CommercialSimulationTaskService;
   adminService?: CommercialAdminService;
+  analyticsService?: AnalyticsService;
 }
 
 export interface CommercialApiOptions {

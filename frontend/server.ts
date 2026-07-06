@@ -303,7 +303,9 @@ async function runDurableCompatibilityTask(simulationId: string): Promise<void> 
 }
 
 app.post("/api/validation/events", async (req, res) => {
-  const result = await handleValidationEventRequest(req.body);
+  const result = await handleValidationEventRequest(req.body, {
+    analyticsService: commercialServices?.analyticsService,
+  });
   res.status(result.status).json(result.body);
 });
 

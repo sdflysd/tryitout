@@ -217,6 +217,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     this.analyticsEvents.push(cloneRecord(event));
   }
 
+  async listAnalyticsEventsForTest(): Promise<AnalyticsEventRecord[]> {
+    return this.analyticsEvents.map((event) => cloneRecord(event));
+  }
+
   async appendAdminAuditLog(entry: AdminAuditLogRecord): Promise<void> {
     this.auditLogs.push(cloneRecord(entry));
   }

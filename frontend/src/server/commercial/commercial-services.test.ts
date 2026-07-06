@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BullMqSimulationQueue } from "./bullmq-simulation-queue.js";
+import { AnalyticsService } from "./analytics-service.js";
 import {
   createCommercialServices,
   getMissingCommercialEnvironmentKeys,
@@ -66,6 +67,7 @@ test("commercial service factory builds Postgres, BullMQ, auth, credit, and task
   assert.ok(services.authService instanceof CommercialAuthService);
   assert.ok(services.creditService instanceof CreditService);
   assert.ok(services.taskService instanceof CommercialSimulationTaskService);
+  assert.ok(services.analyticsService instanceof AnalyticsService);
 });
 
 class InMemoryQueueLike {
