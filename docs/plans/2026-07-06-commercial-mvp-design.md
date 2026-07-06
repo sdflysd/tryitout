@@ -9,13 +9,14 @@ Current repository constraints:
 - The project currently runs as a React + Express app with a local Node server.
 - Existing simulation tasks and reports are file-backed, which is useful for local development but not enough for commercial operation.
 - Current task execution starts background simulations directly from the API process, without queue-level backpressure.
+- Current unauthenticated simulation endpoints must become demo-only or be routed through the commercial task service when commercial mode is enabled; otherwise users can bypass credits.
 - The repository license is non-commercial source-available. Commercial operation must be handled by the copyright holder or a separate written commercial license.
 
 ## Goals
 
 - Let a small paid beta cohort register, redeem access codes, and generate reports.
 - Keep model cost and queue pressure controllable even if many users choose deep agent mode.
-- Add a real admin foundation for cards, users, tasks, feedback, traffic, and operating metrics.
+- Add a real admin foundation for access codes, users, tasks, feedback, traffic, and operating metrics.
 - Support account tiers so higher-tier users can configure their own model provider and API key.
 - Preserve the existing simulation engine while replacing the commercial-critical storage and execution path.
 
@@ -31,7 +32,7 @@ Current repository constraints:
 
 Use a Web/API service plus worker queue plus database architecture.
 
-The Web/API service handles pages, authentication, access-code redemption, balance checks, task creation, admin APIs, and status polling. Simulation Workers consume queued jobs and call the existing multi-agent simulation engine. Postgres stores users, credits, cards, tasks, reports, feedback, analytics events, and admin audit logs. Redis/BullMQ manages task queues, retries, and weighted concurrency.
+The Web/API service handles pages, authentication, access-code redemption, balance checks, task creation, admin APIs, and status polling. Simulation Workers consume queued jobs and call the existing multi-agent simulation engine. Postgres stores users, credits, access codes, tasks, reports, feedback, analytics events, and admin audit logs. Redis/BullMQ manages task queues, retries, and weighted concurrency.
 
 This is the recommended route over a pure single-process app because credits, user balances, paid tasks, refunds, and admin operations need reliable transactional state. It is also better than building a full operations platform first, because the MVP still needs to validate whether users will pay for reports.
 
@@ -44,17 +45,25 @@ Runtime roles:
 - Postgres: source of truth for accounts, access codes, credits, tasks, reports, feedback, and events.
 - Redis/BullMQ: queue, retry, scheduling, and weighted concurrency control.
 
+Commercial mode requirements:
+
+- Postgres and Redis are required for paid beta mode. In-memory stores are allowed only as unit-test fakes or non-commercial local demos.
+- The app must fail startup in commercial mode if `DATABASE_URL`, `REDIS_URL`, session secret, access-code pepper, or encryption key are missing.
+- Existing local/demo endpoints (`/api/simulations`, `/api/simulations/stream`, and the current file-backed `/api/simulation-tasks`) must be disabled, protected, or explicitly routed through the commercial service while `COMMERCIAL_MODE_ENABLED=true`.
+- Frontend task creation must use the commercial authenticated task flow in commercial mode.
+
 Task flow:
 
 1. User logs in.
 2. User submits a simulation request.
-3. API validates account status, feature permissions, and available credits.
-4. API creates a task and a pending credit hold in one transaction.
-5. API enqueues the simulation job.
-6. Frontend polls task status.
-7. Worker runs the simulation with the correct provider configuration.
-8. On success, worker saves report and confirms the credit spend.
-9. On failure/cancel/system error, worker marks the task and refunds/releases the held credits according to policy.
+3. API verifies a server-side session from a secure cookie.
+4. API validates account status, feature permissions, and available credits.
+5. API creates a task and a pending credit hold in one Postgres transaction.
+6. API enqueues the simulation job.
+7. Frontend polls task status.
+8. Worker claims the job under weighted concurrency limits and runs the simulation with the correct provider configuration.
+9. On success, worker saves report and confirms the credit spend idempotently.
+10. On failure/cancel/system error, worker marks the task and refunds/releases the held credits idempotently according to policy.
 
 ## Accounts
 
@@ -70,7 +79,9 @@ Users have:
 - Feature flags derived from tier and redeemed access codes.
 - Current credit balance.
 
-Passwords must be hashed with a modern password hashing algorithm. Passwords, card secrets, and provider API keys must never be stored as plaintext.
+Passwords must be hashed with a modern password hashing algorithm. Passwords, access-code secrets, and provider API keys must never be stored as plaintext.
+
+Sessions are required for the commercial MVP. Login creates a server-side session row and an HTTP-only, secure, same-site cookie. Credit, task, model-provider, feedback, and admin APIs must use this session. Header-based user impersonation is allowed only inside tests.
 
 ## Access Codes
 
@@ -120,6 +131,8 @@ Credit lifecycle:
 
 All balance changes must be represented in `credit_ledger`. The current balance should be derivable from ledger entries or maintained by transaction-safe account rows plus ledger audit.
 
+Credit operations must be transactional and idempotent. A task can have only one active hold, one capture, and one release/refund path. Worker retries must not double-spend or double-refund credits.
+
 ## Account Tiers And BYOK
 
 Higher-tier users can configure custom model providers. This is a BYOK feature: Bring Your Own Key.
@@ -141,6 +154,7 @@ Security rules:
 - Base URL must use `https://`.
 - First release should use a whitelist or semi-whitelist of known providers to reduce SSRF risk.
 - Custom provider test requests should have strict timeout and response-size limits.
+- Custom provider requests must reject localhost, private IP ranges, link-local ranges, cloud metadata IPs, non-HTTPS URLs, redirects to blocked hosts, and oversized responses.
 
 If a user provider fails due to authentication, invalid base URL, unsupported model, or timeout, the task should fail with a clear user-facing reason. MVP refund policy should release credits for provider configuration errors to avoid beta-user disputes.
 
@@ -168,6 +182,8 @@ This allows combinations such as:
 
 The goal is not to maximize raw model throughput. It is to keep the product stable, protect model spend, and turn sudden demand into visible queueing rather than failures.
 
+Weighted concurrency must be enforced by the worker/queue layer, not just stored as metadata. Jobs may be enqueued freely, but workers can only claim jobs while the sum of active job weights is within the configured budget.
+
 Task statuses:
 
 - `queued`
@@ -193,6 +209,8 @@ First release pages:
 - System Config: credit cost settings, weighted concurrency budget, provider settings, feature flags.
 
 Every sensitive admin action must create an audit log entry.
+
+Audit logging is part of the paid beta, not a later enhancement. Creating/disabling access codes, changing balances, disabling users, changing system settings, and viewing sensitive reports must create audit records.
 
 ## Analytics And Feedback
 
@@ -258,6 +276,8 @@ Commercial-critical operations should be transactional:
 - Credit release/refund.
 - Admin balance adjustment.
 - Tier grant/expiration update.
+- Session creation and revocation.
+- Task creation plus credit hold plus queue enqueue intent.
 
 ## API Surface
 
@@ -290,6 +310,12 @@ Simulation APIs:
 - `POST /api/simulation-tasks/:id/cancel`
 - `POST /api/simulation-tasks/:id/retry`
 
+Compatibility APIs:
+
+- Existing unauthenticated simulation endpoints stay available only in local demo mode.
+- In commercial mode they must return 404/403 or forward to the authenticated commercial task flow with credit checks.
+- Tests must cover that commercial mode cannot create a simulation without a valid session and sufficient credits.
+
 Feedback APIs:
 
 - `POST /api/reports/:id/feedback`
@@ -319,7 +345,8 @@ Requirements:
 
 - Store API keys only in server-side encrypted form.
 - Store password hashes only, never passwords.
-- Store card hashes only, never raw access codes.
+- Store access-code hashes only, never raw access codes.
+- Use HTTP-only secure same-site cookies for sessions.
 - Limit admin report access to authorized admins.
 - Record admin audit logs for sensitive actions.
 - Do not store full prompt/debug traces by default.
@@ -335,13 +362,18 @@ The report disclaimer must remain clear: simulation output is for decision suppo
 Phase 1: Paid Beta Loop
 
 - Email/password registration and login.
+- Server-side sessions.
+- Postgres-backed commercial persistence.
+- Redis/BullMQ-backed queue with weighted concurrency enforcement.
 - Admin access-code creation.
 - Access-code redemption.
 - Credit balance and ledger.
 - Ordinary/deep task credit costs.
 - Queue-backed task execution.
+- Protection or commercial rerouting for existing unauthenticated simulation endpoints.
 - Report retrieval.
-- Basic admin users/cards/tasks views.
+- Basic admin users/access-codes/tasks views.
+- Admin audit logs for access-code and balance operations.
 
 Acceptance criteria:
 
@@ -352,6 +384,8 @@ Acceptance criteria:
 - Successful task captures credits and stores report.
 - Failed task releases credits.
 - Admin can see user, code, task, and ledger records.
+- Existing demo endpoints cannot bypass credits in commercial mode.
+- Worker retries cannot double-charge or double-refund.
 
 Phase 2: Observability And Operations
 

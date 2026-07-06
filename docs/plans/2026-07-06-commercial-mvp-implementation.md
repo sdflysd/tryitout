@@ -2,17 +2,27 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build the first commercial beta loop for TryItOut: account login, access-code credits, queue-backed paid simulations, admin operations, analytics, and later BYOK tiers.
+**Goal:** Build the first commercial beta loop for TryItOut: email/password accounts, server-side sessions, access-code credits, Postgres-backed paid tasks, Redis/BullMQ queueing, weighted simulation concurrency, admin operations, analytics, and later BYOK tiers.
 
-**Architecture:** Keep the existing React + Express app, but introduce a commercial service layer backed by Postgres-compatible repositories and a Redis/BullMQ-style simulation queue. The current file-backed simulation task implementation remains useful for local compatibility while the commercial path becomes the source of truth for paid users, credits, queueing, and admin visibility.
+**Architecture:** Commercial mode is a real paid path, not an in-memory demo. Postgres is the source of truth for accounts, sessions, access codes, credits, tasks, reports, analytics, and audit logs. Redis/BullMQ owns the queue and weighted worker concurrency. The existing file-backed simulation task path remains only for local/demo compatibility and must not bypass credits when `COMMERCIAL_MODE_ENABLED=true`.
 
-**Tech Stack:** React 19, Express, TypeScript, Node test runner with `tsx --test`, Postgres-compatible repository interfaces, Redis/BullMQ queue abstraction, existing AI Gateway and simulation engine.
+**Tech Stack:** React 19, Express, TypeScript, Node test runner with `tsx --test`, Postgres-compatible repository interface, Redis/BullMQ-style queue abstraction, existing AI Gateway and simulation engine.
 
 ---
 
-## Phase 1: Commercial Domain Foundation
+## Non-Negotiable Commercial Requirements
 
-### Task 1: Add Commercial Domain Types
+- Commercial mode must fail startup when required secrets or backing services are missing.
+- Paid task creation must require a server-side session, sufficient credits, and a transactional credit hold.
+- Existing unauthenticated simulation endpoints must be disabled or routed through the commercial service in commercial mode.
+- Credit operations must be idempotent: worker retries cannot double-capture or double-release credits.
+- Weighted concurrency must be enforced by worker/queue code, not just stored as job metadata.
+- BYOK provider URLs must defend against SSRF, not only require `https://`.
+- Admin access-code, balance, user, settings, and sensitive report actions must write audit logs.
+
+## Phase 1: Persistence, Contracts, And Migrations
+
+### Task 1: Add Commercial Domain Contracts
 
 **Files:**
 - Create: `frontend/src/contracts/commercial.ts`
@@ -28,6 +38,7 @@ import test from "node:test";
 
 import {
   ACCESS_CODE_STATUSES,
+  COMMERCIAL_TASK_STATUSES,
   CREDIT_LEDGER_ENTRY_TYPES,
   SIMULATION_CREDIT_COSTS,
   USER_TIERS,
@@ -38,6 +49,14 @@ import {
 test("commercial constants expose MVP account and credit states", () => {
   assert.deepEqual(USER_TIERS, ["basic", "pro", "business"]);
   assert.deepEqual(ACCESS_CODE_STATUSES, ["active", "redeemed", "disabled", "expired"]);
+  assert.deepEqual(COMMERCIAL_TASK_STATUSES, [
+    "queued",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "refunded",
+  ]);
   assert.deepEqual(CREDIT_LEDGER_ENTRY_TYPES, [
     "redeem",
     "hold",
@@ -74,74 +93,20 @@ Expected: FAIL because `commercial.ts` does not exist.
 
 **Step 3: Write minimal implementation**
 
-Create `frontend/src/contracts/commercial.ts`:
+Create `frontend/src/contracts/commercial.ts` with:
 
-```ts
-import type { InteractionMode } from "../types.js";
+- `USER_TIERS`
+- `COMMERCIAL_FEATURES`
+- `ACCESS_CODE_STATUSES`
+- `CREDIT_LEDGER_ENTRY_TYPES`
+- `COMMERCIAL_TASK_STATUSES`
+- `CommercialProviderMode`
+- `SIMULATION_CREDIT_COSTS`
+- `CommercialEntitlements`
+- `hasCommercialFeature`
+- `getSimulationCreditCost`
 
-export const USER_TIERS = ["basic", "pro", "business"] as const;
-export type UserTier = typeof USER_TIERS[number];
-
-export const COMMERCIAL_FEATURES = [
-  "deep_mode",
-  "custom_model_provider",
-  "priority_queue",
-] as const;
-export type CommercialFeature = typeof COMMERCIAL_FEATURES[number];
-
-export const ACCESS_CODE_STATUSES = [
-  "active",
-  "redeemed",
-  "disabled",
-  "expired",
-] as const;
-export type AccessCodeStatus = typeof ACCESS_CODE_STATUSES[number];
-
-export const CREDIT_LEDGER_ENTRY_TYPES = [
-  "redeem",
-  "hold",
-  "capture",
-  "release",
-  "adjustment",
-] as const;
-export type CreditLedgerEntryType = typeof CREDIT_LEDGER_ENTRY_TYPES[number];
-
-export type CommercialProviderMode = "platform" | "byok";
-
-export const SIMULATION_CREDIT_COSTS = {
-  platform: {
-    legacy: 1,
-    enabled: 3,
-  },
-  byok: {
-    legacy: 1,
-    enabled: 2,
-  },
-} as const;
-
-export interface CommercialEntitlements {
-  tier: UserTier;
-  tierExpiresAt?: string;
-  features: CommercialFeature[];
-}
-
-export function hasCommercialFeature(
-  entitlements: CommercialEntitlements,
-  feature: CommercialFeature,
-): boolean {
-  return entitlements.features.includes(feature);
-}
-
-export function getSimulationCreditCost({
-  interactionMode,
-  providerMode,
-}: {
-  interactionMode: InteractionMode;
-  providerMode: CommercialProviderMode;
-}): number {
-  return SIMULATION_CREDIT_COSTS[providerMode][interactionMode];
-}
-```
+Use `InteractionMode` from `../types.js`; default platform costs are legacy `1`, enabled `3`; default BYOK costs are legacy `1`, enabled `2`.
 
 **Step 4: Run test to verify it passes**
 
@@ -161,224 +126,7 @@ git add frontend/src/contracts/commercial.ts frontend/src/contracts/commercial.t
 git commit -m "feat: add commercial domain contracts"
 ```
 
-### Task 2: Add Access-Code Generation And Hashing
-
-**Files:**
-- Create: `frontend/src/server/commercial/access-codes.ts`
-- Test: `frontend/src/server/commercial/access-codes.test.ts`
-
-**Step 1: Write the failing test**
-
-Create `frontend/src/server/commercial/access-codes.test.ts`:
-
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
-
-import {
-  generateAccessCode,
-  hashAccessCode,
-  maskAccessCode,
-  normalizeAccessCode,
-  verifyAccessCode,
-} from "./access-codes.js";
-
-test("generateAccessCode creates grouped hard-to-guess codes", () => {
-  const code = generateAccessCode(() => "ABCDEFGHJKLM");
-  assert.match(code, /^TIO-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-});
-
-test("normalizeAccessCode uppercases and removes accidental whitespace", () => {
-  assert.equal(normalizeAccessCode(" tio-abcd-1234-wxyz "), "TIO-ABCD-1234-WXYZ");
-});
-
-test("hashAccessCode and verifyAccessCode use normalized values", () => {
-  const hash = hashAccessCode("tio-abcd-1234-wxyz", "pepper");
-  assert.equal(verifyAccessCode("TIO-ABCD-1234-WXYZ", hash, "pepper"), true);
-  assert.equal(verifyAccessCode("TIO-XXXX-1234-WXYZ", hash, "pepper"), false);
-});
-
-test("maskAccessCode preserves only prefix and suffix", () => {
-  assert.equal(maskAccessCode("TIO-ABCD-1234-WXYZ"), "TIO-ABCD-****-WXYZ");
-});
-```
-
-**Step 2: Run test to verify it fails**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/access-codes.test.ts
-```
-
-Expected: FAIL because `access-codes.ts` does not exist.
-
-**Step 3: Write minimal implementation**
-
-Create `frontend/src/server/commercial/access-codes.ts`:
-
-```ts
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-export function normalizeAccessCode(code: string): string {
-  return code.trim().toUpperCase().replace(/\s+/g, "");
-}
-
-export function generateAccessCode(randomSource?: () => string): string {
-  const raw = randomSource?.() ?? randomToken(12);
-  const normalized = raw
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .padEnd(12, "X")
-    .slice(0, 12);
-
-  return `TIO-${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8, 12)}`;
-}
-
-export function hashAccessCode(code: string, pepper: string): string {
-  return createHash("sha256")
-    .update(`${normalizeAccessCode(code)}:${pepper}`)
-    .digest("hex");
-}
-
-export function verifyAccessCode(code: string, expectedHash: string, pepper: string): boolean {
-  const actual = Buffer.from(hashAccessCode(code, pepper), "hex");
-  const expected = Buffer.from(expectedHash, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-export function maskAccessCode(code: string): string {
-  const normalized = normalizeAccessCode(code);
-  const parts = normalized.split("-");
-  if (parts.length === 4) {
-    return `${parts[0]}-${parts[1]}-****-${parts[3]}`;
-  }
-
-  return `${normalized.slice(0, 8)}****${normalized.slice(-4)}`;
-}
-
-function randomToken(length: number): string {
-  const bytes = randomBytes(length);
-  return Array.from(bytes, (byte) => ALPHABET[byte % ALPHABET.length]).join("");
-}
-```
-
-**Step 4: Run test to verify it passes**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/access-codes.test.ts
-```
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add frontend/src/server/commercial/access-codes.ts frontend/src/server/commercial/access-codes.test.ts
-git commit -m "feat: add access code utilities"
-```
-
-### Task 3: Add Password Hashing Utilities
-
-**Files:**
-- Create: `frontend/src/server/commercial/passwords.ts`
-- Test: `frontend/src/server/commercial/passwords.test.ts`
-
-**Step 1: Write the failing test**
-
-Create `frontend/src/server/commercial/passwords.test.ts`:
-
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
-
-import { hashPassword, verifyPassword } from "./passwords.js";
-
-test("hashPassword stores salted non-plaintext password hashes", async () => {
-  const hash = await hashPassword("correct horse battery staple", {
-    salt: Buffer.alloc(16, 1),
-  });
-
-  assert.notEqual(hash, "correct horse battery staple");
-  assert.match(hash, /^scrypt\$/);
-  assert.equal(await verifyPassword("correct horse battery staple", hash), true);
-  assert.equal(await verifyPassword("wrong password", hash), false);
-});
-```
-
-**Step 2: Run test to verify it fails**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/passwords.test.ts
-```
-
-Expected: FAIL because `passwords.ts` does not exist.
-
-**Step 3: Write minimal implementation**
-
-Create `frontend/src/server/commercial/passwords.ts`:
-
-```ts
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
-
-const scrypt = promisify(scryptCallback);
-const KEY_LENGTH = 64;
-
-export async function hashPassword(
-  password: string,
-  options: { salt?: Buffer } = {},
-): Promise<string> {
-  const salt = options.salt ?? randomBytes(16);
-  const derived = await scrypt(password, salt, KEY_LENGTH) as Buffer;
-
-  return `scrypt$${salt.toString("base64")}$${derived.toString("base64")}`;
-}
-
-export async function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
-  const [algorithm, saltValue, hashValue] = encodedHash.split("$");
-  if (algorithm !== "scrypt" || !saltValue || !hashValue) {
-    return false;
-  }
-
-  const salt = Buffer.from(saltValue, "base64");
-  const expected = Buffer.from(hashValue, "base64");
-  const actual = await scrypt(password, salt, expected.length) as Buffer;
-
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-```
-
-**Step 4: Run test to verify it passes**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/passwords.test.ts
-```
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add frontend/src/server/commercial/passwords.ts frontend/src/server/commercial/passwords.test.ts
-git commit -m "feat: add password hashing utilities"
-```
-
-## Phase 2: Commercial Repositories And Services
-
-### Task 4: Define Commercial Repository Interfaces And In-Memory Test Repository
+### Task 2: Add Commercial Record Types And Repository Interface
 
 **Files:**
 - Create: `frontend/src/server/commercial/types.ts`
@@ -387,41 +135,13 @@ git commit -m "feat: add password hashing utilities"
 
 **Step 1: Write the failing test**
 
-Create `frontend/src/server/commercial/repository.test.ts`:
+Create tests that instantiate an `InMemoryCommercialRepository` as a unit-test fake and verify:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
-
-import { InMemoryCommercialRepository } from "./repository.js";
-
-test("InMemoryCommercialRepository stores users and ledger entries", async () => {
-  const repo = new InMemoryCommercialRepository();
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: "2026-07-06T00:00:00.000Z",
-    updatedAt: "2026-07-06T00:00:00.000Z",
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 0, updatedAt: "2026-07-06T00:00:00.000Z" });
-  await repo.appendLedgerEntry({
-    id: "ledger_1",
-    userId: "user_1",
-    type: "redeem",
-    amount: 10,
-    balanceAfter: 10,
-    createdAt: "2026-07-06T00:00:00.000Z",
-  });
-
-  assert.equal((await repo.findUserByEmail("A@EXAMPLE.COM"))?.id, "user_1");
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 0);
-  assert.equal((await repo.listLedgerEntries("user_1")).length, 1);
-});
-```
+- Users can be found case-insensitively by email.
+- Credit accounts and ledger entries are stored.
+- Session records can be saved, found by token hash, and revoked.
+- Commercial task records can be saved and loaded.
+- Audit log records can be appended and listed.
 
 **Step 2: Run test to verify it fails**
 
@@ -434,166 +154,33 @@ npm test -- src/server/commercial/repository.test.ts
 
 Expected: FAIL because repository files do not exist.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement types and repository fake**
 
-Create `frontend/src/server/commercial/types.ts` with record interfaces for:
+Create `frontend/src/server/commercial/types.ts` with records:
 
-```ts
-import type {
-  AccessCodeStatus,
-  CommercialFeature,
-  CreditLedgerEntryType,
-  UserTier,
-} from "../../contracts/commercial.js";
-import type { InteractionMode, SimulationType, UserInput } from "../../types.js";
+- `CommercialUserRecord`
+- `CommercialSessionRecord`
+- `UserCreditAccountRecord`
+- `CreditLedgerEntryRecord`
+- `AccessCodeRecord`
+- `AccessCodeRedemptionRecord`
+- `CommercialSimulationTaskRecord`
+- `SimulationReportRecord`
+- `UserFeedbackRecord`
+- `AnalyticsEventRecord`
+- `AdminAuditLogRecord`
+- `SystemSettingRecord`
 
-export type UserStatus = "active" | "disabled";
-export type CommercialTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "refunded";
+Important fields:
 
-export interface CommercialUserRecord {
-  id: string;
-  email: string;
-  passwordHash: string;
-  tier: UserTier;
-  tierExpiresAt?: string;
-  features: CommercialFeature[];
-  status: UserStatus;
-  createdAt: string;
-  updatedAt: string;
-}
+- `CommercialSessionRecord`: `id`, `userId`, `tokenHash`, `expiresAt`, `revokedAt?`, `createdAt`.
+- `CreditLedgerEntryRecord`: include `idempotencyKey`.
+- `CommercialSimulationTaskRecord`: include `creditHoldLedgerEntryId?`, `creditCapturedLedgerEntryId?`, `creditReleasedLedgerEntryId?`, `queueJobId?`, `reportId?`, `errorCode?`.
+- `AdminAuditLogRecord`: `adminUserId`, `action`, `targetType`, `targetId`, `metadata`, `createdAt`.
 
-export interface UserCreditAccountRecord {
-  userId: string;
-  balance: number;
-  updatedAt: string;
-}
+Create `CommercialRepository` with methods needed by all records. Create `InMemoryCommercialRepository` only for tests and local non-commercial demos.
 
-export interface CreditLedgerEntryRecord {
-  id: string;
-  userId: string;
-  type: CreditLedgerEntryType;
-  amount: number;
-  balanceAfter: number;
-  taskId?: string;
-  accessCodeId?: string;
-  reason?: string;
-  createdAt: string;
-}
-
-export interface AccessCodeRecord {
-  id: string;
-  codeHash: string;
-  maskedCode: string;
-  status: AccessCodeStatus;
-  credits: number;
-  tierGrant?: UserTier;
-  tierExpiresAt?: string;
-  features: CommercialFeature[];
-  source?: string;
-  redeemedByUserId?: string;
-  redeemedAt?: string;
-  expiresAt?: string;
-  createdByAdminId: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommercialSimulationTaskRecord {
-  id: string;
-  userId: string;
-  scenarioType: SimulationType;
-  userInput: UserInput;
-  interactionMode: InteractionMode;
-  providerMode: "platform" | "byok";
-  status: CommercialTaskStatus;
-  creditCost: number;
-  heldLedgerEntryId?: string;
-  errorCode?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-Create `frontend/src/server/commercial/repository.ts`:
-
-```ts
-import type {
-  AccessCodeRecord,
-  CommercialSimulationTaskRecord,
-  CommercialUserRecord,
-  CreditLedgerEntryRecord,
-  UserCreditAccountRecord,
-} from "./types.js";
-
-export interface CommercialRepository {
-  saveUser(user: CommercialUserRecord): Promise<void>;
-  findUserByEmail(email: string): Promise<CommercialUserRecord | undefined>;
-  getUser(userId: string): Promise<CommercialUserRecord | undefined>;
-  saveCreditAccount(account: UserCreditAccountRecord): Promise<void>;
-  getCreditAccount(userId: string): Promise<UserCreditAccountRecord | undefined>;
-  appendLedgerEntry(entry: CreditLedgerEntryRecord): Promise<void>;
-  listLedgerEntries(userId: string): Promise<CreditLedgerEntryRecord[]>;
-  saveAccessCode(code: AccessCodeRecord): Promise<void>;
-  findAccessCodeByHash(codeHash: string): Promise<AccessCodeRecord | undefined>;
-  saveCommercialTask(task: CommercialSimulationTaskRecord): Promise<void>;
-  getCommercialTask(taskId: string): Promise<CommercialSimulationTaskRecord | undefined>;
-}
-
-export class InMemoryCommercialRepository implements CommercialRepository {
-  private readonly users = new Map<string, CommercialUserRecord>();
-  private readonly accounts = new Map<string, UserCreditAccountRecord>();
-  private readonly ledger: CreditLedgerEntryRecord[] = [];
-  private readonly accessCodes = new Map<string, AccessCodeRecord>();
-  private readonly tasks = new Map<string, CommercialSimulationTaskRecord>();
-
-  async saveUser(user: CommercialUserRecord): Promise<void> {
-    this.users.set(user.id, user);
-  }
-
-  async findUserByEmail(email: string): Promise<CommercialUserRecord | undefined> {
-    const normalized = email.trim().toLowerCase();
-    return Array.from(this.users.values()).find((user) => user.email.toLowerCase() === normalized);
-  }
-
-  async getUser(userId: string): Promise<CommercialUserRecord | undefined> {
-    return this.users.get(userId);
-  }
-
-  async saveCreditAccount(account: UserCreditAccountRecord): Promise<void> {
-    this.accounts.set(account.userId, account);
-  }
-
-  async getCreditAccount(userId: string): Promise<UserCreditAccountRecord | undefined> {
-    return this.accounts.get(userId);
-  }
-
-  async appendLedgerEntry(entry: CreditLedgerEntryRecord): Promise<void> {
-    this.ledger.push(entry);
-  }
-
-  async listLedgerEntries(userId: string): Promise<CreditLedgerEntryRecord[]> {
-    return this.ledger.filter((entry) => entry.userId === userId);
-  }
-
-  async saveAccessCode(code: AccessCodeRecord): Promise<void> {
-    this.accessCodes.set(code.id, code);
-  }
-
-  async findAccessCodeByHash(codeHash: string): Promise<AccessCodeRecord | undefined> {
-    return Array.from(this.accessCodes.values()).find((code) => code.codeHash === codeHash);
-  }
-
-  async saveCommercialTask(task: CommercialSimulationTaskRecord): Promise<void> {
-    this.tasks.set(task.id, task);
-  }
-
-  async getCommercialTask(taskId: string): Promise<CommercialSimulationTaskRecord | undefined> {
-    return this.tasks.get(taskId);
-  }
-}
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -608,56 +195,205 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/types.ts frontend/src/server/commercial/repository.ts frontend/src/server/commercial/repository.test.ts
-git commit -m "feat: add commercial repository interfaces"
+git commit -m "feat: add commercial repository contracts"
 ```
 
-### Task 5: Implement Auth Service
+### Task 3: Add Commercial Database Migration
+
+**Files:**
+- Create: `frontend/db/migrations/001_commercial_mvp.sql`
+- Create: `frontend/db/README.md`
+
+**Step 1: Draft migration**
+
+Create SQL tables:
+
+- `users`
+- `user_sessions`
+- `user_credit_accounts`
+- `credit_ledger`
+- `access_codes`
+- `access_code_redemptions`
+- `user_model_providers`
+- `simulation_tasks`
+- `simulation_reports`
+- `user_feedback`
+- `analytics_events`
+- `admin_audit_logs`
+- `system_settings`
+
+Required constraints:
+
+- Unique `users.email`.
+- Unique `user_sessions.token_hash`.
+- Unique `access_codes.code_hash`.
+- Unique credit ledger `idempotency_key`.
+- Foreign keys from sessions/credits/tasks/reports/feedback/audit rows to users where applicable.
+- Check constraints for positive credit amounts where appropriate.
+- Indexes on task status, task user, ledger user, analytics event type, and audit actor.
+
+**Step 2: Add README**
+
+Document:
+
+- Migration order.
+- Required env vars.
+- How to run local Postgres.
+- How to reset local commercial DB.
+- That commercial mode must not use in-memory repositories.
+
+**Step 3: Review SQL manually**
+
+Run:
+
+```bash
+cd frontend
+npm run lint
+```
+
+Expected: PASS. SQL is not executed by the current test suite.
+
+**Step 4: Commit**
+
+```bash
+git add frontend/db/migrations/001_commercial_mvp.sql frontend/db/README.md
+git commit -m "docs: add commercial database migration"
+```
+
+### Task 4: Add Postgres Repository Implementation
+
+**Files:**
+- Create: `frontend/src/server/commercial/postgres-repository.ts`
+- Test: `frontend/src/server/commercial/postgres-repository.test.ts`
+
+**Step 1: Write contract tests**
+
+Use a fake query client and test:
+
+- `saveUser` performs insert/upsert with expected params.
+- `findUserByEmail` maps a row to `CommercialUserRecord`.
+- `saveSession` and `findSessionByTokenHash` map rows correctly.
+- `appendLedgerEntry` writes `idempotencyKey`.
+- `saveCommercialTask` persists credit ledger references.
+- `appendAdminAuditLog` inserts actor, action, target, and metadata.
+
+**Step 2: Run test**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/postgres-repository.test.ts
+```
+
+Expected: FAIL.
+
+**Step 3: Implement repository**
+
+Implement a `QueryClient` interface:
+
+```ts
+interface QueryClient {
+  query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+```
+
+Do not hard-code a database driver yet. Keep driver creation in a later wiring task so tests stay fast and deterministic.
+
+**Step 4: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/postgres-repository.test.ts src/server/commercial/repository.test.ts
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/src/server/commercial/postgres-repository.ts frontend/src/server/commercial/postgres-repository.test.ts
+git commit -m "feat: add postgres commercial repository"
+```
+
+## Phase 2: Auth, Sessions, Access Codes, And Credits
+
+### Task 5: Add Password And Access-Code Secret Utilities
+
+**Files:**
+- Create: `frontend/src/server/commercial/passwords.ts`
+- Create: `frontend/src/server/commercial/access-codes.ts`
+- Test: `frontend/src/server/commercial/passwords.test.ts`
+- Test: `frontend/src/server/commercial/access-codes.test.ts`
+
+**Step 1: Write failing tests**
+
+Test:
+
+- Password hashing uses a salted non-plaintext format and verifies correct/incorrect passwords.
+- Access-code generation produces grouped `TIO-XXXX-XXXX-XXXX` codes.
+- Access-code hashing uses a pepper and normalized code.
+- Access-code verification is timing-safe.
+- Access-code masking hides the middle group.
+
+**Step 2: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/passwords.test.ts src/server/commercial/access-codes.test.ts
+```
+
+Expected: FAIL.
+
+**Step 3: Implement utilities**
+
+Use Node `crypto`:
+
+- Passwords: `scrypt` with random salt.
+- Codes: SHA-256 over normalized code plus `ACCESS_CODE_PEPPER`.
+- Timing-safe hash comparison.
+
+**Step 4: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/passwords.test.ts src/server/commercial/access-codes.test.ts
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/src/server/commercial/passwords.ts frontend/src/server/commercial/passwords.test.ts frontend/src/server/commercial/access-codes.ts frontend/src/server/commercial/access-codes.test.ts
+git commit -m "feat: add commercial secret utilities"
+```
+
+### Task 6: Implement Auth And Session Service
 
 **Files:**
 - Create: `frontend/src/server/commercial/auth-service.ts`
 - Test: `frontend/src/server/commercial/auth-service.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Create `frontend/src/server/commercial/auth-service.test.ts`:
+Test:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
+- Register normalizes email, hashes password, creates credit account.
+- Duplicate email is rejected.
+- Login verifies password and creates a session.
+- Session token is only returned once; repository stores token hash.
+- `getUserForSessionToken` returns user for valid non-expired session.
+- Logout revokes session.
+- Disabled users cannot log in.
 
-import { InMemoryCommercialRepository } from "./repository.js";
-import { CommercialAuthService } from "./auth-service.js";
-
-test("CommercialAuthService registers and authenticates users", async () => {
-  const service = new CommercialAuthService({
-    repo: new InMemoryCommercialRepository(),
-    createId: () => "user_1",
-    now: () => "2026-07-06T00:00:00.000Z",
-  });
-
-  const registered = await service.register({ email: "A@Example.com", password: "password123" });
-  assert.equal(registered.email, "a@example.com");
-  assert.equal(registered.tier, "basic");
-
-  const login = await service.login({ email: "a@example.com", password: "password123" });
-  assert.equal(login.user.id, "user_1");
-  assert.equal(login.creditBalance, 0);
-});
-
-test("CommercialAuthService rejects duplicate email and wrong password", async () => {
-  const service = new CommercialAuthService({
-    repo: new InMemoryCommercialRepository(),
-    createId: () => "user_1",
-    now: () => "2026-07-06T00:00:00.000Z",
-  });
-
-  await service.register({ email: "a@example.com", password: "password123" });
-  await assert.rejects(() => service.register({ email: "A@EXAMPLE.COM", password: "password123" }), /already registered/);
-  await assert.rejects(() => service.login({ email: "a@example.com", password: "wrong" }), /invalid credentials/);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -666,82 +402,26 @@ cd frontend
 npm test -- src/server/commercial/auth-service.test.ts
 ```
 
-Expected: FAIL because `auth-service.ts` does not exist.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement service**
 
-Create `frontend/src/server/commercial/auth-service.ts`:
+Create `CommercialAuthService` with:
 
-```ts
-import { hashPassword, verifyPassword } from "./passwords.js";
-import type { CommercialRepository } from "./repository.js";
-import type { CommercialUserRecord } from "./types.js";
+- `register`
+- `login`
+- `getUserForSessionToken`
+- `logout`
+- `changePassword`
 
-interface AuthServiceOptions {
-  repo: CommercialRepository;
-  createId?: () => string;
-  now?: () => string;
-}
+Session requirements:
 
-export class CommercialAuthService {
-  private readonly repo: CommercialRepository;
-  private readonly createId: () => string;
-  private readonly now: () => string;
+- Random high-entropy token.
+- Store only token hash.
+- Expiration timestamp.
+- HTTP cookie creation is handled in API layer, not service.
 
-  constructor(options: AuthServiceOptions) {
-    this.repo = options.repo;
-    this.createId = options.createId ?? (() => `user_${Math.random().toString(36).slice(2, 11)}`);
-    this.now = options.now ?? (() => new Date().toISOString());
-  }
-
-  async register({ email, password }: { email: string; password: string }): Promise<CommercialUserRecord> {
-    const normalizedEmail = normalizeEmail(email);
-    if (password.length < 8) {
-      throw new Error("password must be at least 8 characters");
-    }
-    if (await this.repo.findUserByEmail(normalizedEmail)) {
-      throw new Error("email already registered");
-    }
-
-    const now = this.now();
-    const user: CommercialUserRecord = {
-      id: this.createId(),
-      email: normalizedEmail,
-      passwordHash: await hashPassword(password),
-      tier: "basic",
-      features: [],
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await this.repo.saveUser(user);
-    await this.repo.saveCreditAccount({ userId: user.id, balance: 0, updatedAt: now });
-    return user;
-  }
-
-  async login({ email, password }: { email: string; password: string }): Promise<{ user: CommercialUserRecord; creditBalance: number }> {
-    const user = await this.repo.findUserByEmail(normalizeEmail(email));
-    if (!user || user.status !== "active") {
-      throw new Error("invalid credentials");
-    }
-    if (!(await verifyPassword(password, user.passwordHash))) {
-      throw new Error("invalid credentials");
-    }
-
-    return {
-      user,
-      creditBalance: (await this.repo.getCreditAccount(user.id))?.balance ?? 0,
-    };
-  }
-}
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -756,104 +436,29 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/auth-service.ts frontend/src/server/commercial/auth-service.test.ts
-git commit -m "feat: add commercial auth service"
+git commit -m "feat: add commercial auth sessions"
 ```
 
-### Task 6: Implement Credit And Access-Code Redemption Service
+### Task 7: Implement Credit Service With Transactions And Idempotency
 
 **Files:**
 - Create: `frontend/src/server/commercial/credit-service.ts`
 - Test: `frontend/src/server/commercial/credit-service.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Create `frontend/src/server/commercial/credit-service.test.ts`:
+Test:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
+- Redeeming an active access code increases balance, records ledger, records redemption, and applies tier/features.
+- Redeeming the same code twice is rejected.
+- Holding credits decreases balance and records a hold ledger entry.
+- Holding with insufficient balance is rejected.
+- Capturing a hold records a capture once.
+- Releasing a hold returns credits once.
+- Repeated capture/release calls with the same idempotency key do not double-change balance.
+- Admin adjustment changes balance and records reason.
 
-import { hashAccessCode, maskAccessCode } from "./access-codes.js";
-import { CreditService } from "./credit-service.js";
-import { InMemoryCommercialRepository } from "./repository.js";
-
-test("CreditService redeems an access code into balance and tier features", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 0, updatedAt: now });
-  await repo.saveAccessCode({
-    id: "code_1",
-    codeHash: hashAccessCode("TIO-ABCD-1234-WXYZ", "pepper"),
-    maskedCode: maskAccessCode("TIO-ABCD-1234-WXYZ"),
-    status: "active",
-    credits: 10,
-    tierGrant: "pro",
-    features: ["custom_model_provider"],
-    createdByAdminId: "admin_1",
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  const service = new CreditService({
-    repo,
-    codePepper: "pepper",
-    createId: (prefix) => `${prefix}_1`,
-    now: () => now,
-  });
-
-  const result = await service.redeemAccessCode({
-    userId: "user_1",
-    code: "tio-abcd-1234-wxyz",
-  });
-
-  assert.equal(result.balance, 10);
-  assert.equal(result.user.tier, "pro");
-  assert.deepEqual(result.user.features, ["custom_model_provider"]);
-  assert.equal((await repo.listLedgerEntries("user_1")).length, 1);
-});
-
-test("CreditService rejects redeemed codes", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 0, updatedAt: now });
-  await repo.saveAccessCode({
-    id: "code_1",
-    codeHash: hashAccessCode("TIO-ABCD-1234-WXYZ", "pepper"),
-    maskedCode: maskAccessCode("TIO-ABCD-1234-WXYZ"),
-    status: "redeemed",
-    credits: 10,
-    features: [],
-    createdByAdminId: "admin_1",
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  const service = new CreditService({ repo, codePepper: "pepper" });
-  await assert.rejects(() => service.redeemAccessCode({ userId: "user_1", code: "TIO-ABCD-1234-WXYZ" }), /not available/);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run tests**
 
 Run:
 
@@ -862,90 +467,26 @@ cd frontend
 npm test -- src/server/commercial/credit-service.test.ts
 ```
 
-Expected: FAIL because `credit-service.ts` does not exist.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement service**
 
-Create `frontend/src/server/commercial/credit-service.ts`:
+Create `CreditService` with:
 
-```ts
-import { hashAccessCode } from "./access-codes.js";
-import type { CommercialRepository } from "./repository.js";
-import type { CommercialUserRecord } from "./types.js";
+- `redeemAccessCode`
+- `holdCredits`
+- `captureHeldCredits`
+- `releaseHeldCredits`
+- `adjustCredits`
 
-interface CreditServiceOptions {
-  repo: CommercialRepository;
-  codePepper: string;
-  createId?: (prefix: string) => string;
-  now?: () => string;
-}
+Implementation requirements:
 
-export class CreditService {
-  private readonly repo: CommercialRepository;
-  private readonly codePepper: string;
-  private readonly createId: (prefix: string) => string;
-  private readonly now: () => string;
+- Accept a repository transaction callback if available; in-memory fake can execute immediately.
+- Every ledger entry has an `idempotencyKey`.
+- Capture/release check whether matching idempotency key already exists.
+- Task settlement must reference task id and hold ledger id.
 
-  constructor(options: CreditServiceOptions) {
-    this.repo = options.repo;
-    this.codePepper = options.codePepper;
-    this.createId = options.createId ?? ((prefix) => `${prefix}_${Math.random().toString(36).slice(2, 11)}`);
-    this.now = options.now ?? (() => new Date().toISOString());
-  }
-
-  async redeemAccessCode({
-    userId,
-    code,
-  }: {
-    userId: string;
-    code: string;
-  }): Promise<{ user: CommercialUserRecord; balance: number }> {
-    const user = await this.repo.getUser(userId);
-    if (!user) {
-      throw new Error("user not found");
-    }
-    const accessCode = await this.repo.findAccessCodeByHash(hashAccessCode(code, this.codePepper));
-    if (!accessCode || accessCode.status !== "active") {
-      throw new Error("access code is not available");
-    }
-
-    const now = this.now();
-    const currentBalance = (await this.repo.getCreditAccount(userId))?.balance ?? 0;
-    const balanceAfter = currentBalance + accessCode.credits;
-    const updatedFeatures = Array.from(new Set([...user.features, ...accessCode.features]));
-    const updatedUser: CommercialUserRecord = {
-      ...user,
-      tier: accessCode.tierGrant ?? user.tier,
-      tierExpiresAt: accessCode.tierExpiresAt ?? user.tierExpiresAt,
-      features: updatedFeatures,
-      updatedAt: now,
-    };
-
-    await this.repo.saveUser(updatedUser);
-    await this.repo.saveCreditAccount({ userId, balance: balanceAfter, updatedAt: now });
-    await this.repo.appendLedgerEntry({
-      id: this.createId("ledger"),
-      userId,
-      type: "redeem",
-      amount: accessCode.credits,
-      balanceAfter,
-      accessCodeId: accessCode.id,
-      createdAt: now,
-    });
-    await this.repo.saveAccessCode({
-      ...accessCode,
-      status: "redeemed",
-      redeemedByUserId: userId,
-      redeemedAt: now,
-      updatedAt: now,
-    });
-
-    return { user: updatedUser, balance: balanceAfter };
-  }
-}
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run tests**
 
 Run:
 
@@ -960,190 +501,28 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/credit-service.ts frontend/src/server/commercial/credit-service.test.ts
-git commit -m "feat: add access code redemption service"
+git commit -m "feat: add idempotent credit service"
 ```
 
-### Task 7: Implement Credit Holds, Capture, And Release
+## Phase 3: Queue, Worker, And Paid Simulation Tasks
 
-**Files:**
-- Modify: `frontend/src/server/commercial/credit-service.ts`
-- Test: `frontend/src/server/commercial/credit-service.test.ts`
-
-**Step 1: Write the failing test**
-
-Append tests:
-
-```ts
-test("CreditService holds, captures, and releases credits", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 5, updatedAt: now });
-  const service = new CreditService({
-    repo,
-    codePepper: "pepper",
-    createId: (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}`,
-    now: () => now,
-  });
-
-  const hold = await service.holdCredits({ userId: "user_1", amount: 3, taskId: "task_1" });
-  assert.equal(hold.balance, 2);
-  await service.captureHeldCredits({ userId: "user_1", amount: 3, taskId: "task_1" });
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 2);
-
-  const secondHold = await service.holdCredits({ userId: "user_1", amount: 1, taskId: "task_2" });
-  assert.equal(secondHold.balance, 1);
-  await service.releaseHeldCredits({ userId: "user_1", amount: 1, taskId: "task_2", reason: "failed" });
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 2);
-});
-
-test("CreditService rejects holds with insufficient balance", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveCreditAccount({ userId: "user_1", balance: 1, updatedAt: now });
-  const service = new CreditService({ repo, codePepper: "pepper", now: () => now });
-
-  await assert.rejects(() => service.holdCredits({ userId: "user_1", amount: 2, taskId: "task_1" }), /insufficient credits/);
-});
-```
-
-**Step 2: Run test to verify it fails**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/credit-service.test.ts
-```
-
-Expected: FAIL because hold/capture/release methods are missing.
-
-**Step 3: Write minimal implementation**
-
-Add methods to `CreditService`:
-
-```ts
-  async holdCredits({ userId, amount, taskId }: { userId: string; amount: number; taskId: string }): Promise<{ balance: number; ledgerEntryId: string }> {
-    const account = await this.repo.getCreditAccount(userId);
-    const balance = account?.balance ?? 0;
-    if (amount <= 0) {
-      throw new Error("credit amount must be positive");
-    }
-    if (balance < amount) {
-      throw new Error("insufficient credits");
-    }
-
-    const now = this.now();
-    const balanceAfter = balance - amount;
-    const ledgerEntryId = this.createId("ledger");
-    await this.repo.saveCreditAccount({ userId, balance: balanceAfter, updatedAt: now });
-    await this.repo.appendLedgerEntry({
-      id: ledgerEntryId,
-      userId,
-      type: "hold",
-      amount: -amount,
-      balanceAfter,
-      taskId,
-      createdAt: now,
-    });
-
-    return { balance: balanceAfter, ledgerEntryId };
-  }
-
-  async captureHeldCredits({ userId, amount, taskId }: { userId: string; amount: number; taskId: string }): Promise<void> {
-    const account = await this.repo.getCreditAccount(userId);
-    await this.repo.appendLedgerEntry({
-      id: this.createId("ledger"),
-      userId,
-      type: "capture",
-      amount: 0,
-      balanceAfter: account?.balance ?? 0,
-      taskId,
-      createdAt: this.now(),
-    });
-  }
-
-  async releaseHeldCredits({ userId, amount, taskId, reason }: { userId: string; amount: number; taskId: string; reason?: string }): Promise<{ balance: number }> {
-    const account = await this.repo.getCreditAccount(userId);
-    const balanceAfter = (account?.balance ?? 0) + amount;
-    const now = this.now();
-    await this.repo.saveCreditAccount({ userId, balance: balanceAfter, updatedAt: now });
-    await this.repo.appendLedgerEntry({
-      id: this.createId("ledger"),
-      userId,
-      type: "release",
-      amount,
-      balanceAfter,
-      taskId,
-      reason,
-      createdAt: now,
-    });
-
-    return { balance: balanceAfter };
-  }
-```
-
-**Step 4: Run test to verify it passes**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/credit-service.test.ts
-```
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add frontend/src/server/commercial/credit-service.ts frontend/src/server/commercial/credit-service.test.ts
-git commit -m "feat: add credit hold lifecycle"
-```
-
-## Phase 3: Queue-Backed Commercial Simulation Tasks
-
-### Task 8: Define Simulation Queue Interface And In-Memory Queue
+### Task 8: Add Weighted Queue Abstraction
 
 **Files:**
 - Create: `frontend/src/server/commercial/simulation-queue.ts`
 - Test: `frontend/src/server/commercial/simulation-queue.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Create `frontend/src/server/commercial/simulation-queue.test.ts`:
+Test:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
+- Ordinary tasks have weight `1`.
+- Deep tasks have weight `3`.
+- Queue job contains task id, user id, mode, weight, and idempotency key.
+- A weighted limiter allows jobs only while active weight stays within budget.
+- Releasing a job lowers active weight.
 
-import { InMemorySimulationQueue, getTaskConcurrencyWeight } from "./simulation-queue.js";
-
-test("getTaskConcurrencyWeight weights deep tasks higher", () => {
-  assert.equal(getTaskConcurrencyWeight("legacy"), 1);
-  assert.equal(getTaskConcurrencyWeight("enabled"), 3);
-});
-
-test("InMemorySimulationQueue stores queued jobs", async () => {
-  const queue = new InMemorySimulationQueue();
-  await queue.enqueue({ taskId: "task_1", userId: "user_1", interactionMode: "enabled", weight: 3 });
-
-  assert.deepEqual(await queue.listQueuedJobs(), [
-    { taskId: "task_1", userId: "user_1", interactionMode: "enabled", weight: 3 },
-  ]);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1152,44 +531,20 @@ cd frontend
 npm test -- src/server/commercial/simulation-queue.test.ts
 ```
 
-Expected: FAIL because `simulation-queue.ts` does not exist.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement abstraction and test fake**
 
-Create `frontend/src/server/commercial/simulation-queue.ts`:
+Create:
 
-```ts
-import type { InteractionMode } from "../../types.js";
+- `SimulationQueue`
+- `SimulationQueueJob`
+- `WeightedConcurrencyLimiter`
+- `InMemorySimulationQueue` for tests only
 
-export interface SimulationQueueJob {
-  taskId: string;
-  userId: string;
-  interactionMode: InteractionMode;
-  weight: number;
-}
+Do not claim BullMQ is implemented here; this task creates the interface and the limiter behavior. Later wiring supplies Redis/BullMQ.
 
-export interface SimulationQueue {
-  enqueue(job: SimulationQueueJob): Promise<void>;
-}
-
-export function getTaskConcurrencyWeight(mode: InteractionMode): number {
-  return mode === "enabled" ? 3 : 1;
-}
-
-export class InMemorySimulationQueue implements SimulationQueue {
-  private readonly jobs: SimulationQueueJob[] = [];
-
-  async enqueue(job: SimulationQueueJob): Promise<void> {
-    this.jobs.push(job);
-  }
-
-  async listQueuedJobs(): Promise<SimulationQueueJob[]> {
-    return [...this.jobs];
-  }
-}
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -1204,7 +559,7 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/simulation-queue.ts frontend/src/server/commercial/simulation-queue.test.ts
-git commit -m "feat: add commercial simulation queue interface"
+git commit -m "feat: add weighted simulation queue abstraction"
 ```
 
 ### Task 9: Implement Commercial Simulation Task Service
@@ -1213,58 +568,20 @@ git commit -m "feat: add commercial simulation queue interface"
 - Create: `frontend/src/server/commercial/commercial-task-service.ts`
 - Test: `frontend/src/server/commercial/commercial-task-service.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Create `frontend/src/server/commercial/commercial-task-service.test.ts`:
+Test:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
+- Creating a task requires active user.
+- Creating a task rejects a second active task for the same user.
+- Creating a task calculates credit cost by mode/provider.
+- Creating a task creates credit hold and task record before enqueue.
+- If enqueue fails, the hold is released and task is marked failed.
+- Completing a task captures held credits once and stores report id.
+- Failing a task releases held credits once and stores normalized error code.
+- Retrying a failed/refunded task creates a new hold and queue job.
 
-import { CreditService } from "./credit-service.js";
-import { CommercialSimulationTaskService } from "./commercial-task-service.js";
-import { InMemoryCommercialRepository } from "./repository.js";
-import { InMemorySimulationQueue } from "./simulation-queue.js";
-
-test("CommercialSimulationTaskService holds credits and queues a task", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const queue = new InMemorySimulationQueue();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 5, updatedAt: now });
-
-  const service = new CommercialSimulationTaskService({
-    repo,
-    queue,
-    creditService: new CreditService({ repo, codePepper: "pepper", createId: (prefix) => `${prefix}_1`, now: () => now }),
-    createId: () => "task_1",
-    now: () => now,
-  });
-
-  const task = await service.createTask({
-    userId: "user_1",
-    userInput: { type: "side_hustle", projectIdea: "AI 简历优化服务" },
-    interactionMode: "enabled",
-    providerMode: "platform",
-  });
-
-  assert.equal(task.status, "queued");
-  assert.equal(task.creditCost, 3);
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 2);
-  assert.equal((await queue.listQueuedJobs())[0]?.weight, 3);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1273,89 +590,30 @@ cd frontend
 npm test -- src/server/commercial/commercial-task-service.test.ts
 ```
 
-Expected: FAIL because service does not exist.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement service**
 
-Create `frontend/src/server/commercial/commercial-task-service.ts`:
+Create `CommercialSimulationTaskService` with:
 
-```ts
-import { getSimulationCreditCost, type CommercialProviderMode } from "../../contracts/commercial.js";
-import type { InteractionMode, UserInput } from "../../types.js";
-import type { CreditService } from "./credit-service.js";
-import type { CommercialRepository } from "./repository.js";
-import { getTaskConcurrencyWeight, type SimulationQueue } from "./simulation-queue.js";
-import type { CommercialSimulationTaskRecord } from "./types.js";
+- `createTask`
+- `markRunning`
+- `markCompleted`
+- `markFailed`
+- `cancelTask`
+- `retryTask`
+- `getStatus`
+- `getReport`
 
-interface CommercialTaskServiceOptions {
-  repo: CommercialRepository;
-  queue: SimulationQueue;
-  creditService: CreditService;
-  createId?: () => string;
-  now?: () => string;
-}
+Implementation requirements:
 
-export class CommercialSimulationTaskService {
-  private readonly repo: CommercialRepository;
-  private readonly queue: SimulationQueue;
-  private readonly creditService: CreditService;
-  private readonly createId: () => string;
-  private readonly now: () => string;
+- Use `CreditService` for hold/capture/release.
+- Use `SimulationQueue` to enqueue jobs.
+- Store queue job id.
+- Use idempotency keys derived from task id and lifecycle action.
+- Never expose `userInput` in public status DTO.
 
-  constructor(options: CommercialTaskServiceOptions) {
-    this.repo = options.repo;
-    this.queue = options.queue;
-    this.creditService = options.creditService;
-    this.createId = options.createId ?? (() => `task_${Math.random().toString(36).slice(2, 11)}`);
-    this.now = options.now ?? (() => new Date().toISOString());
-  }
-
-  async createTask({
-    userId,
-    userInput,
-    interactionMode,
-    providerMode,
-  }: {
-    userId: string;
-    userInput: UserInput;
-    interactionMode: InteractionMode;
-    providerMode: CommercialProviderMode;
-  }): Promise<CommercialSimulationTaskRecord> {
-    const user = await this.repo.getUser(userId);
-    if (!user || user.status !== "active") {
-      throw new Error("user is not active");
-    }
-    const taskId = this.createId();
-    const creditCost = getSimulationCreditCost({ interactionMode, providerMode });
-    const hold = await this.creditService.holdCredits({ userId, amount: creditCost, taskId });
-    const now = this.now();
-    const task: CommercialSimulationTaskRecord = {
-      id: taskId,
-      userId,
-      scenarioType: userInput.type,
-      userInput,
-      interactionMode,
-      providerMode,
-      status: "queued",
-      creditCost,
-      heldLedgerEntryId: hold.ledgerEntryId,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await this.repo.saveCommercialTask(task);
-    await this.queue.enqueue({
-      taskId,
-      userId,
-      interactionMode,
-      weight: getTaskConcurrencyWeight(interactionMode),
-    });
-    return task;
-  }
-}
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -1370,137 +628,56 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/commercial-task-service.ts frontend/src/server/commercial/commercial-task-service.test.ts
-git commit -m "feat: add commercial simulation task service"
+git commit -m "feat: add paid simulation task service"
 ```
 
-### Task 10: Add Worker Completion And Failure Credit Policies
+### Task 10: Add Simulation Worker Runner
 
 **Files:**
-- Modify: `frontend/src/server/commercial/commercial-task-service.ts`
-- Test: `frontend/src/server/commercial/commercial-task-service.test.ts`
+- Create: `frontend/src/server/commercial/simulation-worker.ts`
+- Test: `frontend/src/server/commercial/simulation-worker.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Append tests:
+Test:
 
-```ts
-test("CommercialSimulationTaskService captures credits on completion", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const queue = new InMemorySimulationQueue();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 5, updatedAt: now });
-  const creditService = new CreditService({ repo, codePepper: "pepper", createId: (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}`, now: () => now });
-  const service = new CommercialSimulationTaskService({ repo, queue, creditService, createId: () => "task_1", now: () => now });
-  await service.createTask({
-    userId: "user_1",
-    userInput: { type: "side_hustle", projectIdea: "AI 简历优化服务" },
-    interactionMode: "legacy",
-    providerMode: "platform",
-  });
+- Worker claims a job only when weighted limiter has capacity.
+- Worker marks task running before calling simulation.
+- Worker saves report and calls `markCompleted` on success.
+- Worker calls `markFailed` on recoverable and non-recoverable provider errors.
+- Worker releases limiter capacity in `finally`.
+- Worker retry of same completed task does not double-capture credits.
 
-  await service.markCompleted("task_1");
-  assert.equal((await repo.getCommercialTask("task_1"))?.status, "completed");
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 4);
-});
-
-test("CommercialSimulationTaskService releases credits on failure", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const queue = new InMemorySimulationQueue();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 5, updatedAt: now });
-  const creditService = new CreditService({ repo, codePepper: "pepper", createId: (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}`, now: () => now });
-  const service = new CommercialSimulationTaskService({ repo, queue, creditService, createId: () => "task_1", now: () => now });
-  await service.createTask({
-    userId: "user_1",
-    userInput: { type: "side_hustle", projectIdea: "AI 简历优化服务" },
-    interactionMode: "enabled",
-    providerMode: "platform",
-  });
-
-  await service.markFailed("task_1", "provider_timeout");
-  assert.equal((await repo.getCommercialTask("task_1"))?.status, "failed");
-  assert.equal((await repo.getCommercialTask("task_1"))?.errorCode, "provider_timeout");
-  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 5);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
 ```bash
 cd frontend
-npm test -- src/server/commercial/commercial-task-service.test.ts
+npm test -- src/server/commercial/simulation-worker.test.ts
 ```
 
-Expected: FAIL because completion/failure methods are missing.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement worker runner**
 
-Add methods to `CommercialSimulationTaskService`:
+Create a runner that accepts:
 
-```ts
-  async markCompleted(taskId: string): Promise<CommercialSimulationTaskRecord> {
-    const task = await this.requireTask(taskId);
-    await this.creditService.captureHeldCredits({
-      userId: task.userId,
-      amount: task.creditCost,
-      taskId,
-    });
-    const updated = { ...task, status: "completed" as const, updatedAt: this.now() };
-    await this.repo.saveCommercialTask(updated);
-    return updated;
-  }
+- queue job
+- task service
+- weighted limiter
+- `runSimulation` dependency compatible with existing `runMultiAgentSimulation`
+- provider resolver
 
-  async markFailed(taskId: string, errorCode: string): Promise<CommercialSimulationTaskRecord> {
-    const task = await this.requireTask(taskId);
-    await this.creditService.releaseHeldCredits({
-      userId: task.userId,
-      amount: task.creditCost,
-      taskId,
-      reason: errorCode,
-    });
-    const updated = { ...task, status: "failed" as const, errorCode, updatedAt: this.now() };
-    await this.repo.saveCommercialTask(updated);
-    return updated;
-  }
+Keep real BullMQ process startup for a later wiring task.
 
-  private async requireTask(taskId: string): Promise<CommercialSimulationTaskRecord> {
-    const task = await this.repo.getCommercialTask(taskId);
-    if (!task) {
-      throw new Error("commercial simulation task not found");
-    }
-    return task;
-  }
-```
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
 ```bash
 cd frontend
-npm test -- src/server/commercial/commercial-task-service.test.ts
+npm test -- src/server/commercial/simulation-worker.test.ts
 ```
 
 Expected: PASS.
@@ -1508,97 +685,89 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add frontend/src/server/commercial/commercial-task-service.ts frontend/src/server/commercial/commercial-task-service.test.ts
-git commit -m "feat: add commercial task credit settlement"
+git add frontend/src/server/commercial/simulation-worker.ts frontend/src/server/commercial/simulation-worker.test.ts
+git commit -m "feat: add commercial simulation worker runner"
 ```
 
-## Phase 4: API Wiring
+### Task 11: Add Redis/BullMQ Queue Adapter
 
-### Task 11: Add Commercial Auth And Credit API Handlers
+**Files:**
+- Create: `frontend/src/server/commercial/bullmq-simulation-queue.ts`
+- Test: `frontend/src/server/commercial/bullmq-simulation-queue.test.ts`
+- Modify: `frontend/package.json`
+
+**Step 1: Write adapter contract tests**
+
+Use a mocked BullMQ constructor or small wrapper test to verify:
+
+- Queue name is stable.
+- Job id is task id.
+- Job data includes weight and idempotency key.
+- Retry/backoff options are set.
+
+**Step 2: Add dependency**
+
+Add BullMQ dependency:
+
+```bash
+cd frontend
+npm install bullmq
+```
+
+**Step 3: Implement adapter**
+
+Implement `BullMqSimulationQueue` behind the `SimulationQueue` interface.
+
+**Step 4: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/bullmq-simulation-queue.test.ts
+npm run lint
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/package.json frontend/package-lock.json frontend/src/server/commercial/bullmq-simulation-queue.ts frontend/src/server/commercial/bullmq-simulation-queue.test.ts
+git commit -m "feat: add BullMQ simulation queue adapter"
+```
+
+## Phase 4: API Wiring And Commercial Mode Protection
+
+### Task 12: Add Commercial API Handlers
 
 **Files:**
 - Create: `frontend/src/server/commercial/commercial-api.ts`
 - Test: `frontend/src/server/commercial/commercial-api.test.ts`
 
-**Step 1: Write the failing test**
+**Step 1: Write failing tests**
 
-Create tests for register/login/redeem:
+Test handlers for:
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
+- Register.
+- Login.
+- Logout.
+- `GET /api/me`.
+- Redeem access code.
+- Get credits.
+- Create commercial simulation task.
+- Get task status.
+- Get task report.
+- Cancel task.
 
-import { hashAccessCode, maskAccessCode } from "./access-codes.js";
-import { CommercialAuthService } from "./auth-service.js";
-import { CreditService } from "./credit-service.js";
-import {
-  handleCommercialLoginRequest,
-  handleCommercialRedeemRequest,
-  handleCommercialRegisterRequest,
-} from "./commercial-api.js";
-import { InMemoryCommercialRepository } from "./repository.js";
+Handler tests must prove:
 
-test("commercial API registers and logs in users", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const authService = new CommercialAuthService({
-    repo,
-    createId: () => "user_1",
-    now: () => "2026-07-06T00:00:00.000Z",
-  });
+- No handler returns `passwordHash`.
+- Auth-required handlers reject missing session.
+- Task creation rejects insufficient credits.
+- Task creation returns queued task status.
 
-  const register = await handleCommercialRegisterRequest(
-    { email: "a@example.com", password: "password123" },
-    { authService },
-  );
-  assert.equal(register.status, 200);
-  assert.equal(register.body.user?.email, "a@example.com");
-
-  const login = await handleCommercialLoginRequest(
-    { email: "a@example.com", password: "password123" },
-    { authService },
-  );
-  assert.equal(login.status, 200);
-  assert.equal(login.body.creditBalance, 0);
-});
-
-test("commercial API redeems access codes", async () => {
-  const repo = new InMemoryCommercialRepository();
-  const now = "2026-07-06T00:00:00.000Z";
-  await repo.saveUser({
-    id: "user_1",
-    email: "a@example.com",
-    passwordHash: "hash",
-    tier: "basic",
-    features: [],
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  });
-  await repo.saveCreditAccount({ userId: "user_1", balance: 0, updatedAt: now });
-  await repo.saveAccessCode({
-    id: "code_1",
-    codeHash: hashAccessCode("TIO-ABCD-1234-WXYZ", "pepper"),
-    maskedCode: maskAccessCode("TIO-ABCD-1234-WXYZ"),
-    status: "active",
-    credits: 10,
-    features: [],
-    createdByAdminId: "admin_1",
-    createdAt: now,
-    updatedAt: now,
-  });
-  const creditService = new CreditService({ repo, codePepper: "pepper", now: () => now });
-
-  const result = await handleCommercialRedeemRequest(
-    { code: "TIO-ABCD-1234-WXYZ" },
-    { userId: "user_1", creditService },
-  );
-
-  assert.equal(result.status, 200);
-  assert.equal(result.body.balance, 10);
-});
-```
-
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1607,22 +776,18 @@ cd frontend
 npm test -- src/server/commercial/commercial-api.test.ts
 ```
 
-Expected: FAIL because `commercial-api.ts` does not exist.
+Expected: FAIL.
 
-**Step 3: Write minimal implementation**
+**Step 3: Implement handlers**
 
-Create `frontend/src/server/commercial/commercial-api.ts` with small body parsing helpers and three handlers returning `{ status, body }`.
+Handlers return `{ status, body, cookies? }` so `server.ts` can set session cookies. Session cookie attributes:
 
-Implementation requirements:
+- HTTP-only.
+- SameSite Lax or Strict.
+- Secure in production.
+- Path `/`.
 
-- `handleCommercialRegisterRequest(body, { authService })`.
-- `handleCommercialLoginRequest(body, { authService })`.
-- `handleCommercialRedeemRequest(body, { userId, creditService })`.
-- Reject missing/invalid email, password, code with status 400.
-- Never return `passwordHash`.
-- Return user id, email, tier, features, and balance.
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -1637,59 +802,186 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/commercial-api.ts frontend/src/server/commercial/commercial-api.test.ts
-git commit -m "feat: add commercial auth and credit APIs"
+git commit -m "feat: add commercial API handlers"
 ```
 
-### Task 12: Add API Routes To `server.ts`
+### Task 13: Protect Legacy Simulation Endpoints In Commercial Mode
 
 **Files:**
 - Modify: `frontend/server.ts`
-- Test: existing handler tests plus lint
+- Test: `frontend/src/server/commercial/commercial-mode-routing.test.ts`
 
-**Step 1: Add route design checklist**
+**Step 1: Write failing tests**
 
-Before editing `server.ts`, decide how MVP authentication is represented:
+Create route-decision tests for a helper extracted from `server.ts`:
 
-- If sessions are not implemented yet, use a temporary `x-user-id` header helper for authenticated beta API tests.
-- Do not expose this temporary helper as final production auth.
-- Add a TODO comment only where the production session middleware will replace it.
+- When `COMMERCIAL_MODE_ENABLED=false`, legacy `/api/simulation-tasks` can use the existing file-backed service.
+- When `COMMERCIAL_MODE_ENABLED=true`, unauthenticated `/api/simulation-tasks`, `/api/simulations`, and `/api/simulations/stream` are rejected or routed to commercial handlers.
+- Commercial task creation requires session and credits.
 
-**Step 2: Implement route wiring**
-
-Modify `frontend/server.ts`:
-
-- Instantiate `InMemoryCommercialRepository` only for local MVP wiring if Postgres implementation is not ready.
-- Instantiate `CommercialAuthService`.
-- Instantiate `CreditService`.
-- Add:
-  - `POST /api/auth/register`
-  - `POST /api/auth/login`
-  - `POST /api/credits/redeem`
-  - `GET /api/credits`
-- Return JSON from handler results.
-
-**Step 3: Run targeted tests**
+**Step 2: Run test**
 
 Run:
 
 ```bash
 cd frontend
-npm test -- src/server/commercial/*.test.ts
+npm test -- src/server/commercial/commercial-mode-routing.test.ts
+```
+
+Expected: FAIL.
+
+**Step 3: Implement routing helper and server wiring**
+
+Modify `frontend/server.ts`:
+
+- Read `COMMERCIAL_MODE_ENABLED`.
+- Instantiate commercial services only through commercial service factory.
+- Add auth/session middleware for commercial routes.
+- Gate legacy simulation endpoints in commercial mode.
+- Keep local/demo behavior unchanged when commercial mode is off.
+
+**Step 4: Run tests and lint**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/commercial-mode-routing.test.ts src/server/commercial/commercial-api.test.ts
 npm run lint
 ```
 
 Expected: PASS.
 
-**Step 4: Commit**
+**Step 5: Commit**
 
 ```bash
-git add frontend/server.ts
-git commit -m "feat: wire commercial beta API routes"
+git add frontend/server.ts frontend/src/server/commercial/commercial-mode-routing.test.ts
+git commit -m "feat: protect simulation routes in commercial mode"
 ```
 
-## Phase 5: Admin MVP
+### Task 14: Add Commercial Service Factory And Startup Validation
 
-### Task 13: Implement Admin Access-Code Service
+**Files:**
+- Create: `frontend/src/server/commercial/commercial-services.ts`
+- Test: `frontend/src/server/commercial/commercial-services.test.ts`
+- Modify: `frontend/server.ts`
+
+**Step 1: Write failing tests**
+
+Test:
+
+- Commercial mode requires `DATABASE_URL`.
+- Commercial mode requires `REDIS_URL`.
+- Commercial mode requires `SESSION_SECRET`.
+- Commercial mode requires `ACCESS_CODE_PEPPER`.
+- Commercial mode requires `USER_SECRET_ENCRYPTION_KEY`.
+- Non-commercial mode can use file-backed/local defaults.
+
+**Step 2: Run test**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/commercial-services.test.ts
+```
+
+Expected: FAIL.
+
+**Step 3: Implement service factory**
+
+Create a factory that builds:
+
+- Postgres repository.
+- BullMQ queue.
+- Auth service.
+- Credit service.
+- Task service.
+- Admin service.
+- Analytics service.
+
+Commercial startup must throw a clear error if required env vars are missing.
+
+**Step 4: Run test**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/commercial-services.test.ts
+npm run lint
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/src/server/commercial/commercial-services.ts frontend/src/server/commercial/commercial-services.test.ts frontend/server.ts
+git commit -m "feat: add commercial service startup validation"
+```
+
+### Task 15: Update Frontend Auth, Credits, And Task Client
+
+**Files:**
+- Create: `frontend/src/commercial-client.ts`
+- Test: `frontend/src/commercial-client.test.ts`
+- Modify: `frontend/src/simulation-tasks.ts`
+- Modify: `frontend/src/App.tsx`
+
+**Step 1: Write failing tests**
+
+Test:
+
+- Login/register clients call auth endpoints with credentials included.
+- Credit redemption client calls `/api/credits/redeem`.
+- Commercial task creation uses the same public task polling shape as existing progress UI.
+- Insufficient credits surfaces a user-facing error.
+
+**Step 2: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/commercial-client.test.ts src/simulation-tasks.test.ts src/App.test.tsx
+```
+
+Expected: FAIL.
+
+**Step 3: Implement client wiring**
+
+Add minimal UI states:
+
+- Logged-out prompt.
+- Redeem access code form.
+- Credit balance display.
+- Start simulation disabled when balance is insufficient.
+
+Keep the UI practical and compact; this is product surface, not a landing page.
+
+**Step 4: Run tests**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/commercial-client.test.ts src/simulation-tasks.test.ts src/App.test.tsx
+npm run lint
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/src/commercial-client.ts frontend/src/commercial-client.test.ts frontend/src/simulation-tasks.ts frontend/src/App.tsx frontend/src/App.test.tsx
+git commit -m "feat: add commercial user flow client"
+```
+
+## Phase 5: Admin MVP And Audit Logs
+
+### Task 16: Implement Admin Service With Audit Logs
 
 **Files:**
 - Create: `frontend/src/server/commercial/admin-service.ts`
@@ -1697,14 +989,16 @@ git commit -m "feat: wire commercial beta API routes"
 
 **Step 1: Write failing tests**
 
-Test batch generation:
+Test:
 
-- Creates requested number of access codes.
-- Stores only code hash and masked code.
-- Returns raw code only in creation response.
-- Supports credits, tier grant, features, source, expiration.
+- Batch code generation stores code hashes and masked values.
+- Raw codes are returned only in creation response.
+- Disabling a code writes an audit log.
+- Manual credit adjustment writes ledger and audit log.
+- Disabling a user writes audit log.
+- Changing system setting writes audit log.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1717,15 +1011,17 @@ Expected: FAIL.
 
 **Step 3: Implement service**
 
-Create `CommercialAdminService`:
+Create `CommercialAdminService` with:
 
-- `createAccessCode(input)`.
-- `createAccessCodeBatch(input)`.
-- Use `generateAccessCode`, `hashAccessCode`, and `maskAccessCode`.
-- Store `AccessCodeRecord`.
-- Return raw code only in creation result.
+- `createAccessCode`
+- `createAccessCodeBatch`
+- `disableAccessCode`
+- `adjustUserCredits`
+- `disableUser`
+- `updateSystemSetting`
+- `appendAuditLog`
 
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -1740,10 +1036,10 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/admin-service.ts frontend/src/server/commercial/admin-service.test.ts
-git commit -m "feat: add admin access code generation"
+git commit -m "feat: add audited admin service"
 ```
 
-### Task 14: Add Admin API Handlers
+### Task 17: Add Admin API Handlers
 
 **Files:**
 - Modify: `frontend/src/server/commercial/commercial-api.ts`
@@ -1751,13 +1047,16 @@ git commit -m "feat: add admin access code generation"
 
 **Step 1: Write failing tests**
 
-Add tests for:
+Test:
 
-- `handleAdminCreateAccessCodeRequest`.
-- `handleAdminCreateAccessCodeBatchRequest`.
-- Rejects non-admin users if `isAdmin` is false.
+- Non-admin sessions are rejected.
+- Admin can create one code.
+- Admin can batch create codes.
+- Admin can disable code.
+- Admin can adjust credits.
+- Admin can list audit logs.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1770,12 +1069,9 @@ Expected: FAIL.
 
 **Step 3: Implement handlers**
 
-Add handlers:
+Add admin handlers with session-derived admin user, not `isAdmin` booleans supplied by the caller.
 
-- `handleAdminCreateAccessCodeRequest(body, { adminService, isAdmin })`.
-- `handleAdminCreateAccessCodeBatchRequest(body, { adminService, isAdmin })`.
-
-**Step 4: Run test to verify it passes**
+**Step 4: Run test**
 
 Run:
 
@@ -1790,10 +1086,10 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/commercial-api.ts frontend/src/server/commercial/commercial-api.test.ts
-git commit -m "feat: add admin access code APIs"
+git commit -m "feat: add audited admin APIs"
 ```
 
-### Task 15: Add Admin Dashboard UI Skeleton
+### Task 18: Add Admin Dashboard Skeleton
 
 **Files:**
 - Create: `frontend/src/components/admin/AdminDashboard.tsx`
@@ -1802,9 +1098,7 @@ git commit -m "feat: add admin access code APIs"
 
 **Step 1: Write failing component test**
 
-Use existing React component test patterns from `frontend/src/components/*.test.tsx`.
-
-Test that the dashboard renders sections:
+Use existing React component test patterns. Test that the dashboard renders sections:
 
 - Overview.
 - Users.
@@ -1812,8 +1106,9 @@ Test that the dashboard renders sections:
 - Tasks.
 - Feedback.
 - Settings.
+- Audit Logs.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1826,13 +1121,13 @@ Expected: FAIL.
 
 **Step 3: Implement skeleton**
 
-Create an operations-style dashboard, not a marketing page:
+Build a dense operations UI:
 
-- Dense tabs or left navigation.
-- Summary metrics row.
-- Empty states for tables.
+- Tabs or left navigation.
+- Summary metrics.
+- Table placeholders.
 - No nested cards.
-- Keep admin route hidden behind `window.location.pathname.startsWith("/admin")` until router is introduced.
+- Admin-only route guard placeholder.
 
 **Step 4: Run test and lint**
 
@@ -1855,7 +1150,7 @@ git commit -m "feat: add admin dashboard skeleton"
 
 ## Phase 6: Analytics And Feedback
 
-### Task 16: Move Validation Events To Commercial Analytics Repository
+### Task 19: Move Validation Events To Commercial Analytics Storage
 
 **Files:**
 - Create: `frontend/src/server/commercial/analytics-service.ts`
@@ -1866,11 +1161,12 @@ git commit -m "feat: add admin dashboard skeleton"
 
 Test:
 
-- Stores sanitized event in repository.
-- Preserves existing validation event shape.
+- Stores sanitized events in repository.
 - Adds `createdAt`.
+- Preserves existing validation event API behavior.
+- Falls back to file append only in non-commercial local mode.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run tests**
 
 Run:
 
@@ -1879,11 +1175,11 @@ cd frontend
 npm test -- src/server/commercial/analytics-service.test.ts src/server/validation/event-api.test.ts
 ```
 
-Expected: FAIL for missing commercial analytics service.
+Expected: FAIL for missing analytics service.
 
 **Step 3: Implement service and adapter**
 
-Keep `appendValidationEvent` for local fallback, but allow `handleValidationEventRequest` to receive `analyticsService`.
+Keep `appendValidationEvent` for local fallback, but allow commercial mode to inject `analyticsService`.
 
 **Step 4: Run tests**
 
@@ -1900,10 +1196,10 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/server/commercial/analytics-service.ts frontend/src/server/commercial/analytics-service.test.ts frontend/src/server/validation/event-api.ts
-git commit -m "feat: add commercial analytics event storage"
+git commit -m "feat: add commercial analytics storage"
 ```
 
-### Task 17: Add Report Feedback API
+### Task 20: Add Report Feedback API
 
 **Files:**
 - Create: `frontend/src/server/commercial/feedback-service.ts`
@@ -1914,11 +1210,12 @@ git commit -m "feat: add commercial analytics event storage"
 
 Test:
 
-- Accepts numeric rating, usefulness, text, report id, task id.
-- Trims text and caps length.
-- Rejects invalid rating.
+- Authenticated user can submit rating, usefulness, text, report id, and task id.
+- Text is trimmed and capped.
+- Invalid rating is rejected.
+- Feedback links to task owner.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -1929,12 +1226,12 @@ npm test -- src/server/commercial/feedback-service.test.ts
 
 Expected: FAIL.
 
-**Step 3: Implement feedback service and API handler**
+**Step 3: Implement service and API handler**
 
 Create:
 
-- `FeedbackService.submitFeedback`.
-- `handleReportFeedbackRequest`.
+- `FeedbackService.submitFeedback`
+- `handleReportFeedbackRequest`
 
 **Step 4: Run tests**
 
@@ -1956,7 +1253,7 @@ git commit -m "feat: add report feedback API"
 
 ## Phase 7: BYOK Tiers
 
-### Task 18: Add API Key Encryption Utilities
+### Task 21: Add API Key Encryption Utilities
 
 **Files:**
 - Create: `frontend/src/server/commercial/secrets.ts`
@@ -1968,10 +1265,11 @@ Test:
 
 - Encrypts plaintext API key.
 - Decrypts with same master key.
-- Does not store plaintext inside ciphertext payload.
+- Does not store plaintext in ciphertext payload.
 - Rejects invalid master key length.
+- Rejects malformed payloads.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -2009,7 +1307,71 @@ git add frontend/src/server/commercial/secrets.ts frontend/src/server/commercial
 git commit -m "feat: add encrypted secret storage utilities"
 ```
 
-### Task 19: Add User Model Provider Service
+### Task 22: Add BYOK URL Safety Validation
+
+**Files:**
+- Create: `frontend/src/server/commercial/provider-url-safety.ts`
+- Test: `frontend/src/server/commercial/provider-url-safety.test.ts`
+
+**Step 1: Write failing tests**
+
+Test rejection of:
+
+- `http://` URLs.
+- `localhost`.
+- `127.0.0.1`.
+- `0.0.0.0`.
+- RFC1918 private ranges.
+- Link-local ranges.
+- IPv6 loopback.
+- Cloud metadata IP `169.254.169.254`.
+- URLs with credentials.
+- Redirects to blocked hosts.
+
+Test acceptance of:
+
+- Explicitly allowed provider hosts.
+
+**Step 2: Run test**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/provider-url-safety.test.ts
+```
+
+Expected: FAIL.
+
+**Step 3: Implement validator**
+
+Implement:
+
+- `validateProviderBaseUrl`
+- `isBlockedProviderHost`
+- Optional allowed-host list.
+
+Provider test calls must disable automatic redirects or revalidate redirect targets before following.
+
+**Step 4: Run test**
+
+Run:
+
+```bash
+cd frontend
+npm test -- src/server/commercial/provider-url-safety.test.ts
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add frontend/src/server/commercial/provider-url-safety.ts frontend/src/server/commercial/provider-url-safety.test.ts
+git commit -m "feat: add BYOK provider URL safety checks"
+```
+
+### Task 23: Add User Model Provider Service
 
 **Files:**
 - Create: `frontend/src/server/commercial/model-provider-service.ts`
@@ -2025,9 +1387,10 @@ Test:
 - Pro users with `custom_model_provider` can save provider.
 - API key is encrypted in repository.
 - Public DTO masks key and never returns encrypted value.
-- Rejects non-HTTPS base URL.
+- Non-HTTPS and blocked hosts are rejected.
+- Provider test timeout is enforced.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
 Run:
 
@@ -2038,35 +1401,24 @@ npm test -- src/server/commercial/model-provider-service.test.ts
 
 Expected: FAIL.
 
-**Step 3: Implement model provider service**
+**Step 3: Implement service**
 
-Add `UserModelProviderRecord` to `types.ts`:
+Add `UserModelProviderRecord` and repository methods:
 
-- `id`
-- `userId`
-- `label`
-- `baseUrl`
-- `encryptedApiKey`
-- `apiKeySuffix`
-- `fastModel`
-- `balancedModel`
-- `deepModel`
-- `createdAt`
-- `updatedAt`
-
-Add repository methods:
-
-- `saveUserModelProvider`.
-- `getUserModelProvider`.
-- `deleteUserModelProvider`.
+- `saveUserModelProvider`
+- `getUserModelProvider`
+- `deleteUserModelProvider`
 
 Create service methods:
 
-- `saveProvider`.
-- `getPublicProvider`.
-- `deleteProvider`.
+- `saveProvider`
+- `getPublicProvider`
+- `deleteProvider`
+- `testProviderConnection`
 
-**Step 4: Run test**
+Use `secrets.ts` and `provider-url-safety.ts`.
+
+**Step 4: Run tests**
 
 Run:
 
@@ -2084,7 +1436,7 @@ git add frontend/src/server/commercial/model-provider-service.ts frontend/src/se
 git commit -m "feat: add BYOK model provider service"
 ```
 
-### Task 20: Route Commercial Tasks To User Providers
+### Task 24: Route Commercial Tasks To User Providers
 
 **Files:**
 - Modify: `frontend/src/server/ai/provider-config.ts`
@@ -2094,11 +1446,13 @@ git commit -m "feat: add BYOK model provider service"
 
 **Step 1: Write failing test**
 
-Add a test that a BYOK commercial task:
+Add tests that BYOK commercial tasks:
 
-- Requires a stored provider.
-- Records `providerMode: "byok"`.
-- Exposes enough provider resolution metadata for worker execution.
+- Require stored provider config.
+- Require `custom_model_provider` entitlement.
+- Record `providerMode: "byok"`.
+- Use decrypted OpenAI-compatible adapter metadata for worker execution.
+- Release held credits on provider configuration failure.
 
 **Step 2: Run test**
 
@@ -2113,13 +1467,9 @@ Expected: FAIL.
 
 **Step 3: Implement provider resolution**
 
-Do the smallest integration:
+Add a helper that builds an OpenAI-compatible adapter from decrypted user provider config. Keep platform provider as default. Worker chooses user provider only when task `providerMode` is `byok`.
 
-- Add a helper that builds an OpenAI-compatible adapter from a decrypted user provider config.
-- Keep platform provider as the default.
-- Worker path chooses user provider when task `providerMode` is `byok`.
-
-**Step 4: Run focused AI and commercial tests**
+**Step 4: Run focused tests**
 
 Run:
 
@@ -2137,115 +1487,9 @@ git add frontend/src/server/ai/provider-config.ts frontend/src/server/ai/ai-gate
 git commit -m "feat: route commercial tasks to BYOK providers"
 ```
 
-## Phase 8: Persistence And Deployment Readiness
+## Phase 8: Documentation And Verification
 
-### Task 21: Add Postgres Repository Skeleton
-
-**Files:**
-- Create: `frontend/src/server/commercial/postgres-repository.ts`
-- Test: `frontend/src/server/commercial/postgres-repository.test.ts`
-
-**Step 1: Write contract test**
-
-Create tests that can run against a fake query client:
-
-- `saveUser` emits expected insert/upsert query.
-- `findUserByEmail` maps row to record.
-- `appendLedgerEntry` inserts ledger row.
-
-**Step 2: Run test**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/postgres-repository.test.ts
-```
-
-Expected: FAIL.
-
-**Step 3: Implement repository skeleton**
-
-Implement with a minimal `QueryClient` interface:
-
-```ts
-interface QueryClient {
-  query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
-}
-```
-
-Do not add actual DB dependency until package decision is made.
-
-**Step 4: Run test**
-
-Run:
-
-```bash
-cd frontend
-npm test -- src/server/commercial/postgres-repository.test.ts
-```
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add frontend/src/server/commercial/postgres-repository.ts frontend/src/server/commercial/postgres-repository.test.ts
-git commit -m "feat: add postgres commercial repository skeleton"
-```
-
-### Task 22: Add Database Migration Draft
-
-**Files:**
-- Create: `frontend/db/migrations/001_commercial_mvp.sql`
-- Create: `frontend/db/README.md`
-
-**Step 1: Draft migration**
-
-Include tables:
-
-- `users`
-- `user_sessions`
-- `user_credit_accounts`
-- `credit_ledger`
-- `access_codes`
-- `access_code_redemptions`
-- `user_model_providers`
-- `simulation_tasks`
-- `simulation_reports`
-- `user_feedback`
-- `analytics_events`
-- `admin_audit_logs`
-- `system_settings`
-
-**Step 2: Add README**
-
-Document:
-
-- Migration order.
-- Required env vars.
-- Local Postgres expectation.
-- How to reset local commercial DB.
-
-**Step 3: Review SQL manually**
-
-Run:
-
-```bash
-cd frontend
-npm run lint
-```
-
-Expected: PASS. SQL is not executed by current test suite.
-
-**Step 4: Commit**
-
-```bash
-git add frontend/db/migrations/001_commercial_mvp.sql frontend/db/README.md
-git commit -m "docs: add commercial database migration draft"
-```
-
-### Task 23: Add Commercial Environment Documentation
+### Task 25: Document Commercial Configuration
 
 **Files:**
 - Modify: `frontend/.env.example`
@@ -2259,6 +1503,7 @@ Add:
 - `COMMERCIAL_MODE_ENABLED`
 - `DATABASE_URL`
 - `REDIS_URL`
+- `SESSION_SECRET`
 - `ACCESS_CODE_PEPPER`
 - `USER_SECRET_ENCRYPTION_KEY`
 - `MAX_WEIGHTED_CONCURRENCY`
@@ -2271,9 +1516,10 @@ Add:
 
 Explain:
 
-- Commercial MVP mode is separate from local demo mode.
-- Access-code credits.
-- Queue-backed task execution.
+- Commercial mode requires Postgres and Redis.
+- In-memory repositories are only for tests/local demo.
+- Existing demo simulation endpoints are disabled or protected in commercial mode.
+- Access-code credits and queue-backed task execution.
 - BYOK security requirements.
 
 **Step 3: Run checks**
@@ -2322,3 +1568,18 @@ Expected:
 
 - Working tree is clean except intentional local ignored files.
 - Recent commits match completed tasks.
+
+## Post-Plan Manual Checks
+
+Before paid users:
+
+- Start app with `COMMERCIAL_MODE_ENABLED=true` and missing env vars; confirm startup fails clearly.
+- Start app with valid Postgres/Redis env vars; confirm health endpoint and auth routes work.
+- Confirm unauthenticated `/api/simulation-tasks`, `/api/simulations`, and `/api/simulations/stream` cannot bypass credits.
+- Register a user, redeem an access code, run ordinary task, confirm one credit captured.
+- Run deep task, confirm three credits captured.
+- Force worker failure, confirm credits release once.
+- Retry worker completion callback, confirm credits are not double-captured.
+- Configure BYOK with blocked URL, confirm rejection.
+- Configure allowed BYOK provider with bad key, confirm clear failure and credit release.
+- Generate and disable access code as admin, confirm audit logs.
