@@ -114,6 +114,17 @@ export interface UserFeedbackRecord {
   createdAt: Date;
 }
 
+export interface UserModelProviderRecord {
+  id: string;
+  userId: string;
+  provider: "openai_compatible";
+  baseUrl: string;
+  encryptedApiKey: string;
+  model: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface AnalyticsEventRecord {
   id: string;
   userId?: string;

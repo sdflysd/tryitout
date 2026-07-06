@@ -11,6 +11,7 @@ import type {
   SystemSettingRecord,
   UserCreditAccountRecord,
   UserFeedbackRecord,
+  UserModelProviderRecord,
 } from "./types.js";
 
 export interface CommercialRepository {
@@ -45,6 +46,10 @@ export interface CommercialRepository {
   getSimulationReport(reportId: string): Promise<SimulationReportRecord | undefined>;
   getSimulationReportForTask(taskId: string): Promise<SimulationReportRecord | undefined>;
 
+  saveUserModelProvider(provider: UserModelProviderRecord): Promise<void>;
+  getUserModelProvider(userId: string): Promise<UserModelProviderRecord | undefined>;
+  deleteUserModelProvider(userId: string): Promise<void>;
+
   appendUserFeedback(feedback: UserFeedbackRecord): Promise<void>;
   appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void>;
 
@@ -64,6 +69,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   private accessCodeRedemptions = new Map<string, AccessCodeRedemptionRecord>();
   private tasks = new Map<string, CommercialSimulationTaskRecord>();
   private reports = new Map<string, SimulationReportRecord>();
+  private modelProviders = new Map<string, UserModelProviderRecord>();
   private feedback: UserFeedbackRecord[] = [];
   private analyticsEvents: AnalyticsEventRecord[] = [];
   private auditLogs: AdminAuditLogRecord[] = [];
@@ -207,6 +213,18 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       }
     }
     return undefined;
+  }
+
+  async saveUserModelProvider(provider: UserModelProviderRecord): Promise<void> {
+    this.modelProviders.set(provider.userId, cloneRecord(provider));
+  }
+
+  async getUserModelProvider(userId: string): Promise<UserModelProviderRecord | undefined> {
+    return cloneRecord(this.modelProviders.get(userId));
+  }
+
+  async deleteUserModelProvider(userId: string): Promise<void> {
+    this.modelProviders.delete(userId);
   }
 
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {

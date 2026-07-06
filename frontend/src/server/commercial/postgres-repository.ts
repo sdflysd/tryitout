@@ -13,6 +13,7 @@ import type {
   SystemSettingRecord,
   UserCreditAccountRecord,
   UserFeedbackRecord,
+  UserModelProviderRecord,
 } from "./types.js";
 
 export interface QueryClient {
@@ -110,6 +111,17 @@ interface SimulationReportRow {
   user_id: string;
   report: SimulationReportRecord["report"];
   created_at: Date | string;
+}
+
+interface UserModelProviderRow {
+  id: string;
+  user_id: string;
+  provider_type: UserModelProviderRecord["provider"];
+  base_url: string;
+  encrypted_api_key: string;
+  model_name: string;
+  created_at: Date | string;
+  updated_at: Date | string;
 }
 
 interface AuditLogRow {
@@ -430,6 +442,42 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapSimulationReport(result.rows[0]);
   }
 
+  async saveUserModelProvider(provider: UserModelProviderRecord): Promise<void> {
+    await this.client.query(
+      `INSERT INTO user_model_providers (
+        id, user_id, provider_type, base_url, encrypted_api_key, model_name, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (user_id) DO UPDATE SET
+        provider_type = EXCLUDED.provider_type,
+        base_url = EXCLUDED.base_url,
+        encrypted_api_key = EXCLUDED.encrypted_api_key,
+        model_name = EXCLUDED.model_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        provider.id,
+        provider.userId,
+        provider.provider,
+        provider.baseUrl,
+        provider.encryptedApiKey,
+        provider.model,
+        provider.createdAt,
+        provider.updatedAt,
+      ],
+    );
+  }
+
+  async getUserModelProvider(userId: string): Promise<UserModelProviderRecord | undefined> {
+    const result = await this.client.query<UserModelProviderRow>(
+      "SELECT * FROM user_model_providers WHERE user_id = $1",
+      [userId],
+    );
+    return mapUserModelProvider(result.rows[0]);
+  }
+
+  async deleteUserModelProvider(userId: string): Promise<void> {
+    await this.client.query("DELETE FROM user_model_providers WHERE user_id = $1", [userId]);
+  }
+
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {
     await this.client.query(
       `INSERT INTO user_feedback (id, user_id, task_id, report_id, rating, useful, text, created_at)
@@ -648,6 +696,24 @@ function mapSimulationReport(row: SimulationReportRow | undefined): SimulationRe
     userId: row.user_id,
     report: row.report,
     createdAt: requiredDate(row.created_at),
+  };
+}
+
+function mapUserModelProvider(
+  row: UserModelProviderRow | undefined,
+): UserModelProviderRecord | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    id: row.id,
+    userId: row.user_id,
+    provider: row.provider_type,
+    baseUrl: row.base_url,
+    encryptedApiKey: row.encrypted_api_key,
+    model: row.model_name,
+    createdAt: requiredDate(row.created_at),
+    updatedAt: requiredDate(row.updated_at),
   };
 }
 

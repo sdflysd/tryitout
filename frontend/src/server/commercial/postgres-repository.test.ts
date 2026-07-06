@@ -169,6 +169,56 @@ test("saveCommercialTask persists credit ledger references", async () => {
   assert.deepEqual(client.calls[0].params?.slice(10, 14), ["hold_1", "capture_1", null, "job_1"]);
 });
 
+test("user model provider methods map rows and writes", async () => {
+  const client = new FakeQueryClient();
+  const repository = new PostgresCommercialRepository(client);
+
+  await repository.saveUserModelProvider({
+    id: "provider_1",
+    userId: "user_1",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    encryptedApiKey: "v1:encrypted",
+    model: "gpt-4.1-mini",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  assert.match(client.calls[0].sql, /INSERT INTO user_model_providers/i);
+  assert.deepEqual(client.calls[0].params, [
+    "provider_1",
+    "user_1",
+    "openai_compatible",
+    "https://api.openai.com/v1",
+    "v1:encrypted",
+    "gpt-4.1-mini",
+    now,
+    now,
+  ]);
+
+  client.rows.push([
+    {
+      id: "provider_1",
+      user_id: "user_1",
+      provider_type: "openai_compatible",
+      base_url: "https://api.openai.com/v1",
+      encrypted_api_key: "v1:encrypted",
+      model_name: "gpt-4.1-mini",
+      created_at: now,
+      updated_at: now,
+    },
+  ]);
+
+  const provider = await repository.getUserModelProvider("user_1");
+
+  assert.equal(provider?.encryptedApiKey, "v1:encrypted");
+  assert.equal(provider?.model, "gpt-4.1-mini");
+
+  await repository.deleteUserModelProvider("user_1");
+  assert.match(client.calls.at(-1)?.sql ?? "", /DELETE FROM user_model_providers/i);
+  assert.deepEqual(client.calls.at(-1)?.params, ["user_1"]);
+});
+
 test("appendAdminAuditLog inserts actor, action, target, and metadata", async () => {
   const client = new FakeQueryClient();
   const repository = new PostgresCommercialRepository(client);

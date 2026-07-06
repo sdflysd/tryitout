@@ -9,6 +9,7 @@ import type { CommercialSimulationTaskService } from "./commercial-task-service.
 import { CommercialSimulationTaskServiceError } from "./commercial-task-service.js";
 import { CreditServiceError, type CreditService } from "./credit-service.js";
 import { FeedbackServiceError, type FeedbackService } from "./feedback-service.js";
+import type { ModelProviderService } from "./model-provider-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type { CommercialFeature, CommercialProviderMode, UserTier } from "../../contracts/commercial.js";
 import type { InteractionMode, SimulationType } from "../../types.js";
@@ -21,6 +22,7 @@ export interface CommercialApiServices {
   adminService?: CommercialAdminService;
   analyticsService?: AnalyticsService;
   feedbackService?: FeedbackService;
+  modelProviderService?: ModelProviderService;
 }
 
 export interface CommercialApiOptions {

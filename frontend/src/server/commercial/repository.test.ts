@@ -101,6 +101,27 @@ test("commercial task records can be saved and loaded", async () => {
   ]);
 });
 
+test("user model provider records can be saved, loaded, and deleted", async () => {
+  const repository = new InMemoryCommercialRepository();
+
+  await repository.saveUserModelProvider({
+    id: "provider_1",
+    userId: "user_1",
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    encryptedApiKey: "v1:encrypted",
+    model: "gpt-4.1-mini",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  assert.equal((await repository.getUserModelProvider("user_1"))?.model, "gpt-4.1-mini");
+
+  await repository.deleteUserModelProvider("user_1");
+
+  assert.equal(await repository.getUserModelProvider("user_1"), undefined);
+});
+
 test("audit log records can be appended and listed", async () => {
   const repository = new InMemoryCommercialRepository();
 

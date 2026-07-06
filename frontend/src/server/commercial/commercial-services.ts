@@ -15,6 +15,7 @@ import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
 import { FeedbackService } from "./feedback-service.js";
+import { ModelProviderService } from "./model-provider-service.js";
 import { PostgresCommercialRepository, type QueryClient } from "./postgres-repository.js";
 import type { CommercialRepository } from "./repository.js";
 import type { SimulationQueue } from "./simulation-queue.js";
@@ -93,6 +94,7 @@ export function createCommercialServices<
     repository,
     queue,
     accessCodePepper: env.ACCESS_CODE_PEPPER!,
+    userSecretEncryptionKey: env.USER_SECRET_ENCRYPTION_KEY!,
   });
 }
 
@@ -100,6 +102,7 @@ function createRuntimeServices(input: {
   repository: CommercialRepository;
   queue: SimulationQueue;
   accessCodePepper: string;
+  userSecretEncryptionKey: string;
 }): CommercialRuntimeServices {
   const authService = new CommercialAuthService(input.repository);
   const creditService = new CreditService(input.repository, {
@@ -110,6 +113,9 @@ function createRuntimeServices(input: {
   });
   const analyticsService = new AnalyticsService(input.repository);
   const feedbackService = new FeedbackService(input.repository);
+  const modelProviderService = new ModelProviderService(input.repository, {
+    masterKey: input.userSecretEncryptionKey,
+  });
   const taskService = new CommercialSimulationTaskService(
     input.repository,
     creditService,
@@ -123,6 +129,7 @@ function createRuntimeServices(input: {
     adminService,
     analyticsService,
     feedbackService,
+    modelProviderService,
   };
 
   return {
