@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 
+import type { CommercialAdminService } from "./admin-service.js";
+import { CommercialAdminServiceError } from "./admin-service.js";
 import type { CommercialAuthService, PublicCommercialUser } from "./auth-service.js";
 import { CommercialAuthServiceError } from "./auth-service.js";
 import type { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CommercialSimulationTaskServiceError } from "./commercial-task-service.js";
 import { CreditServiceError, type CreditService } from "./credit-service.js";
 import type { CommercialRepository } from "./repository.js";
-import type { CommercialProviderMode } from "../../contracts/commercial.js";
+import type { CommercialFeature, CommercialProviderMode, UserTier } from "../../contracts/commercial.js";
 import type { InteractionMode, SimulationType } from "../../types.js";
 
 export interface CommercialApiServices {
@@ -14,6 +16,7 @@ export interface CommercialApiServices {
   authService: CommercialAuthService;
   creditService: CreditService;
   taskService: CommercialSimulationTaskService;
+  adminService?: CommercialAdminService;
 }
 
 export interface CommercialApiOptions {
@@ -59,6 +62,19 @@ export function createCommercialApiHandlers(
     const user = await services.authService.getUserForSessionToken(request.sessionToken);
     if (!user) {
       return { status: 401, body: { error: "auth_required" } };
+    }
+    return user;
+  }
+
+  async function requireAdminUser(
+    request: CommercialApiRequest,
+  ): Promise<PublicCommercialUser | CommercialApiResponse> {
+    const user = await requireUser(request);
+    if (isApiResponse(user)) {
+      return user;
+    }
+    if (!user.isAdmin || !services.adminService) {
+      return { status: 403, body: { error: "admin_required" } };
     }
     return user;
   }
@@ -212,6 +228,114 @@ export function createCommercialApiHandlers(
         return mapError(error);
       }
     },
+
+    async createAdminAccessCode(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const body = request.body as {
+        creditAmount?: number;
+        tier?: UserTier;
+        features?: CommercialFeature[];
+        expiresAt?: string;
+      };
+      try {
+        const accessCode = await services.adminService!.createAccessCode({
+          adminUserId: admin.id,
+          creditAmount: Number(body?.creditAmount ?? 0),
+          tier: body?.tier ?? "basic",
+          features: Array.isArray(body?.features) ? body.features : [],
+          expiresAt: body?.expiresAt ? new Date(body.expiresAt) : undefined,
+        });
+        return { status: 201, body: { accessCode } };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
+    async createAdminAccessCodeBatch(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const body = request.body as {
+        count?: number;
+        creditAmount?: number;
+        tier?: UserTier;
+        features?: CommercialFeature[];
+        expiresAt?: string;
+      };
+      try {
+        const accessCodes = await services.adminService!.createAccessCodeBatch({
+          adminUserId: admin.id,
+          count: Number(body?.count ?? 0),
+          creditAmount: Number(body?.creditAmount ?? 0),
+          tier: body?.tier ?? "basic",
+          features: Array.isArray(body?.features) ? body.features : [],
+          expiresAt: body?.expiresAt ? new Date(body.expiresAt) : undefined,
+        });
+        return { status: 201, body: { accessCodes } };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
+    async disableAdminAccessCode(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const body = request.body as { reason?: string };
+      try {
+        await services.adminService!.disableAccessCode({
+          adminUserId: admin.id,
+          accessCodeId: requireParam(request, "accessCodeId"),
+          reason: String(body?.reason ?? ""),
+        });
+        return { status: 200, body: { ok: true } };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
+    async adjustAdminCredits(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const body = request.body as {
+        userId?: string;
+        amount?: number;
+        reason?: string;
+      };
+      try {
+        const ledgerEntry = await services.adminService!.adjustUserCredits({
+          adminUserId: admin.id,
+          userId: String(body?.userId ?? ""),
+          amount: Number(body?.amount ?? 0),
+          reason: String(body?.reason ?? ""),
+        });
+        return {
+          status: 200,
+          body: {
+            balance: ledgerEntry.balanceAfter,
+            ledgerEntryId: ledgerEntry.id,
+          },
+        };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
+    async listAdminAuditLogs(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const auditLogs = await services.repository.listAdminAuditLogs();
+      return { status: 200, body: { auditLogs } };
+    },
   };
 }
 
@@ -252,6 +376,14 @@ function mapError(error: unknown): CommercialApiResponse<{ error: string }> {
   }
   if (error instanceof CommercialAuthServiceError) {
     return { status: error.code === "email_already_registered" ? 409 : 401, body: { error: error.code } };
+  }
+  if (error instanceof CommercialAdminServiceError) {
+    const status = error.code === "admin_required"
+      ? 403
+      : error.code.endsWith("_not_found")
+        ? 404
+        : 400;
+    return { status, body: { error: error.code } };
   }
   if (error instanceof CreditServiceError) {
     return { status: 400, body: { error: error.code } };

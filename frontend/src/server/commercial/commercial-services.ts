@@ -9,6 +9,7 @@ import {
   createCommercialApiHandlers,
   type CommercialApiServices,
 } from "./commercial-api.js";
+import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
@@ -102,6 +103,9 @@ function createRuntimeServices(input: {
   const creditService = new CreditService(input.repository, {
     accessCodePepper: input.accessCodePepper,
   });
+  const adminService = new CommercialAdminService(input.repository, creditService, {
+    accessCodePepper: input.accessCodePepper,
+  });
   const taskService = new CommercialSimulationTaskService(
     input.repository,
     creditService,
@@ -112,6 +116,7 @@ function createRuntimeServices(input: {
     authService,
     creditService,
     taskService,
+    adminService,
   };
 
   return {

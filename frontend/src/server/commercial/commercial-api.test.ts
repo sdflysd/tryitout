@@ -6,6 +6,7 @@ import {
   type CommercialApiServices,
 } from "./commercial-api.js";
 import { hashAccessCode, maskAccessCode } from "./access-codes.js";
+import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
@@ -52,9 +53,33 @@ interface ReportBody {
   report: Report;
 }
 
+interface CreatedAccessCodeBody {
+  accessCode: {
+    accessCodeId: string;
+    rawCode: string;
+    maskedCode: string;
+  };
+}
+
+interface CreatedAccessCodeBatchBody {
+  accessCodes: Array<{
+    accessCodeId: string;
+    rawCode: string;
+    maskedCode: string;
+  }>;
+}
+
+interface AuditLogsBody {
+  auditLogs: Array<{
+    action: string;
+    targetId: string;
+  }>;
+}
+
 function createHarness(): {
   repository: InMemoryCommercialRepository;
   handlers: ReturnType<typeof createCommercialApiHandlers>;
+  authService: CommercialAuthService;
   taskService: CommercialSimulationTaskService;
 } {
   const repository = new InMemoryCommercialRepository();
@@ -62,6 +87,10 @@ function createHarness(): {
     now: () => now,
   });
   const creditService = new CreditService(repository, {
+    accessCodePepper: pepper,
+    now: () => now,
+  });
+  const adminService = new CommercialAdminService(repository, creditService, {
     accessCodePepper: pepper,
     now: () => now,
   });
@@ -76,9 +105,11 @@ function createHarness(): {
     authService,
     creditService,
     taskService,
+    adminService,
   };
   return {
     repository,
+    authService,
     handlers: createCommercialApiHandlers(services, {
       secureCookies: true,
       now: () => now,
@@ -125,6 +156,29 @@ async function registerAndLogin(
     body: { email: "founder@tryitout.ai", password: "password-1" },
   });
   return login.cookies?.[0].value ?? "";
+}
+
+async function createAdminSession(
+  repository: CommercialRepository,
+  authService: CommercialAuthService,
+  handlers: ReturnType<typeof createCommercialApiHandlers>,
+): Promise<string> {
+  await handlers.register({ body: { email: "admin@tryitout.ai", password: "password-1" } });
+  const admin = await repository.findUserByEmail("admin@tryitout.ai");
+  assert.ok(admin);
+  await repository.saveUser({
+    ...admin,
+    tier: "business",
+    features: ["custom_model_provider"],
+    isAdmin: true,
+    updatedAt: now,
+  });
+
+  const login = await authService.login({
+    email: "admin@tryitout.ai",
+    password: "password-1",
+  });
+  return login.sessionToken;
 }
 
 test("register and login handlers return public users and session cookie", async () => {
@@ -239,4 +293,105 @@ test("task status, report, and cancel handlers use session user", async () => {
   const cancelled = await handlers.cancelTask({ sessionToken: token, params: { taskId } });
   assert.equal(cancelled.status, 200);
   assert.equal((cancelled.body as TaskBody).status, "completed");
+});
+
+test("admin handlers reject non-admin sessions", async () => {
+  const { handlers } = createHarness();
+  const token = await registerAndLogin(handlers);
+
+  const response = await handlers.createAdminAccessCode({
+    sessionToken: token,
+    body: { creditAmount: 10, tier: "pro", features: [] },
+  });
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(response.body, { error: "admin_required" });
+});
+
+test("admin can create one access code", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+
+  const response = await handlers.createAdminAccessCode({
+    sessionToken: adminToken,
+    body: {
+      creditAmount: 30,
+      tier: "pro",
+      features: ["custom_model_provider"],
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.body as CreatedAccessCodeBody;
+  assert.match(body.accessCode.rawCode, /^TIO-/);
+  assert.match(body.accessCode.maskedCode, /\*\*\*\*/);
+  const stored = await repository.getAccessCode(body.accessCode.accessCodeId);
+  assert.equal(stored?.creditAmount, 30);
+  assert.equal((stored as { rawCode?: string } | undefined)?.rawCode, undefined);
+});
+
+test("admin can batch create access codes", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+
+  const response = await handlers.createAdminAccessCodeBatch({
+    sessionToken: adminToken,
+    body: {
+      count: 3,
+      creditAmount: 12,
+      tier: "basic",
+      features: [],
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.body as CreatedAccessCodeBatchBody;
+  assert.equal(body.accessCodes.length, 3);
+  assert.equal(new Set(body.accessCodes.map((code) => code.rawCode)).size, 3);
+  for (const code of body.accessCodes) {
+    assert.equal((await repository.getAccessCode(code.accessCodeId))?.status, "active");
+  }
+});
+
+test("admin can disable code and list audit logs", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+  const created = await handlers.createAdminAccessCode({
+    sessionToken: adminToken,
+    body: { creditAmount: 10, tier: "basic", features: [] },
+  });
+  const accessCodeId = (created.body as CreatedAccessCodeBody).accessCode.accessCodeId;
+
+  const disabled = await handlers.disableAdminAccessCode({
+    sessionToken: adminToken,
+    params: { accessCodeId },
+    body: { reason: "leaked" },
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await repository.getAccessCode(accessCodeId))?.status, "disabled");
+
+  const logs = await handlers.listAdminAuditLogs({ sessionToken: adminToken });
+  assert.equal(logs.status, 200);
+  assert.equal((logs.body as AuditLogsBody).auditLogs.at(-1)?.action, "access_code.disabled");
+});
+
+test("admin can adjust credits", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+  const userToken = await registerAndLogin(handlers);
+  const user = (await handlers.me({ sessionToken: userToken })).body.user;
+  assert.ok(user);
+
+  const response = await handlers.adjustAdminCredits({
+    sessionToken: adminToken,
+    body: {
+      userId: user.id,
+      amount: 9,
+      reason: "beta grant",
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal((response.body as BalanceBody).balance, 9);
+  assert.equal((await repository.getCreditAccount(user.id))?.balance, 9);
 });
