@@ -53,6 +53,7 @@ frontend/playwright-report/
 .claude/
 .agents/
 .codex/
+.worktrees/
 .git.broken-backup/
 
 # OS/editor noise
