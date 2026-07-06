@@ -14,6 +14,11 @@ import {
 } from "./src/server/ai/provider-config.js";
 import { resolveAgentRuntimeCapabilities } from "./src/server/agent-runtime/capabilities.js";
 import { buildRuntimeDiagnostics } from "./src/server/agent-runtime/diagnostics.js";
+import {
+  extractCommercialSessionToken,
+  isCommercialModeEnabled,
+  resolveCommercialSimulationRoute,
+} from "./src/server/commercial/commercial-mode-routing.js";
 import { resolveInteractionMode } from "./src/server/interaction-mode.js";
 import { handleLifeChoiceStructureRequest } from "./src/server/life-choice-structure-api.js";
 import { runMultiAgentSimulation } from "./src/server/simulations/multi-agent-runner.js";
@@ -46,6 +51,7 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const commercialModeEnabled = isCommercialModeEnabled();
 
 app.use(express.json());
 
@@ -219,6 +225,19 @@ app.post("/api/life-choice/structure", async (req, res) => {
 });
 
 app.post("/api/simulation-tasks", async (req, res) => {
+  const commercialRoute = resolveCommercialSimulationRoute({
+    commercialModeEnabled,
+    method: req.method,
+    path: req.path,
+    sessionToken: extractCommercialSessionToken(req.headers.cookie),
+  });
+  if (commercialRoute.kind === "reject") {
+    return res.status(commercialRoute.status).json({ error: commercialRoute.error });
+  }
+  if (commercialRoute.kind === "commercial_task") {
+    return res.status(503).json({ error: "commercial_services_unavailable" });
+  }
+
   const result = await handleCreateSimulationTaskRequest(req.body, {
     service: taskService,
   });
@@ -273,6 +292,16 @@ app.get("/api/admin/simulation-tasks/:id/cost-summary", async (req, res) => {
 
 // API: Run multi-agent simulation for Side Hustle, Dating, or Life Choice
 app.post("/api/simulations", async (req, res) => {
+  const commercialRoute = resolveCommercialSimulationRoute({
+    commercialModeEnabled,
+    method: req.method,
+    path: req.path,
+    sessionToken: extractCommercialSessionToken(req.headers.cookie),
+  });
+  if (commercialRoute.kind === "reject") {
+    return res.status(commercialRoute.status).json({ error: commercialRoute.error });
+  }
+
   try {
     const userInput = req.body.userInput as UserInput | undefined;
     const validationError = validateSimulationInput(userInput);
@@ -319,6 +348,16 @@ app.post("/api/simulations", async (req, res) => {
 });
 
 app.post("/api/simulations/stream", async (req, res) => {
+  const commercialRoute = resolveCommercialSimulationRoute({
+    commercialModeEnabled,
+    method: req.method,
+    path: req.path,
+    sessionToken: extractCommercialSessionToken(req.headers.cookie),
+  });
+  if (commercialRoute.kind === "reject") {
+    return res.status(commercialRoute.status).json({ error: commercialRoute.error });
+  }
+
   const userInput = req.body.userInput as UserInput | undefined;
   const validationError = validateSimulationInput(userInput);
   if (validationError) {
