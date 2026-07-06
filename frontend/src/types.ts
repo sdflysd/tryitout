@@ -2,6 +2,7 @@ export type SimulationType = 'side_hustle' | 'dating' | 'life_choice';
 export type ModelSelectionMode = 'fast' | 'balanced' | 'deep';
 
 export type SimulationProgressStep =
+  | "safety_check"
   | "generate_agents"
   | "initialize_world_state"
   | "simulate_stage"
@@ -107,6 +108,34 @@ export interface AgentMemory {
   lastPosition?: AgentVerdict;
 }
 
+export type AgentRoleCardCategory =
+  | "user_inner_system"
+  | "stakeholder"
+  | "opposition_competition"
+  | "environment_system"
+  | "expert_arbiter"
+  | "counterfactual_system";
+
+export interface AgentRoleCard {
+  category: AgentRoleCardCategory;
+  identity: string;
+  realWorldArchetype: string;
+  relationshipToUser: string;
+  goal: string;
+  fears: string[];
+  knownInfo: string[];
+  unknownInfo: string[];
+  capabilities: string[];
+  triggerConditions: string[];
+  decisionModel: string;
+  stateInfluence: string[];
+  speakingStyle: string;
+  forbiddenBehaviors: string[];
+  memoryPolicy: string;
+}
+
+export type AgentRoleCardDraft = Partial<AgentRoleCard>;
+
 export type AgentActionType =
   | "like"
   | "dislike"
@@ -173,6 +202,7 @@ export interface Agent {
   stance: string; // '支持' | '质疑' | '观望' | '拷打'
   personality?: string;
   personalityKernel?: AgentPersonalityKernel;
+  roleCard?: AgentRoleCardDraft;
   memory?: AgentMemory;
   keyJudgment: string;
   objection?: string;
@@ -242,6 +272,7 @@ export interface SimulationRuntimeDiagnostics {
 
 export interface Report {
   projectName: string;
+  disclaimer?: string;
   successProbability: number;
   expectedRevenue: string; // (or DatingOutcome/ChoiceOutcome description)
   riskLevel: 'low' | 'medium' | 'high' | 'very_high';
@@ -261,6 +292,13 @@ export interface Report {
     title: string;
     description: string;
   }[];
+  agentEvidence?: {
+    conclusion: string;
+    supportingAgentIds: string[];
+    opposingAgentIds: string[];
+    evidence: string;
+  }[];
+  disagreementSummary?: string;
   actionPlan7Days: {
     day: number;
     title: string;

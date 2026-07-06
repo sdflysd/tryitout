@@ -13,6 +13,9 @@ export interface AiCallLogEntry {
   inputTokens?: number;
   outputTokens?: number;
   latencyMs?: number;
+  transport?: AiCallResult["transport"];
+  firstByteLatencyMs?: number;
+  streamChunkCount?: number;
   success: boolean;
   errorCode?: string;
   errorMessage?: string;
@@ -43,6 +46,9 @@ export function createLogEntry(
     inputTokens: result?.usage?.inputTokens,
     outputTokens: result?.usage?.outputTokens,
     latencyMs: result?.latencyMs,
+    transport: result?.transport,
+    firstByteLatencyMs: result?.firstByteLatencyMs,
+    streamChunkCount: result?.streamChunkCount,
     success: !error,
     errorCode: getSafeErrorCode(error),
     errorMessage: getSafeErrorMessage(error),

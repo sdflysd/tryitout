@@ -123,6 +123,9 @@ test("createDebugTraceEntry records prompt scale, generation config, and interac
       modelId: "gemini-3.5-flash",
       modelProfileId: "gemini_flash_fast",
       latencyMs: 1234,
+      transport: "stream",
+      firstByteLatencyMs: 1200,
+      streamChunkCount: 18,
     },
     undefined,
   );
@@ -134,6 +137,9 @@ test("createDebugTraceEntry records prompt scale, generation config, and interac
     timeoutMs: 90_000,
     maxRetries: 1,
   });
+  assert.equal(entry.transport, "stream");
+  assert.equal(entry.firstByteLatencyMs, 1200);
+  assert.equal(entry.streamChunkCount, 18);
   assert.deepEqual(entry.interactionMetadata, {
     activatedAgentCount: 5,
     requiredActionCount: 7,

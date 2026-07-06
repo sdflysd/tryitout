@@ -1,4 +1,5 @@
 import type { SimulationProgressStep, SimulationType } from "../types";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 
 export interface SandboxAgent {
   id: string;
@@ -55,8 +56,25 @@ const METRICS: SandboxScenario["metrics"] = [
   { id: "momentum", label: "动量" },
 ];
 
-function createCollaborationLinks(type: SimulationType, agentIds: string[]): SandboxCollaborationLink[] {
+const EN_METRICS: SandboxScenario["metrics"] = [
+  { id: "risk", label: "Risk" },
+  { id: "confidence", label: "Confidence" },
+  { id: "pressure", label: "Pressure" },
+  { id: "momentum", label: "Momentum" },
+];
+
+const LINK_LABELS = {
+  zh: ["支持", "协作", "质疑", "压测", "仲裁", "裁决", "汇聚", "信号汇聚"],
+  en: ["Support", "Collaborate", "Challenge", "Stress Test", "Arbitrate", "Decide", "Synthesize", "Signal Merge"],
+} as const;
+
+function createCollaborationLinks(
+  type: SimulationType,
+  agentIds: string[],
+  language: Language = DEFAULT_LANGUAGE,
+): SandboxCollaborationLink[] {
   const [first, second, third, fourth, fifth, sixth, arbiter] = agentIds;
+  const labels = language === "en-US" ? LINK_LABELS.en : LINK_LABELS.zh;
 
   return [
     {
@@ -64,56 +82,56 @@ function createCollaborationLinks(type: SimulationType, agentIds: string[]): San
       sourceAgentId: first,
       targetAgentId: fourth,
       mode: "support",
-      label: "支持",
+      label: labels[0],
     },
     {
       id: `${type}-support-context`,
       sourceAgentId: third,
       targetAgentId: fifth,
       mode: "support",
-      label: "协作",
+      label: labels[1],
     },
     {
       id: `${type}-challenge-primary`,
       sourceAgentId: second,
       targetAgentId: first,
       mode: "challenge",
-      label: "质疑",
+      label: labels[2],
     },
     {
       id: `${type}-challenge-risk`,
       sourceAgentId: sixth,
       targetAgentId: fourth,
       mode: "challenge",
-      label: "压测",
+      label: labels[3],
     },
     {
       id: `${type}-arbitrate-risk`,
       sourceAgentId: sixth,
       targetAgentId: arbiter,
       mode: "arbitrate",
-      label: "仲裁",
+      label: labels[4],
     },
     {
       id: `${type}-arbitrate-result`,
       sourceAgentId: arbiter,
       targetAgentId: first,
       mode: "arbitrate",
-      label: "裁决",
+      label: labels[5],
     },
     {
       id: `${type}-synthesize-actions`,
       sourceAgentId: fourth,
       targetAgentId: arbiter,
       mode: "synthesize",
-      label: "汇聚",
+      label: labels[6],
     },
     {
       id: `${type}-synthesize-constraints`,
       sourceAgentId: fifth,
       targetAgentId: arbiter,
       mode: "synthesize",
-      label: "信号汇聚",
+      label: labels[7],
     },
   ];
 }
@@ -223,6 +241,111 @@ const SCENARIOS: Record<SimulationType, SandboxScenario> = {
   },
 };
 
+const EN_SCENARIOS: Record<SimulationType, SandboxScenario> = {
+  side_hustle: {
+    type: "side_hustle",
+    title: "Side Hustle Sandbox",
+    centerLabel: "Your side-hustle plan",
+    accentName: "amber",
+    accentClassName: "border-amber-300 bg-amber-50",
+    textClassName: "text-amber-700",
+    metrics: EN_METRICS,
+    agents: [
+      { id: "side_hustle-target-customer", label: "Target Customer", role: "Demand Validation", stance: "Skeptical" },
+      { id: "side_hustle-competitor", label: "Competitor", role: "Market Pressure", stance: "Aggressive" },
+      { id: "side_hustle-platform-traffic", label: "Platform Traffic", role: "Acquisition Variable", stance: "Volatile" },
+      { id: "side_hustle-execution-coach", label: "Execution Coach", role: "Pace Management", stance: "Pushes" },
+      { id: "side_hustle-cash-flow", label: "Cash Flow", role: "Monetization Constraint", stance: "Careful" },
+      { id: "side_hustle-risk-audit", label: "Risk Audit", role: "Vulnerability Scan", stance: "Critical" },
+      { id: "side_hustle-arbiter", label: "Arbiter", role: "Final Judgment", stance: "Neutral" },
+    ],
+    collaborationLinks: createCollaborationLinks("side_hustle", [
+      "side_hustle-target-customer",
+      "side_hustle-competitor",
+      "side_hustle-platform-traffic",
+      "side_hustle-execution-coach",
+      "side_hustle-cash-flow",
+      "side_hustle-risk-audit",
+      "side_hustle-arbiter",
+    ], "en-US"),
+    stages: [
+      { id: "side_hustle-stage-1", label: "Days 1-3", title: "Demand Probe", focus: "Validate real pain" },
+      { id: "side_hustle-stage-2", label: "Days 4-7", title: "Minimum Delivery", focus: "Create a testable version" },
+      { id: "side_hustle-stage-3", label: "Days 8-15", title: "Traffic Test", focus: "Observe acquisition quality" },
+      { id: "side_hustle-stage-4", label: "Days 16-23", title: "Payment Validation", focus: "Test cash return" },
+      { id: "side_hustle-stage-5", label: "Days 24-30", title: "Review Verdict", focus: "Decide continue or pivot" },
+    ],
+  },
+  dating: {
+    type: "dating",
+    title: "Relationship Sandbox",
+    centerLabel: "Your relationship move",
+    accentName: "rose",
+    accentClassName: "border-rose-300 bg-rose-50",
+    textClassName: "text-rose-700",
+    metrics: EN_METRICS,
+    agents: [
+      { id: "dating-ta", label: "TA", role: "Other Person's View", stance: "Observing" },
+      { id: "dating-communication-coach", label: "Communication Coach", role: "Expression Strategy", stance: "Guides" },
+      { id: "dating-boundary", label: "Boundary", role: "Relationship Limits", stance: "Protects" },
+      { id: "dating-emotion", label: "Emotion", role: "Feeling Volatility", stance: "Sensitive" },
+      { id: "dating-reality", label: "Reality", role: "Life Constraints", stance: "Practical" },
+      { id: "dating-friend", label: "Outside Friend", role: "External Reminder", stance: "Direct" },
+      { id: "dating-arbiter", label: "Arbiter", role: "Final Judgment", stance: "Neutral" },
+    ],
+    collaborationLinks: createCollaborationLinks("dating", [
+      "dating-ta",
+      "dating-communication-coach",
+      "dating-boundary",
+      "dating-emotion",
+      "dating-reality",
+      "dating-friend",
+      "dating-arbiter",
+    ], "en-US"),
+    stages: [
+      { id: "dating-stage-1", label: "Days 1-3", title: "Signal Reading", focus: "Read real feedback" },
+      { id: "dating-stage-2", label: "Days 4-7", title: "Expression Tuning", focus: "Adjust communication" },
+      { id: "dating-stage-3", label: "Days 8-15", title: "Boundary Test", focus: "Watch respect and response" },
+      { id: "dating-stage-4", label: "Days 16-23", title: "Conflict Preview", focus: "Stress-test interaction" },
+      { id: "dating-stage-5", label: "Days 24-30", title: "Relationship Verdict", focus: "Move closer or step back" },
+    ],
+  },
+  life_choice: {
+    type: "life_choice",
+    title: "Life Choice Sandbox",
+    centerLabel: "Your key decision",
+    accentName: "indigo",
+    accentClassName: "border-indigo-300 bg-indigo-50",
+    textClassName: "text-indigo-700",
+    metrics: EN_METRICS,
+    agents: [
+      { id: "life_choice-option-a", label: "Option A", role: "Path Upside", stance: "Advocates" },
+      { id: "life_choice-option-b", label: "Option B", role: "Alternative Path", stance: "Advocates" },
+      { id: "life_choice-future-self", label: "Future Self", role: "Long-Term View", stance: "Reminds" },
+      { id: "life_choice-family", label: "Family Reality", role: "Support System", stance: "Conservative" },
+      { id: "life_choice-resources", label: "Resources", role: "Constraint Check", stance: "Calm" },
+      { id: "life_choice-fear", label: "Core Fear", role: "Mental Friction", stance: "Amplifies" },
+      { id: "life_choice-arbiter", label: "Arbiter", role: "Final Judgment", stance: "Neutral" },
+    ],
+    collaborationLinks: createCollaborationLinks("life_choice", [
+      "life_choice-option-a",
+      "life_choice-option-b",
+      "life_choice-future-self",
+      "life_choice-family",
+      "life_choice-resources",
+      "life_choice-fear",
+      "life_choice-arbiter",
+    ], "en-US"),
+    stages: [
+      { id: "life_choice-stage-1", label: "Days 1-3", title: "Option Breakdown", focus: "Clarify the structure" },
+      { id: "life_choice-stage-2", label: "Days 4-7", title: "Resource Check", focus: "Confirm the real base" },
+      { id: "life_choice-stage-3", label: "Days 8-15", title: "Pressure Simulation", focus: "Preview the hard part" },
+      { id: "life_choice-stage-4", label: "Days 16-23", title: "Long-Term View", focus: "Compare regret costs" },
+      { id: "life_choice-stage-5", label: "Days 24-30", title: "Action Verdict", focus: "Choose the next move" },
+    ],
+  },
+};
+
 const STEP_LABELS: Partial<Record<SimulationProgressStep, string>> = {
   generate_agents: "智能体入场",
   initialize_world_state: "世界初始化",
@@ -231,6 +354,16 @@ const STEP_LABELS: Partial<Record<SimulationProgressStep, string>> = {
   generate_agent_actions: "智能体交互",
   arbitrate_stage: "裁判仲裁",
   generate_report: "报告合成",
+};
+
+const EN_STEP_LABELS: Partial<Record<SimulationProgressStep, string>> = {
+  generate_agents: "Agents Arriving",
+  initialize_world_state: "World Setup",
+  simulate_stage: "Stage Simulation",
+  generate_world_event: "Event Generation",
+  generate_agent_actions: "Agent Interaction",
+  arbitrate_stage: "Arbiter Review",
+  generate_report: "Report Synthesis",
 };
 
 const STEP_INTERACTION_MODES: Partial<Record<SimulationProgressStep, SandboxInteractionMode>> = {
@@ -283,8 +416,8 @@ function copyScenario(scenario: SandboxScenario): SandboxScenario {
   };
 }
 
-export function getAgentSandboxScenario(type: SimulationType): SandboxScenario {
-  return copyScenario(SCENARIOS[type]);
+export function getAgentSandboxScenario(type: SimulationType, language: Language = DEFAULT_LANGUAGE): SandboxScenario {
+  return copyScenario((language === "en-US" ? EN_SCENARIOS : SCENARIOS)[type]);
 }
 
 export function getLiveSandboxPhase(input: {
@@ -292,14 +425,20 @@ export function getLiveSandboxPhase(input: {
   step?: SimulationProgressStep;
   percent: number;
   stageIndex?: number;
+  language?: Language;
 }): LiveSandboxPhase {
   const activeStageIndex =
     input.stageIndex === undefined
       ? getStageIndexFromPercent(input.percent)
       : clampStageIndex(input.stageIndex - 1);
 
+  const language = input.language ?? DEFAULT_LANGUAGE;
+  const stepLabels = language === "en-US" ? EN_STEP_LABELS : STEP_LABELS;
+
   return {
-    label: input.step === undefined ? "准备中" : STEP_LABELS[input.step] ?? "推演中",
+    label: input.step === undefined
+      ? language === "en-US" ? "Preparing" : "准备中"
+      : stepLabels[input.step] ?? (language === "en-US" ? "Simulating" : "推演中"),
     activeStageIndex,
     interactionMode: input.step === undefined ? "observe" : STEP_INTERACTION_MODES[input.step] ?? "observe",
     activeAgentIds: resolvePhaseActiveAgentIds(

@@ -7,6 +7,7 @@ import {
 } from "./agent-sandbox-model.js";
 
 const EXPECTED_STAGE_LABELS = ["第 1-3 天", "第 4-7 天", "第 8-15 天", "第 16-23 天", "第 24-30 天"];
+const EXPECTED_EN_STAGE_LABELS = ["Days 1-3", "Days 4-7", "Days 8-15", "Days 16-23", "Days 24-30"];
 
 test("side hustle sandbox exposes seven business agents and amber accent", () => {
   const scenario = getAgentSandboxScenario("side_hustle");
@@ -16,6 +17,20 @@ test("side hustle sandbox exposes seven business agents and amber accent", () =>
   assert.deepEqual(
     scenario.agents.map((agent) => agent.label),
     ["目标客户", "竞品", "平台流量", "执行教练", "现金流", "风险审计", "裁判"],
+  );
+});
+
+test("side hustle sandbox can render English scenario labels", () => {
+  const scenario = getAgentSandboxScenario("side_hustle", "en-US");
+
+  assert.equal(scenario.title, "Side Hustle Sandbox");
+  assert.deepEqual(
+    scenario.agents.map((agent) => agent.label),
+    ["Target Customer", "Competitor", "Platform Traffic", "Execution Coach", "Cash Flow", "Risk Audit", "Arbiter"],
+  );
+  assert.deepEqual(
+    scenario.stages.map((stage) => stage.label),
+    EXPECTED_EN_STAGE_LABELS,
   );
 });
 
@@ -67,6 +82,7 @@ test("live sandbox phase maps backend steps into visual phases", () => {
   assert.equal(getLiveSandboxPhase({ step: "generate_agents", percent: 10 }).label, "智能体入场");
   assert.equal(getLiveSandboxPhase({ step: "simulate_stage", percent: 55, stageIndex: 3 }).activeStageIndex, 2);
   assert.equal(getLiveSandboxPhase({ step: "generate_report", percent: 96 }).label, "报告合成");
+  assert.equal(getLiveSandboxPhase({ step: "generate_report", percent: 96, language: "en-US" }).label, "Report Synthesis");
 });
 
 test("sandbox scenarios expose explicit agent collaboration links", () => {

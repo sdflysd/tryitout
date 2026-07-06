@@ -192,3 +192,52 @@ test("report view renders outcome feedback panel", () => {
   assert.match(html, /后续真实结果/);
   assert.match(html, /simulation-outcome-feedback/);
 });
+
+test("report view renders report disclaimer when present", () => {
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={{
+        ...reportSimulation,
+        report: {
+          ...reportSimulation.report,
+          disclaimer: "本报告仅用于模拟参考，不构成投资、职业、法律或心理建议。",
+        },
+      }}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.match(html, /仅用于模拟参考/);
+  assert.match(html, /不构成投资/);
+});
+
+test("report view renders agent-backed evidence when present", () => {
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={{
+        ...reportSimulation,
+        report: {
+          ...reportSimulation.report,
+          disagreementSummary: "客户 Agent 和商业导师分歧最大。",
+          agentEvidence: [
+            {
+              conclusion: "先做人工服务验证。",
+              supportingAgentIds: ["customer_agent"],
+              opposingAgentIds: ["self_agent"],
+              evidence: "客户需要真实案例。",
+            },
+          ],
+        },
+      }}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Agent 分歧证据/);
+  assert.match(html, /先做人工服务验证/);
+  assert.match(html, /客户需要真实案例/);
+});

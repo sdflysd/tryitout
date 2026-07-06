@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Simulation, UserInput } from "./types.js";
 
@@ -14,6 +16,15 @@ test("simulation request body defaults interaction mode to legacy", async () => 
     userInput,
     interactionMode: "legacy",
   });
+});
+
+test("app header exposes a language switch", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(<App />);
+
+  assert.match(html, /btn-toggle-language/);
+  assert.match(html, /aria-label="Switch language to English"/);
+  assert.match(html, />EN</);
 });
 
 test("view changes can reset scroll before showing a new workflow", async () => {

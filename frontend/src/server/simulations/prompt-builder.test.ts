@@ -19,6 +19,12 @@ test("buildSystemInstruction returns the detailed scenario-specific instructions
     buildSystemInstruction("life_choice"),
     /重大人生抉择与机会成本试错沙盘/,
   );
+  assert.match(buildSystemInstruction("side_hustle"), /违法|诈骗|灰产|黑产/);
+  const datingInstruction = buildSystemInstruction("dating");
+  assert.match(datingInstruction, /PUA/);
+  assert.match(datingInstruction, /操控/);
+  assert.match(datingInstruction, /欺骗/);
+  assert.match(buildSystemInstruction("life_choice"), /免责声明/);
 });
 
 test("buildUserPrompt preserves scenario interpolation and fallback behavior", () => {

@@ -17,6 +17,16 @@ test("dating progress copy uses relationship language instead of side-hustle lan
   assert.doesNotMatch(serialized, /副业|搞钱|创业|商业|获客|付费|变现|MVP/);
 });
 
+test("progress copy can render English UI text", () => {
+  const copy = getSimulationProgressCopy("side_hustle", "en-US");
+  const serialized = JSON.stringify(copy);
+
+  assert.match(copy.heading, /business/i);
+  assert.match(copy.subHeading, /30 days/i);
+  assert.match(serialized, /target customer|competitor|cash flow/i);
+  assert.doesNotMatch(serialized, /兄弟|副业|获客/);
+});
+
 test("life-choice progress copy uses decision language instead of side-hustle language", () => {
   const copy = getSimulationProgressCopy("life_choice");
   const serialized = JSON.stringify(copy);
@@ -39,6 +49,14 @@ test("progress display state follows backend event percent and label", () => {
     percent: 50,
     logs: ["正在推演第 8-15 天：核心矛盾逼近..."],
     activeMessage: "正在推演第 8-15 天：核心矛盾逼近...",
+  });
+});
+
+test("progress display state has an English establishing state", () => {
+  assert.deepEqual(getProgressDisplayState(null, "en-US"), {
+    percent: 0,
+    logs: ["Waiting for backend progress events and opening the sandbox connection..."],
+    activeMessage: "Waiting for backend progress events...",
   });
 });
 
@@ -87,4 +105,39 @@ test("SimulationProgress renders the live agent sandbox", () => {
   assert.match(html, /42%/);
   assert.match(html, /TA Agent 正在回应沟通策略/);
   assert.match(html, /沟通教练/);
+});
+
+test("SimulationProgress renders English error recovery copy", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating={false}
+      simulationType="side_hustle"
+      errorMsg="model timeout"
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+      language="en-US"
+    />,
+  );
+
+  assert.match(html, /Sandbox simulation failed/);
+  assert.match(html, /The model run did not complete/);
+  assert.match(html, /Restart simulation/);
+  assert.match(html, /Edit input/);
+  assert.doesNotMatch(html, /沙盘模拟计算失败|重新开始模拟|修改输入配置/);
+});
+
+test("SimulationProgress labels recoverable failures as resumable", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating={false}
+      simulationType="life_choice"
+      errorMsg="model_timeout"
+      canResume
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+    />,
+  );
+
+  assert.match(html, /继续模拟/);
+  assert.doesNotMatch(html, /重新开始模拟/);
 });

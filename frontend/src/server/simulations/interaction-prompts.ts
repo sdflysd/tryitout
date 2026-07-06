@@ -107,9 +107,26 @@ function compactEvent(event: Event): string {
 function compactAgents(agents: Agent[]): string {
   return agents
     .map((agent) =>
-      `${agent.id}(${agent.name}; role=${agent.role}; stance=${agent.stance ?? "n/a"}; judgment=${agent.keyJudgment ?? "n/a"}; ${compactPersonality(agent)}; ${compactMemory(agent)})`,
+      `${agent.id}(${agent.name}; role=${agent.role}; stance=${agent.stance ?? "n/a"}; judgment=${agent.keyJudgment ?? "n/a"}; ${compactRoleCard(agent)}; ${compactPersonality(agent)}; ${compactMemory(agent)})`,
     )
     .join(" | ");
+}
+
+function compactRoleCard(agent: Agent): string {
+  const roleCard = agent.roleCard;
+  if (!roleCard) {
+    return "roleCard=none";
+  }
+
+  return [
+    `roleCard=${roleCard.category ?? "unknown"}`,
+    `identity:${roleCard.identity ?? "n/a"}`,
+    `goal:${roleCard.goal ?? "n/a"}`,
+    `fear:${roleCard.fears?.[0] ?? "none"}`,
+    `trigger:${roleCard.triggerConditions?.[0] ?? "none"}`,
+    `decision:${roleCard.decisionModel ?? "n/a"}`,
+    `influence:${roleCard.stateInfluence?.slice(0, 2).join("/") ?? "none"}`,
+  ].join("; ");
 }
 
 function compactPersonality(agent: Agent): string {

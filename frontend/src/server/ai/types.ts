@@ -156,4 +156,7 @@ export interface AiCallResult<T = unknown> {
   latencyMs: number;
   requestId?: string;
   stopReason?: string;
+  transport?: "single_response" | "stream";
+  firstByteLatencyMs?: number;
+  streamChunkCount?: number;
 }

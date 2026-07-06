@@ -5,14 +5,19 @@ import { AiGateway } from "../ai/ai-gateway.js";
 import type { AiProviderAdapter } from "../ai/adapters/provider-adapter.js";
 import type { AiCallRequest, AiCallResult } from "../ai/types.js";
 import type {
+  SimulationCheckpointSnapshot,
+} from "./multi-agent-runner.js";
+import { runMultiAgentSimulation } from "./multi-agent-runner.js";
+import type {
   Agent,
+  AgentAction,
+  AgentVote,
   Report,
   SimulationProgressEvent,
   SimulationStage,
   UserInput,
   WorldState,
 } from "../../types.js";
-import { runMultiAgentSimulation } from "./multi-agent-runner.js";
 
 class StepwiseStubAdapter implements AiProviderAdapter {
   readonly provider = "gemini" as const;
@@ -20,6 +25,10 @@ class StepwiseStubAdapter implements AiProviderAdapter {
 
   async generateJson<T>(request: AiCallRequest): Promise<AiCallResult<T>> {
     this.calls.push(request);
+
+    if (request.step === "safety_check") {
+      return makeResult<T>(request, { allowed: true, reason: "safe" });
+    }
 
     if (request.step === "generate_agents") {
       return makeResult<T>(request, { agents: makeAgents() });
@@ -48,116 +57,7 @@ class StepwiseStubAdapter implements AiProviderAdapter {
     }
 
     if (request.step === "generate_agent_actions") {
-      return makeResult<T>(request, {
-        actions: [
-          {
-            id: `action_like_${request.metadata.stageIndex}`,
-            type: "like",
-            actorAgentId: "agent_1",
-            targetAgentId: "agent_2",
-            content: "先认可对方需要空间的信号。",
-            reason: "低压回应需要建立在理解对方感受上。",
-            impact: "positive",
-            stateDeltaHint: { confidence: 2 },
-          },
-          {
-            id: `action_challenge_${request.metadata.stageIndex}`,
-            type: "challenge",
-            actorAgentId: "agent_1",
-            targetAgentId: "agent_2",
-            content: "先给空间，比继续解释更重要。",
-            reason: "互动需要降低压迫感才能恢复安全感。",
-            impact: "positive",
-            stateDeltaHint: { trafficProgress: 4, confidence: 3 },
-          },
-          {
-            id: `action_warn_${request.metadata.stageIndex}`,
-            type: "warn",
-            actorAgentId: "agent_2",
-            targetAgentId: "agent_1",
-            content: "继续长篇解释会让关系压力升高。",
-            reason: "对方慢热敏感，需要观察而不是被推动。",
-            impact: "negative",
-            stateDeltaHint: { riskLevel: 4 },
-          },
-          {
-            id: `action_reply_${request.metadata.stageIndex}`,
-            type: "reply",
-            actorAgentId: "agent_3",
-            targetAgentId: "agent_1",
-            content: "轻量回应可以继续，但不要马上追问关系定义。",
-            reason: "第三个核心 Agent 需要补充可执行边界。",
-            impact: "positive",
-            stateDeltaHint: { confidence: 2 },
-          },
-          {
-            id: `action_family_challenge_${request.metadata.stageIndex}`,
-            type: "challenge",
-            actorAgentId: "family_pressure_agent",
-            targetAgentId: "agent_1",
-            content: "现实压力没有消失，不要把短暂回复误判成稳定关系。",
-            reason: "外围压力 Agent 会提醒关系推进仍受现实约束。",
-            impact: "negative",
-            stateDeltaHint: { riskLevel: 2 },
-          },
-          {
-            id: `action_group_support_${request.metadata.stageIndex}`,
-            type: "support",
-            actorAgentId: "group_chat_agent",
-            targetAgentId: "agent_3",
-            content: "共同社交氛围保持正常，有助于降低私下沟通压力。",
-            reason: "外围社交信号能支撑低压互动策略。",
-            impact: "positive",
-            stateDeltaHint: { trafficProgress: 2 },
-          },
-          {
-            id: `action_vote_${request.metadata.stageIndex}`,
-            type: "vote",
-            actorAgentId: "agent_1",
-            content: "维持低压推进。",
-            reason: "短期目标是恢复可沟通状态。",
-            impact: "positive",
-            stateDeltaHint: { trafficProgress: 4, confidence: 3 },
-          },
-        ],
-        votes: [
-          {
-            agentId: "agent_1",
-            verdict: "continue",
-            confidence: 72,
-            stateDeltaVote: { trafficProgress: 4, confidence: 3 },
-            rationale: "低压回复能让关系重新进入可沟通状态。",
-          },
-          {
-            agentId: "agent_2",
-            verdict: "continue",
-            confidence: 68,
-            stateDeltaVote: { trafficProgress: 2, confidence: 2 },
-            rationale: "降低解释强度能减少对方压力。",
-          },
-          {
-            agentId: "agent_3",
-            verdict: "continue",
-            confidence: 66,
-            stateDeltaVote: { trafficProgress: 3, confidence: 2 },
-            rationale: "稳定、轻量的表达更容易恢复互动。",
-          },
-          {
-            agentId: "family_pressure_agent",
-            verdict: "wait",
-            confidence: 60,
-            stateDeltaVote: { riskLevel: 2 },
-            rationale: "现实压力仍会影响亲密关系推进。",
-          },
-          {
-            agentId: "group_chat_agent",
-            verdict: "continue",
-            confidence: 61,
-            stateDeltaVote: { trafficProgress: 2 },
-            rationale: "公开氛围稳定后，私下沟通阻力会降低。",
-          },
-        ],
-      });
+      return makeResult<T>(request, makeAgentActionsResponse(request));
     }
 
     if (request.step === "arbitrate_stage") {
@@ -202,6 +102,10 @@ class ThrowingActionsWithLegacyFallbackAdapter implements AiProviderAdapter {
 
   async generateJson<T>(request: AiCallRequest): Promise<AiCallResult<T>> {
     this.calls.push(request);
+
+    if (request.step === "safety_check") {
+      return makeResult<T>(request, { allowed: true, reason: "safe" });
+    }
 
     if (request.step === "generate_agents") {
       return makeResult<T>(request, { agents: makeAgents() });
@@ -260,10 +164,12 @@ test("runMultiAgentSimulation runs separate agent, state, stage, and report step
   assert.equal(result.agents.length, 7);
   assert.equal(result.stages.length, 5);
   assert.equal(result.report.projectName, "冷淡破冰关系推演");
+  assert.match(result.report.disclaimer ?? "", /模拟参考/);
 
   assert.deepEqual(
     adapter.calls.map((call) => call.step),
     [
+      "safety_check",
       "generate_agents",
       "initialize_world_state",
       "simulate_stage",
@@ -285,6 +191,26 @@ test("runMultiAgentSimulation runs separate agent, state, stage, and report step
   );
 });
 
+test("runMultiAgentSimulation rejects unsafe input before agent generation", async () => {
+  const adapter = new StepwiseStubAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+
+  await assert.rejects(
+    () =>
+      runMultiAgentSimulation({
+        gateway,
+        simulationId: "sim-unsafe",
+        userInput: {
+          type: "dating",
+          chatLogOrIssue: "我想用 PUA 套路操控对方并监控她。",
+        },
+      }),
+    /不能帮你推演操控、欺骗、监控或侵犯隐私/,
+  );
+
+  assert.deepEqual(adapter.calls.map((call) => call.step), []);
+});
+
 test("runMultiAgentSimulation emits backend progress events in actual step order", async () => {
   const adapter = new StepwiseStubAdapter();
   const gateway = new AiGateway("test-key", { adapters: [adapter] });
@@ -302,6 +228,7 @@ test("runMultiAgentSimulation emits backend progress events in actual step order
       .filter((event) => event.status === "started")
       .map((event) => `${event.step}:${event.stageIndex ?? ""}`),
     [
+      "safety_check:",
       "generate_agents:",
       "initialize_world_state:",
       "simulate_stage:1",
@@ -318,7 +245,7 @@ test("runMultiAgentSimulation emits backend progress events in actual step order
     progressEvents
       .filter((event) => event.status === "completed")
       .map((event) => event.percent),
-    [13, 25, 38, 50, 63, 75, 88, 100, 100],
+    [10, 20, 30, 40, 50, 60, 70, 80, 100, 100],
   );
   assert.equal(progressEvents.at(-1)?.step, "generate_route_comparison");
   assert.equal(progressEvents.at(-1)?.status, "completed");
@@ -415,6 +342,58 @@ test("runMultiAgentSimulation includes previous stages in later stage prompts", 
   assert.match(fifthStageCall.userPrompt, /阶段 4/);
 });
 
+test("runMultiAgentSimulation resumes from saved checkpoint without rerunning completed setup", async () => {
+  const adapter = new StepwiseStubAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+  const checkpointAgents = makeAgents();
+  const savedStages = [makeStage(1), makeStage(2)];
+  const savedState = savedStages.at(-1)?.stateAfter ?? makeWorldState(6);
+  const checkpointUpdates: SimulationCheckpointSnapshot[] = [];
+
+  const result = await runMultiAgentSimulation({
+    gateway,
+    simulationId: "sim-resume",
+    userInput: makeDatingInput(),
+    resumeFrom: {
+      agents: checkpointAgents,
+      worldState: savedState,
+      completedStages: savedStages,
+      nextStep: "simulate_stage",
+    },
+    onCheckpoint: (checkpoint) => {
+      checkpointUpdates.push(checkpoint);
+    },
+  });
+
+  assert.equal(result.stages.length, 5);
+  assert.deepEqual(
+    adapter.calls.map((call) => `${call.step}:${call.metadata.stageIndex ?? ""}`),
+    [
+      "simulate_stage:3",
+      "simulate_stage:4",
+      "simulate_stage:5",
+      "generate_report:",
+      "generate_route_comparison:",
+    ],
+  );
+  assert.equal(
+    adapter.calls.some(
+      (call) =>
+        call.step === "safety_check" ||
+        call.step === "generate_agents" ||
+        call.step === "initialize_world_state",
+    ),
+    false,
+  );
+  assert.ok(
+    checkpointUpdates.some(
+      (checkpoint) =>
+        checkpoint.nextStep === "generate_report" &&
+        checkpoint.completedStages?.length === 5,
+    ),
+  );
+});
+
 test("runMultiAgentSimulation generates route comparison after report", async () => {
   const adapter = new StepwiseStubAdapter();
   const gateway = new AiGateway("test-key", { adapters: [adapter] });
@@ -459,6 +438,20 @@ test("runMultiAgentSimulation normalizes generated agent personalities", async (
   assert.ok(result.agents.every((agent) => agent.personalityKernel));
 });
 
+test("runMultiAgentSimulation normalizes generated agent role cards", async () => {
+  const adapter = new StepwiseStubAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+
+  const result = await runMultiAgentSimulation({
+    gateway,
+    simulationId: "sim-role-card",
+    userInput: makeDatingInput(),
+  });
+
+  assert.ok(result.agents.every((agent) => agent.roleCard));
+  assert.ok(result.agents.every((agent) => agent.roleCard?.triggerConditions.length));
+});
+
 test("runMultiAgentSimulation carries memory into later interactive stage prompts", async () => {
   const adapter = new StepwiseStubAdapter();
   const gateway = new AiGateway("test-key", { adapters: [adapter] });
@@ -476,6 +469,41 @@ test("runMultiAgentSimulation carries memory into later interactive stage prompt
 
   assert.ok(secondActionsCall);
   assert.match(secondActionsCall.userPrompt, /memory=last:continue/);
+});
+
+test("generate report prompt asks for agent-backed conclusions", async () => {
+  const adapter = new StepwiseStubAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+
+  await runMultiAgentSimulation({
+    gateway,
+    simulationId: "sim-report-agent-citations",
+    userInput: makeDatingInput(),
+  });
+
+  const reportCall = adapter.calls.find((call) => call.step === "generate_report");
+  assert.ok(reportCall);
+  assert.match(reportCall.userPrompt, /每个核心结论必须引用至少一个 Agent/);
+  assert.match(reportCall.userPrompt, /agentEvidence/);
+  assert.match(reportCall.userPrompt, /disagreementSummary/);
+});
+
+test("agent generation prompt keeps composition and role card guards", async () => {
+  const adapter = new StepwiseStubAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+
+  await runMultiAgentSimulation({
+    gateway,
+    simulationId: "sim-generation-prompt-guards",
+    userInput: makeDatingInput(),
+  });
+
+  const generateAgentsCall = adapter.calls.find((call) => call.step === "generate_agents");
+  assert.ok(generateAgentsCall);
+  assert.match(generateAgentsCall.userPrompt, /必须严格生成以下 7 个 Agent 槽位/);
+  assert.match(generateAgentsCall.userPrompt, /category=stakeholder/);
+  assert.match(generateAgentsCall.userPrompt, /forbiddenBehaviors/);
+  assert.match(generateAgentsCall.userPrompt, /memoryPolicy/);
 });
 
 function makeDatingInput(): UserInput {
@@ -499,6 +527,93 @@ function makeAgents(): Agent[] {
     objection: "需要避免情绪上头",
     score: 60 + index,
   }));
+}
+
+function makeAgentActionsResponse(request: AiCallRequest): {
+  actions: AgentAction[];
+  votes: AgentVote[];
+} {
+  const stageIndex = request.metadata.stageIndex;
+  assert.equal(typeof stageIndex, "number");
+  const activatedIds = extractActivatedAgentIds(request.userPrompt);
+  const ids = activatedIds.length > 0 ? activatedIds : ["agent_1", "agent_2", "agent_3"];
+  const actionTypes: NonNullable<SimulationStage["interactions"]>["actions"][number]["type"][] = [
+    "challenge",
+    "reply",
+    "support",
+    "warn",
+    "vote",
+  ];
+  const actions: AgentAction[] = ids.map((agentId, index) => ({
+    id: `action_${stageIndex}_${index + 1}`,
+    type: actionTypes[index % actionTypes.length],
+    actorAgentId: agentId,
+    targetAgentId: ids[(index + 1) % ids.length],
+    content: `${agentId} 对低压推进给出阶段判断。`,
+    reason: "每个激活 Agent 都需要参与本轮讨论。",
+    impact: index % 2 === 0 ? "positive" : "negative",
+    stateDeltaHint: index % 2 === 0 ? { trafficProgress: 2, confidence: 1 } : { riskLevel: 1 },
+  }));
+
+  while (actions.length < 6) {
+    const index = actions.length;
+    actions.push({
+      id: `action_${stageIndex}_${index + 1}`,
+      type: actionTypes[index % actionTypes.length],
+      actorAgentId: ids[index % ids.length],
+      targetAgentId: ids[(index + 1) % ids.length],
+      content: "补充一轮回应，保持多 Agent 讨论密度。",
+      reason: "动作数量需要达到讨论密度要求。",
+      impact: "positive",
+      stateDeltaHint: { confidence: 1 },
+    });
+  }
+
+  const extraVisiblePeripheralActions = [
+    {
+      id: `action_family_challenge_${stageIndex}`,
+      type: "challenge" as const,
+      actorAgentId: "family_pressure_agent",
+      targetAgentId: ids[0],
+      content: "现实压力没有消失，不要把短暂回复误判成稳定关系。",
+      reason: "外围压力 Agent 会提醒关系推进仍受现实约束。",
+      impact: "negative" as const,
+      stateDeltaHint: { riskLevel: 2 },
+    },
+    {
+      id: `action_group_support_${stageIndex}`,
+      type: "support" as const,
+      actorAgentId: "group_chat_agent",
+      targetAgentId: ids[0],
+      content: "共同社交氛围保持正常，有助于降低私下沟通压力。",
+      reason: "外围社交信号能支撑低压互动策略。",
+      impact: "positive" as const,
+      stateDeltaHint: { trafficProgress: 2 },
+    },
+  ];
+
+  return {
+    actions: [...actions, ...extraVisiblePeripheralActions],
+    votes: ids.map((agentId, index) => ({
+      agentId,
+      verdict: index % 4 === 0 ? "wait" : "continue",
+      confidence: 60 + index,
+      stateDeltaVote: index % 2 === 0 ? { trafficProgress: 2, confidence: 1 } : { riskLevel: 1 },
+      rationale: `${agentId} 认为低压推进仍需观察。`,
+    })),
+  };
+}
+
+function extractActivatedAgentIds(prompt: string): string[] {
+  const match = prompt.match(/votes 数组要用简短 rationale 覆盖所有激活 Agent id：([^。\n]+)/);
+  if (!match) {
+    return [];
+  }
+
+  return match[1]
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function makeWorldState(day: number): WorldState {

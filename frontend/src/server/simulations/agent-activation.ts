@@ -63,8 +63,79 @@ function memoryScore(agent: Agent, event: Event, state: WorldState): number {
   return score;
 }
 
+function roleCardTriggerScore(agent: Agent, event: Event): number {
+  const eventText = `${event.title} ${event.description}`.toLowerCase();
+  const triggers = agent.roleCard?.triggerConditions ?? [];
+  return triggers.some((trigger) => {
+    const normalized = trigger.trim().toLowerCase();
+    return normalized.length >= 2 && eventText.includes(normalized);
+  })
+    ? 30
+    : 0;
+}
+
+function roleCardCategoryScore(agent: Agent, event: Event): number {
+  const category = agent.roleCard?.category;
+  if (!category) {
+    return 0;
+  }
+
+  if (event.type === "customer_feedback" && category === "stakeholder") {
+    return 15;
+  }
+  if (event.type === "competitor_pressure" && category === "opposition_competition") {
+    return 15;
+  }
+  if (
+    ["platform_traffic", "external_influence", "reality_check"].includes(event.type) &&
+    category === "environment_system"
+  ) {
+    return 15;
+  }
+  if (
+    ["emotional_clash", "dating_response"].includes(event.type) &&
+    (category === "stakeholder" || category === "user_inner_system")
+  ) {
+    return 15;
+  }
+
+  return 0;
+}
+
+function stateInfluenceScore(agent: Agent, state: WorldState): number {
+  const influences = agent.roleCard?.stateInfluence ?? [];
+  return influences.some((field) => isStateFieldUnderPressure(field, state)) ? 10 : 0;
+}
+
+function isStateFieldUnderPressure(field: string, state: WorldState): boolean {
+  if (field === "riskLevel") {
+    return state.riskLevel >= 70;
+  }
+  if (field === "confidence") {
+    return state.confidence <= 35;
+  }
+  if (field === "executionEnergy") {
+    return state.executionEnergy <= 35;
+  }
+  if (field === "productClarity") {
+    return state.productClarity < 25;
+  }
+  if (field === "trafficProgress") {
+    return state.trafficProgress < 25;
+  }
+
+  return false;
+}
+
 function scoreAgent(agent: Agent, event: Event, state: WorldState): number {
-  return eventKeywordScore(agent, event) + stanceScore(agent, state) + memoryScore(agent, event, state);
+  return (
+    eventKeywordScore(agent, event) +
+    stanceScore(agent, state) +
+    memoryScore(agent, event, state) +
+    roleCardTriggerScore(agent, event) +
+    roleCardCategoryScore(agent, event) +
+    stateInfluenceScore(agent, state)
+  );
 }
 
 function topByScore(agents: Agent[], event: Event, state: WorldState, limit: number): Agent[] {

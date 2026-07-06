@@ -42,6 +42,7 @@ export interface SimulationCheckpointRecord {
 export interface SimulationCheckpointPayload {
   userInput: UserInput;
   mode: SimulationExecutionMode;
+  safetyChecked?: boolean;
   agents?: Agent[];
   worldState?: WorldState;
   completedStages?: SimulationStage[];

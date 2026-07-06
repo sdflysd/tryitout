@@ -53,6 +53,26 @@ test("handleCreateSimulationTaskRequest rejects deprecated execution modes", asy
   assert.deepEqual(result.body, { error: "invalid interactionMode" });
 });
 
+test("handleCreateSimulationTaskRequest rejects unsafe simulation input", async () => {
+  const { service } = await makeDeps("sim_task_unsafe");
+
+  const result = await handleCreateSimulationTaskRequest(
+    {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "做一个诈骗引流和赌博充值项目。",
+      },
+      interactionMode: "legacy",
+    },
+    { service },
+  );
+
+  assert.equal(result.status, 400);
+  assert.equal("error" in result.body, true);
+  if (!("error" in result.body)) return;
+  assert.match(result.body.error, /不能帮你推演具体执行方案/);
+});
+
 test("handleGetSimulationTaskStatusRequest returns public status DTO", async () => {
   const { service } = await makeDeps("sim_status");
   await handleCreateSimulationTaskRequest(

@@ -7,8 +7,19 @@ import {
   buildRouteComparisonPrompt,
   normalizeRouteComparison,
 } from "./route-comparison.js";
+import {
+  buildAgentCompositionPrompt,
+  enforceAgentComposition,
+} from "./agent-composition.js";
+import { normalizeAgentRoleCards } from "./agent-role-card.js";
 import { updateAgentMemories } from "./agent-memory.js";
 import { normalizeAgentPersonalities } from "./agent-personality.js";
+import {
+  assessUserInputSafety,
+  buildSafetyCheckPrompt,
+  ensureReportDisclaimer,
+  getDefaultReportDisclaimer,
+} from "./safety.js";
 import { buildStepSystemInstruction } from "./simulation-system-prompt.js";
 import type {
   Agent,
@@ -31,6 +42,10 @@ interface RunMultiAgentSimulationParams {
   userInput: UserInput;
   modelSelection?: ModelSelection;
   interactionMode?: InteractionMode;
+  resumeFrom?: SimulationCheckpointSnapshot;
+  onCheckpoint?: (
+    checkpoint: SimulationCheckpointSnapshot,
+  ) => void | Promise<void>;
   onProgress?: (event: SimulationProgressEvent) => void;
 }
 
@@ -47,6 +62,13 @@ interface RunStepParams {
 
 interface AgentsResponse {
   agents: Agent[];
+}
+
+interface SafetyCheckResponse {
+  allowed?: boolean;
+  reason?: string;
+  category?: string;
+  message?: string;
 }
 
 interface WorldStateResponse {
@@ -74,43 +96,131 @@ export interface MultiAgentSimulationResult {
 
 const STAGE_COUNT = 5;
 
+export interface SimulationCheckpointSnapshot {
+  safetyChecked?: boolean;
+  agents?: Agent[];
+  worldState?: WorldState;
+  completedStages?: SimulationStage[];
+  actionHistory?: AgentAction[];
+  relationships?: AgentRelationship[];
+  nextStep?: SimulationProgressStep | string;
+}
+
 export async function runMultiAgentSimulation({
   gateway,
   simulationId,
   userInput,
   modelSelection,
   interactionMode = "legacy",
+  resumeFrom,
+  onCheckpoint,
   onProgress,
 }: RunMultiAgentSimulationParams): Promise<MultiAgentSimulationResult> {
   const type = userInput.type;
-  const agentsResponse = await runStep<AgentsResponse>({
-    gateway,
-    simulationId,
-    type,
-    step: "generate_agents",
-    modelSelection,
-    userPrompt: buildGenerateAgentsPrompt(type, userInput),
-    onProgress,
-  });
-  const agents = normalizeAgentPersonalities(agentsResponse.agents);
+
+  const localSafety = assessUserInputSafety(userInput);
+  if (!localSafety.ok) {
+    throw new Error(localSafety.message);
+  }
+
+  const resumedStages = resumeFrom?.completedStages ?? [];
+  const hasReusableCheckpoint = Boolean(
+    resumeFrom?.safetyChecked ||
+      resumeFrom?.agents?.length ||
+      resumeFrom?.worldState ||
+      resumedStages.length,
+  );
+
+  if (!hasReusableCheckpoint) {
+    const safetyResponse = await runStep<SafetyCheckResponse>({
+      gateway,
+      simulationId,
+      type,
+      step: "safety_check",
+      modelSelection,
+      userPrompt: buildSafetyCheckPrompt({ type, userInput }),
+      onProgress,
+    });
+    if (safetyResponse.allowed === false) {
+      throw new Error(
+        safetyResponse.message ||
+          safetyResponse.reason ||
+          "这个输入不适合进入推演。请改成合规、尊重边界的方向。",
+      );
+    }
+    await emitCheckpoint(onCheckpoint, {
+      safetyChecked: true,
+      nextStep: "generate_agents",
+    });
+  }
+
+  const agents = resumeFrom?.agents?.length
+    ? normalizeAgentRoleCards(
+        normalizeAgentPersonalities(enforceAgentComposition(resumeFrom.agents, type)),
+        type,
+      )
+    : normalizeAgentRoleCards(
+        normalizeAgentPersonalities(enforceAgentComposition(
+          (
+            await runStep<AgentsResponse>({
+              gateway,
+              simulationId,
+              type,
+              step: "generate_agents",
+              modelSelection,
+              userPrompt: buildGenerateAgentsPrompt(type, userInput),
+              onProgress,
+            })
+          ).agents,
+          type,
+        )),
+        type,
+      );
   const agentPool = splitAgentPool(agents, type);
-  let coreAgents = agentPool.coreAgents;
-  const peripheralAgents = agentPool.peripheralAgents;
+  let coreAgents = normalizeAgentRoleCards(agentPool.coreAgents, type);
+  const peripheralAgents = normalizeAgentRoleCards(agentPool.peripheralAgents, type);
 
-  const stateResponse = await runStep<WorldStateResponse>({
-    gateway,
-    simulationId,
-    type,
-    step: "initialize_world_state",
-    modelSelection,
-    userPrompt: buildInitializeWorldStatePrompt(type, userInput, coreAgents),
-    onProgress,
-  });
+  if (!resumeFrom?.agents?.length) {
+    await emitCheckpoint(onCheckpoint, {
+      safetyChecked: true,
+      agents: coreAgents,
+      nextStep: "initialize_world_state",
+    });
+  }
 
-  let currentState = stateResponse.state;
-  const stages: SimulationStage[] = [];
-  const actionHistory = [] as AgentAction[];
-  let relationships = [] as AgentRelationship[];
+  const savedWorldState = resumeFrom?.worldState ?? resumedStages.at(-1)?.stateAfter;
+  const initialState = savedWorldState ?? (
+    await runStep<WorldStateResponse>({
+      gateway,
+      simulationId,
+      type,
+      step: "initialize_world_state",
+      modelSelection,
+      userPrompt: buildInitializeWorldStatePrompt(type, userInput, coreAgents),
+      onProgress,
+    })
+  ).state;
+
+  let currentState = initialState;
+  const stages: SimulationStage[] = [...resumedStages];
+  const actionHistory = [
+    ...(resumeFrom?.actionHistory ?? collectActionHistory(stages)),
+  ] as AgentAction[];
+  let relationships = [
+    ...(resumeFrom?.relationships ?? collectLatestRelationships(stages)),
+  ] as AgentRelationship[];
+
+  if (!savedWorldState) {
+    await emitCheckpoint(onCheckpoint, {
+      safetyChecked: true,
+      agents: coreAgents,
+      worldState: currentState,
+      completedStages: stages,
+      actionHistory,
+      relationships,
+      nextStep: "simulate_stage",
+    });
+  }
 
   const runLegacyStage = async (stageIndex: number): Promise<SimulationStage> => {
     const stageResponse = await runStep<StageResponse>({
@@ -134,7 +244,11 @@ export async function runMultiAgentSimulation({
     return stageResponse.stage;
   };
 
-  for (let stageIndex = 1; stageIndex <= STAGE_COUNT; stageIndex += 1) {
+  for (
+    let stageIndex = Math.min(stages.length + 1, STAGE_COUNT + 1);
+    stageIndex <= STAGE_COUNT;
+    stageIndex += 1
+  ) {
     if (interactionMode === "enabled") {
       const stageResult = await runStageInteraction({
         gateway,
@@ -165,12 +279,30 @@ export async function runMultiAgentSimulation({
         });
       }
       currentState = stage.stateAfter;
+      await emitCheckpoint(onCheckpoint, {
+        safetyChecked: true,
+        agents: coreAgents,
+        worldState: currentState,
+        completedStages: stages,
+        actionHistory,
+        relationships,
+        nextStep: stageIndex < STAGE_COUNT ? "simulate_stage" : "generate_report",
+      });
       continue;
     }
 
     const stage = await runLegacyStage(stageIndex);
     stages.push(stage);
     currentState = stage.stateAfter;
+    await emitCheckpoint(onCheckpoint, {
+      safetyChecked: true,
+      agents: coreAgents,
+      worldState: currentState,
+      completedStages: stages,
+      actionHistory,
+      relationships,
+      nextStep: stageIndex < STAGE_COUNT ? "simulate_stage" : "generate_report",
+    });
   }
 
   const reportResponse = await runStep<ReportResponse>({
@@ -182,6 +314,7 @@ export async function runMultiAgentSimulation({
     userPrompt: buildGenerateReportPrompt(type, userInput, coreAgents, stages),
     onProgress,
   });
+  const report = ensureReportDisclaimer(reportResponse.report, type);
 
   let routeComparison: RouteComparison | undefined;
   try {
@@ -210,9 +343,33 @@ export async function runMultiAgentSimulation({
   return {
     agents: collectReportAgents(coreAgents, peripheralAgents, stages),
     stages,
-    report: reportResponse.report,
+    report,
     routeComparison,
   };
+}
+
+async function emitCheckpoint(
+  onCheckpoint: RunMultiAgentSimulationParams["onCheckpoint"],
+  checkpoint: SimulationCheckpointSnapshot,
+): Promise<void> {
+  await onCheckpoint?.(checkpoint);
+}
+
+function collectActionHistory(stages: SimulationStage[]): AgentAction[] {
+  return stages.flatMap((stage) => stage.interactions?.actions ?? []);
+}
+
+function collectLatestRelationships(
+  stages: SimulationStage[],
+): AgentRelationship[] {
+  for (let index = stages.length - 1; index >= 0; index -= 1) {
+    const relationships = stages[index]?.interactions?.relationships;
+    if (relationships?.length) {
+      return relationships;
+    }
+  }
+
+  return [];
 }
 
 function collectReportAgents(
@@ -317,6 +474,7 @@ function buildGenerateAgentsPrompt(type: SimulationType, userInput: UserInput): 
 ${buildScenarioContext(type, userInput)}
 
 请生成 7 个立场不同、能互相拉扯的 Agent。
+${buildAgentCompositionPrompt(type)}
 只输出以下 JSON 结构：
 {
   "agents": [
@@ -325,13 +483,30 @@ ${buildScenarioContext(type, userInput)}
       "name": "角色名",
       "role": "角色职责",
       "stance": "支持/质疑/观望/拷打",
+      "roleCard": {
+        "category": "user_inner_system/stakeholder/opposition_competition/environment_system/expert_arbiter/counterfactual_system",
+        "identity": "这个 Agent 在现实中代表谁或什么力量",
+        "realWorldArchetype": "现实原型",
+        "relationshipToUser": "与用户的关系",
+        "goal": "它在推演中想达成什么",
+        "fears": ["它害怕或反对的事"],
+        "knownInfo": ["它已经知道的事实"],
+        "unknownInfo": ["它仍不确定的事实"],
+        "capabilities": ["它能提出什么判断或行动"],
+        "triggerConditions": ["什么情况会激活它"],
+        "decisionModel": "它如何做判断",
+        "stateInfluence": ["它主要影响哪些世界状态字段"],
+        "speakingStyle": "说话风格",
+        "forbiddenBehaviors": ["不能做什么"],
+        "memoryPolicy": "它如何记住本次推演中的关键信号"
+      },
       "keyJudgment": "这个 Agent 对当前方案的一针见血判断",
       "objection": "它最担心或反对的点",
       "score": 0
     }
   ]
 }
-要求：agents 必须正好 7 个；id 必须稳定且能在后续阶段引用。
+要求：agents 必须正好 7 个；id 必须稳定且能在后续阶段引用。每个 Agent 必须包含 roleCard，且 roleCard 必须覆盖身份、目标、触发条件、决策模型、禁区行为和记忆策略。
 `;
 }
 
@@ -456,6 +631,7 @@ ${JSON.stringify(stages, null, 2)}
 {
   "report": {
     "projectName": "报告主题名",
+    "disclaimer": "${getDefaultReportDisclaimer(type)}",
     "successProbability": 0,
     "expectedRevenue": "最终可能结果描述",
     "riskLevel": "low/medium/high/very_high",
@@ -477,6 +653,15 @@ ${JSON.stringify(stages, null, 2)}
         "description": "调整建议说明"
       }
     ],
+    "agentEvidence": [
+      {
+        "conclusion": "核心结论",
+        "supportingAgentIds": ["agent_id"],
+        "opposingAgentIds": ["agent_id"],
+        "evidence": "来自阶段推演或 Agent 观点的依据"
+      }
+    ],
+    "disagreementSummary": "哪些 Agent 分歧最大，以及裁决为什么偏向当前建议",
     "actionPlan7Days": [
       {
         "day": 1,
@@ -487,7 +672,8 @@ ${JSON.stringify(stages, null, 2)}
     "shouldDo": "strong_yes/test_small/not_directly/change_direction/not_recommended"
   }
 }
-要求：actionPlan7Days 必须正好 7 天；opportunities、risks、pivotSuggestions 各至少 2 条。
+要求：actionPlan7Days 必须正好 7 天；opportunities、risks、pivotSuggestions 各至少 2 条；disclaimer 必须保留“模拟参考、不构成投资/职业/法律/心理建议”的含义。
+每个核心结论必须引用至少一个 Agent；不要把报告写成普通总结，要体现多 Agent 分歧、证据和裁决。
 `;
 }
 
@@ -551,6 +737,15 @@ function formatAgents(agents: Agent[]): string {
       name: agent.name,
       role: agent.role,
       stance: agent.stance,
+      roleCard: agent.roleCard
+        ? {
+            category: agent.roleCard.category,
+            identity: agent.roleCard.identity,
+            goal: agent.roleCard.goal,
+            triggerConditions: agent.roleCard.triggerConditions?.slice(0, 3),
+            decisionModel: agent.roleCard.decisionModel,
+          }
+        : undefined,
       keyJudgment: agent.keyJudgment,
       objection: agent.objection,
     })),

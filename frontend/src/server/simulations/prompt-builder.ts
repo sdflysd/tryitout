@@ -1,4 +1,5 @@
 import type { SimulationType, UserInput } from "../../types.js";
+import { buildSafetyGuidance, getDefaultReportDisclaimer } from "./safety.js";
 
 export function buildSystemInstruction(type: SimulationType): string {
   if (type === "side_hustle") {
@@ -6,6 +7,7 @@ export function buildSystemInstruction(type: SimulationType): string {
 你是一个专为18-25岁迷茫年轻人设计的“副业搞钱模拟器/人生试错机”AI推演沙盘。
 你具备极强的现实商业分析能力、用户痛点洞察力，以及生动逼值的多角色扮演（Multi-Agent）能力。
 你现在的任务是：根据用户输入的副业项目想法和其个人资源情况，生成一个逼值的虚拟世界沙盘，自动演算5个阶段（30天）的事件和Agent博弈，最后合成一份内容深刻、一针见血、具有行动指南的“搞钱评估报告”。
+${buildSafetyGuidance(type)}
 
 【语气与设计风格要求】
 1. 语气直接、现实主义、接地气、有点像“好兄弟”在诚恳地帮你分析，避免任何鸡汤、假大空，一定要有拷打感，把现实中的困难、风险摆出来。
@@ -77,6 +79,7 @@ export function buildSystemInstruction(type: SimulationType): string {
   ],
   "report": {
     "projectName": "...",
+    "disclaimer": "${getDefaultReportDisclaimer(type)}",
     "successProbability": 55,
     "expectedRevenue": "期待月度纯利润，如：预计首月跑通闭环获得首批付费用户100人，实现月盈利3000元",
     "riskLevel": "medium",
@@ -117,6 +120,7 @@ export function buildSystemInstruction(type: SimulationType): string {
 你是一个专为年轻男女设计的“恋爱沟通与矛盾试错模拟器”AI推演沙盘。
 你具备极强的人际心理学、依恋理论洞察力，以及生动逼真的恋爱角色扮演（Multi-Agent）能力。
 你现在的任务是：根据用户输入的恋爱状态、对方性格、核心聊天记录/冲突点以及打算采取的下一步行动，生成一个逼真的情感博弈沙盘，推算5个阶段（30天）的关系演变、对方心理变化与Agent博弈，最后合成一份“情商与恋爱破局决策评估报告”。
+${buildSafetyGuidance(type)}
 
 【🚨极其重要的核心原则：百分之百禁止生成任何商业、副业、产品或搞钱术语🚨】
 虽然返回的 JSON 结构由于前端数据绑定需要，保留了商业化字段名称（例如 'projectName', 'expectedRevenue', 'trialUsers', 'paidUsers', 'revenue' 等），但是你在生成这些字段的【文本文字内容】时，绝对、绝对不能包含任何商业、副业、搞钱、客户、消费者、付费、产品、推广、项目、创业、变现、收入、运营、公司、合伙、SEO、MVP 等商业描述！
@@ -216,6 +220,7 @@ export function buildSystemInstruction(type: SimulationType): string {
   ],
   "report": {
     "projectName": "...",
+    "disclaimer": "${getDefaultReportDisclaimer(type)}",
     "successProbability": 55,
     "expectedRevenue": "关系升级或维持良性朋友",
     "riskLevel": "medium",
@@ -255,6 +260,7 @@ export function buildSystemInstruction(type: SimulationType): string {
 你是一个专为18-25岁年轻人设计的“重大人生抉择与机会成本试错沙盘”。
 你具备极强的宏观职业规划力、家庭财务承受力、心态弹性分析力，以及多角色模拟（Multi-Agent）博弈能力。
 你现在的任务是：根据用户面临的 2-4 个候选人生选择及家庭背景、核心焦虑等，生成一个宏观决策沙盘，模拟如果用户选择了其中一个方向，接下来的5个阶段（30天）里将会面临的现实摩擦、心态起伏与机会成本悔恨，最后合成一份“人生抉择试错大盘点决策评估报告”。
+${buildSafetyGuidance(type)}
 
 【语气与设计风格要求】
 1. 语气沧桑且理智、极其清醒。像一个“经历了风雨的睿智导师”或“极度现实的职业规划师”在不带感情地帮你算一笔长远账，把每个关键方向各自的“屎”和“糖”全部扒开。
@@ -345,6 +351,7 @@ export function buildSystemInstruction(type: SimulationType): string {
   ],
   "report": {
     "projectName": "...",
+    "disclaimer": "${getDefaultReportDisclaimer(type)}",
     "successProbability": 60,
     "expectedRevenue": "最优平衡解或特定选项突围",
     "riskLevel": "high",

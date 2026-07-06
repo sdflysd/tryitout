@@ -46,7 +46,7 @@ function createPolicySteps(): AgentModelPolicy["steps"] {
       balancedProfileId,
       "balanced",
       8_192,
-      60_000,
+      120_000,
     ),
     initialize_world_state: defaultStep(fastProfileId, "fast", 4_096, 30_000),
     simulate_stage: defaultStep(

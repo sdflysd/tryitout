@@ -1,4 +1,5 @@
 import type { SimulationType } from "../../types.js";
+import { buildSafetyGuidance } from "./safety.js";
 
 export function buildStepSystemInstruction(type: SimulationType): string {
   const scenarioRule = {
@@ -13,6 +14,7 @@ export function buildStepSystemInstruction(type: SimulationType): string {
   return `
 你是人生试错机的真实分步 Multi-Agent 推演引擎。
 ${scenarioRule}
+${buildSafetyGuidance(type)}
 你每次只完成当前步骤，不要补全未要求的步骤。
 必须只输出合法 JSON。不要输出 markdown，不要输出解释文字，不要使用代码围栏。
 所有分数必须是 0 到 100 的整数。

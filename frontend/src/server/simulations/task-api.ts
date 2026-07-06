@@ -6,6 +6,7 @@ import type {
 } from "../../contracts/simulation-task.js";
 import type { CostSummary } from "./cost-ledger.js";
 import type { SimulationTaskService } from "./task-service.js";
+import { assessUserInputSafety } from "./safety.js";
 import { toPublicStatus } from "./task-service.js";
 
 interface Deps {
@@ -185,6 +186,11 @@ function parseCreateTaskRequest(
     raw.interactionMode !== "enabled"
   ) {
     return { ok: false, error: "invalid interactionMode" };
+  }
+
+  const safety = assessUserInputSafety(userInput);
+  if (!safety.ok) {
+    return { ok: false, error: safety.message };
   }
 
   return {

@@ -4,9 +4,11 @@ import React from "react";
 import AgentLifeformNetwork from "./AgentLifeformNetwork";
 import { getAgentSandboxScenario } from "./agent-sandbox-model";
 import type { SimulationType } from "../types";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 
 interface AgentSandboxPreviewProps {
   simulationType: SimulationType;
+  language?: Language;
 }
 
 const ACCENT_STYLES = {
@@ -48,14 +50,18 @@ const ACCENT_STYLES = {
   },
 } as const;
 
-export default function AgentSandboxPreview({ simulationType }: AgentSandboxPreviewProps) {
-  const scenario = getAgentSandboxScenario(simulationType);
+export default function AgentSandboxPreview({
+  simulationType,
+  language = DEFAULT_LANGUAGE,
+}: AgentSandboxPreviewProps) {
+  const scenario = getAgentSandboxScenario(simulationType, language);
   const accent = ACCENT_STYLES[scenario.accentName];
+  const isEnglish = language === "en-US";
 
   return (
     <section
       id="agent-starmap-preview"
-      aria-label="AI 多智能体沙盘预演"
+      aria-label={isEnglish ? "AI multi-agent sandbox preview" : "AI 多智能体沙盘预演"}
       className="relative mx-auto w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/12 bg-[#050711] px-4 py-5 text-left text-white shadow-2xl shadow-black/30 sm:px-5"
     >
       <div className="pointer-events-none absolute inset-0 opacity-80">
@@ -70,8 +76,12 @@ export default function AgentSandboxPreview({ simulationType }: AgentSandboxPrev
             <Sparkles className={`h-5 w-5 ${accent.brightText}`} aria-hidden="true" />
           </span>
           <div>
-            <h2 className="text-base font-black tracking-tight text-white">AI 星图沙盘</h2>
-            <p className={`text-xs font-semibold ${accent.mutedText}`}>{scenario.title} · 7 个智能体正在围绕你的选择建立世界线</p>
+            <h2 className="text-base font-black tracking-tight text-white">
+              {isEnglish ? "AI Starmap Sandbox" : "AI 星图沙盘"}
+            </h2>
+            <p className={`text-xs font-semibold ${accent.mutedText}`}>
+              {scenario.title} · {isEnglish ? "7 agents are building a worldline around your choice" : "7 个智能体正在围绕你的选择建立世界线"}
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -80,11 +90,11 @@ export default function AgentSandboxPreview({ simulationType }: AgentSandboxPrev
             className={`inline-flex min-h-10 items-center gap-2 rounded-full border ${accent.border} bg-white/8 px-3 text-xs font-black ${accent.text} backdrop-blur-md`}
           >
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>未来后果可视化</span>
+            <span>{isEnglish ? "Future outcomes visualized" : "未来后果可视化"}</span>
           </div>
           <div className={`inline-flex min-h-10 items-center gap-2 rounded-full border ${accent.border} bg-white/8 px-3 text-xs font-black ${accent.text} backdrop-blur-md`}>
             <Network className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>7 个智能体 · 5 个阶段 · 信号汇聚</span>
+            <span>{isEnglish ? "7 agents · 5 stages · Signal merge" : "7 个智能体 · 5 个阶段 · 信号汇聚"}</span>
           </div>
         </div>
       </div>
@@ -94,10 +104,11 @@ export default function AgentSandboxPreview({ simulationType }: AgentSandboxPrev
           scenario={scenario}
           interactionMode="support"
           activeAgentIds={["primary", "support", "risk"]}
-          activeStageLabel="30 天预演"
+          activeStageLabel={isEnglish ? "30-day preview" : "30 天预演"}
           activeStageTitle={scenario.centerLabel}
           progressPercent={32}
           variant="preview"
+          language={language}
         />
 
         <div className="grid gap-4 md:grid-cols-2">

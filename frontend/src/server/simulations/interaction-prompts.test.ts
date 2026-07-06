@@ -264,3 +264,75 @@ test("agent actions prompt includes compact personality and memory snippets", ()
   assert.match(prompt, /personality=ENTP; risk:72; conflict:direct; evidence:data/);
   assert.ok(prompt.length < 5_000, `prompt length was ${prompt.length}`);
 });
+
+test("agent actions prompt includes compact role card snippets", () => {
+  const prompt = buildAgentActionsPrompt({
+    type: "side_hustle",
+    userInput,
+    state,
+    event,
+    activatedAgents: [
+      {
+        id: "customer_agent",
+        name: "客户 Agent",
+        role: "目标客户",
+        stance: "质疑",
+        keyJudgment: "我需要案例。",
+        roleCard: {
+          category: "stakeholder",
+          identity: "价格敏感的求职用户",
+          realWorldArchetype: "应届生试用者",
+          relationshipToUser: "潜在付费用户",
+          goal: "判断这个服务是否值得信任。",
+          fears: ["被骗", "浪费时间"],
+          knownInfo: ["用户提供 AI 简历优化服务"],
+          unknownInfo: ["真实成功案例"],
+          capabilities: ["提出信任质疑"],
+          triggerConditions: ["缺少案例", "价格过高"],
+          decisionModel: "先看证据，再考虑试用。",
+          stateInfluence: ["willingnessToPay", "riskLevel"],
+          speakingStyle: "直接、挑剔",
+          forbiddenBehaviors: ["编造案例"],
+          memoryPolicy: "只保留本次推演中的关键信任证据。",
+        },
+      },
+    ],
+    previousActions: [],
+  });
+
+  assert.match(prompt, /roleCard=stakeholder/);
+  assert.match(prompt, /trigger:缺少案例/);
+  assert.match(prompt, /decision:先看证据/);
+});
+
+test("agent actions prompt includes role card motivation and influence snippets", () => {
+  const prompt = buildAgentActionsPrompt({
+    type: "side_hustle",
+    userInput,
+    state,
+    event,
+    activatedAgents: [
+      {
+        id: "customer_agent",
+        name: "客户 Agent",
+        role: "目标客户",
+        stance: "质疑",
+        keyJudgment: "缺少证据",
+        roleCard: {
+          category: "stakeholder",
+          identity: "价格敏感用户",
+          goal: "判断服务是否值得信任。",
+          fears: ["被骗"],
+          triggerConditions: ["缺少案例"],
+          decisionModel: "先看证据，再考虑试用。",
+          stateInfluence: ["willingnessToPay", "riskLevel"],
+        },
+      },
+    ],
+    previousActions: [],
+  });
+
+  assert.match(prompt, /goal:判断服务是否值得信任/);
+  assert.match(prompt, /fear:被骗/);
+  assert.match(prompt, /influence:willingnessToPay\/riskLevel/);
+});

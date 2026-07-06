@@ -8,12 +8,24 @@ import InputView from "./components/InputView";
 import SimulationProgress from "./components/SimulationProgress";
 import ReportView from "./components/ReportView";
 import ShareCard from "./components/ShareCard";
+import {
+  DEFAULT_LANGUAGE,
+  LANGUAGE_STORAGE_KEY,
+  Language,
+  getLanguageToggleLabel,
+  getNextLanguage,
+  parseStoredLanguage,
+} from "./language";
 import { buildSimulationRequestBody } from "./simulation-request";
 import {
   buildSimulationCompletedEvent,
   buildSimulationFailedEvent,
 } from "./simulation-analytics";
-import { runSimulationStream } from "./simulation-stream";
+import {
+  isRecoverableSimulationTaskError,
+  resumeSimulationTaskUntilComplete,
+  runSimulationTaskUntilComplete,
+} from "./simulation-tasks";
 import {
   AgentRuntimeCapabilities,
   Simulation,
@@ -72,6 +84,10 @@ export function scrollToTopForViewChange(): void {
   globalThis.scrollTo({ top: 0, left: 0, behavior: "instant" });
 }
 
+export function getInitialLanguageFromStorage(storage: Storage | undefined): Language {
+  return parseStoredLanguage(storage?.getItem(LANGUAGE_STORAGE_KEY) ?? null) ?? DEFAULT_LANGUAGE;
+}
+
 export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidationEvent {
   return {
     type: "share_card_opened",
@@ -95,6 +111,19 @@ export default function App() {
   const [deepAgentMode, setDeepAgentMode] = useState(false);
   const [deepModeNotice, setDeepModeNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<AgentRuntimeCapabilities | undefined>(undefined);
+  const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
+  const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
+    userInput: UserInput;
+    deepModeRequested: boolean;
+    startedAt: number;
+  } | undefined>(undefined);
+  const [language, setLanguage] = useState<Language>(() => {
+    try {
+      return getInitialLanguageFromStorage(globalThis.localStorage);
+    } catch {
+      return DEFAULT_LANGUAGE;
+    }
+  });
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -108,6 +137,14 @@ export default function App() {
       console.error("Failed to load history from localStorage:", e);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch (e) {
+      console.error("Failed to save language to localStorage:", e);
+    }
+  }, [language]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,11 +188,17 @@ export default function App() {
     saveInputDraft(userInput);
     setErrorMsg("");
     setProgressEvent(null);
+    setRecoverableSimulationId(undefined);
     setIsGenerating(true);
     setView("generating");
     scrollToTopForViewChange();
     const startedAt = Date.now();
     const deepModeRequested = deepAgentMode;
+    setActiveSimulationRequest({
+      userInput,
+      deepModeRequested,
+      startedAt,
+    });
     void postValidationEvent({
       type: "simulation_requested",
       scenarioType: userInput.type,
@@ -170,59 +213,132 @@ export default function App() {
     }
 
     try {
-      const data = await runSimulationStream(
+      const data = await runSimulationTaskUntilComplete(
         buildSimulationRequestBody(userInput, { deepAgentMode: deepModeRequested }),
         {
           onProgress: setProgressEvent,
         },
       );
-      if (deepModeRequested && data.interactionModeUsed !== "enabled") {
-        setDeepModeNotice(getDeepModeUnavailableNotice());
-      } else {
-        setDeepModeNotice("");
-      }
-      void postValidationEvent(
-        buildSimulationCompletedEvent({
-          response: data,
-          scenarioType: userInput.type,
-          durationMs: Date.now() - startedAt,
-          deepModeRequested,
-        }),
-      );
-      
-      const newSimulation: Simulation = {
-        id: data.id,
-        type: userInput.type,
-        userInput,
-        agents: data.agents,
-        stages: data.stages,
-        report: data.report,
-        createdAt: data.createdAt,
-        interactionModeUsed: data.interactionModeUsed,
-        runtimeDiagnostics: data.runtimeDiagnostics,
-        routeComparison: data.routeComparison,
-      };
-
-      setCurrentSimulation(newSimulation);
-      saveToHistory(newSimulation);
-      setIsGenerating(false);
-      setProgressEvent(null);
-      setView("report");
-      scrollToTopForViewChange();
+      handleSimulationCompleted(data, userInput, {
+        startedAt,
+        deepModeRequested,
+      });
     } catch (err: any) {
-      console.error("Simulation generation error:", err);
-      setDeepModeNotice("");
-      void postValidationEvent(
-        buildSimulationFailedEvent({
-          scenarioType: userInput.type,
-          durationMs: Date.now() - startedAt,
-          deepModeRequested,
-          error: err,
-        }),
-      );
-      setErrorMsg(err.message || "智能沙盘博弈计算超时，可能是AI模型服务器拥堵，请重试。");
-      setIsGenerating(false);
+      handleSimulationFailed(err, userInput, {
+        startedAt,
+        deepModeRequested,
+      });
     }
+  };
+
+  const handleResumeSimulation = async () => {
+    if (!recoverableSimulationId || !activeSimulationRequest) {
+      setView("input");
+      setErrorMsg("");
+      setProgressEvent(null);
+      return;
+    }
+
+    setErrorMsg("");
+    setIsGenerating(true);
+    setView("generating");
+    scrollToTopForViewChange();
+    const resumedAt = Date.now();
+
+    try {
+      const data = await resumeSimulationTaskUntilComplete(recoverableSimulationId, {
+        onProgress: setProgressEvent,
+      });
+      handleSimulationCompleted(data, activeSimulationRequest.userInput, {
+        startedAt: activeSimulationRequest.startedAt,
+        deepModeRequested: activeSimulationRequest.deepModeRequested,
+      });
+    } catch (err: any) {
+      handleSimulationFailed(err, activeSimulationRequest.userInput, {
+        startedAt: resumedAt,
+        deepModeRequested: activeSimulationRequest.deepModeRequested,
+      });
+    }
+  };
+
+  const handleSimulationCompleted = (
+    data: Awaited<ReturnType<typeof runSimulationTaskUntilComplete>>,
+    userInput: UserInput,
+    {
+      startedAt,
+      deepModeRequested,
+    }: {
+      startedAt: number;
+      deepModeRequested: boolean;
+    },
+  ) => {
+    if (deepModeRequested && data.interactionModeUsed !== "enabled") {
+      setDeepModeNotice(getDeepModeUnavailableNotice(language));
+    } else {
+      setDeepModeNotice("");
+    }
+    void postValidationEvent(
+      buildSimulationCompletedEvent({
+        response: data,
+        scenarioType: userInput.type,
+        durationMs: Date.now() - startedAt,
+        deepModeRequested,
+      }),
+    );
+
+    const newSimulation: Simulation = {
+      id: data.id,
+      type: userInput.type,
+      userInput,
+      agents: data.agents,
+      stages: data.stages,
+      report: data.report,
+      createdAt: data.createdAt,
+      interactionModeUsed: data.interactionModeUsed,
+      runtimeDiagnostics: data.runtimeDiagnostics,
+      routeComparison: data.routeComparison,
+    };
+
+    setCurrentSimulation(newSimulation);
+    saveToHistory(newSimulation);
+    setRecoverableSimulationId(undefined);
+    setIsGenerating(false);
+    setProgressEvent(null);
+    setView("report");
+    scrollToTopForViewChange();
+  };
+
+  const handleSimulationFailed = (
+    err: unknown,
+    userInput: UserInput,
+    {
+      startedAt,
+      deepModeRequested,
+    }: {
+      startedAt: number;
+      deepModeRequested: boolean;
+    },
+  ) => {
+    console.error("Simulation generation error:", err);
+    setDeepModeNotice("");
+    if (isRecoverableSimulationTaskError(err)) {
+      setRecoverableSimulationId(err.simulationId);
+    } else {
+      setRecoverableSimulationId(undefined);
+    }
+    void postValidationEvent(
+      buildSimulationFailedEvent({
+        scenarioType: userInput.type,
+        durationMs: Date.now() - startedAt,
+        deepModeRequested,
+        error: err,
+      }),
+    );
+    const message = err instanceof Error
+      ? err.message
+      : "智能沙盘博弈计算超时，可能是AI模型服务器拥堵，请重试。";
+    setErrorMsg(message);
+    setIsGenerating(false);
   };
 
   const handleSelectHistory = (simulation: Simulation) => {
@@ -310,6 +426,16 @@ export default function App() {
               <Sparkles className="w-3 h-3 text-amber-500" />
               <span>Multi-Agent Sandbox</span>
             </span>
+            <button
+              id="btn-toggle-language"
+              type="button"
+              onClick={() => setLanguage((current) => getNextLanguage(current))}
+              className="inline-flex h-9 min-w-11 items-center justify-center rounded-xl border border-white/12 bg-white/7 px-3 text-xs font-black text-white/72 transition-colors hover:border-amber-200/40 hover:bg-amber-200/10 hover:text-amber-100 cursor-pointer"
+              aria-label={language === "zh-CN" ? "Switch language to English" : "切换语言为中文"}
+              title={language === "zh-CN" ? "Switch language to English" : "切换语言为中文"}
+            >
+              {getLanguageToggleLabel(language)}
+            </button>
           </div>
         </div>
       </header>
@@ -339,6 +465,7 @@ export default function App() {
                 lastInputDraft={lastInputDraft}
                 onContinueDraft={handleEditInput}
                 onDeleteHistory={handleDeleteHistory}
+                language={language}
               />
             </motion.div>
           )}
@@ -366,6 +493,7 @@ export default function App() {
                 deepAgentMode={deepAgentMode}
                 onDeepAgentModeChange={setDeepAgentMode}
                 runtimeCapabilities={runtimeCapabilities}
+                language={language}
               />
             </motion.div>
           )}
@@ -382,17 +510,23 @@ export default function App() {
                 isGenerating={isGenerating}
                 simulationType={selectedType}
                 errorMsg={errorMsg}
+                canResume={Boolean(recoverableSimulationId)}
                 progressEvent={progressEvent}
                 onRetry={() => {
-                  setView("input");
-                  setErrorMsg("");
-                  setProgressEvent(null);
+                  if (recoverableSimulationId) {
+                    void handleResumeSimulation();
+                  } else {
+                    setView("input");
+                    setErrorMsg("");
+                    setProgressEvent(null);
+                  }
                 }}
                 onCancel={() => {
                   setView("input");
                   setErrorMsg("");
                   setProgressEvent(null);
                 }}
+                language={language}
               />
             </motion.div>
           )}

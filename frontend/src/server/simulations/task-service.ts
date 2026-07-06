@@ -107,10 +107,12 @@ export class SimulationTaskService {
     });
 
     await this.repo.saveTask(updated);
+    const latestCheckpoint = await this.repo.getLatestCheckpoint(simulationId);
     await this.saveCheckpoint(updated, {
       stageIndex: update.currentStageIndex,
       stepName: update.currentStepName ?? "running",
       checkpoint: {
+        ...latestCheckpoint?.checkpoint,
         userInput: updated.userInput,
         mode: updated.mode,
         nextStep: update.currentStepName,
@@ -168,10 +170,12 @@ export class SimulationTaskService {
     });
 
     await this.repo.saveTask(updated);
+    const latestCheckpoint = await this.repo.getLatestCheckpoint(simulationId);
     await this.saveCheckpoint(updated, {
       stageIndex: update.currentStageIndex,
       stepName: update.currentStepName ?? "recoverable_failed",
       checkpoint: {
+        ...latestCheckpoint?.checkpoint,
         userInput: updated.userInput,
         mode: updated.mode,
         nextStep: update.currentStepName,
@@ -247,10 +251,12 @@ export class SimulationTaskService {
     });
 
     await this.repo.saveTask(updated);
+    const latestCheckpoint = await this.repo.getLatestCheckpoint(simulationId);
     await this.saveCheckpoint(updated, {
       stageIndex: updated.currentStageIndex,
       stepName: updated.currentStepName ?? "resume",
       checkpoint: {
+        ...latestCheckpoint?.checkpoint,
         userInput: updated.userInput,
         mode: updated.mode,
         nextStep: updated.currentStepName ?? "resume",
@@ -293,6 +299,32 @@ export class SimulationTaskService {
 
     await this.repo.appendStepRun(run);
     return run;
+  }
+
+  async recordCheckpoint(
+    simulationId: string,
+    input: Omit<
+      SimulationCheckpointRecord,
+      "id" | "simulationId" | "createdAt"
+    >,
+  ): Promise<SimulationCheckpointRecord> {
+    const task = await this.requireTask(simulationId);
+    const now = this.now();
+    const checkpoint: SimulationCheckpointRecord = {
+      id: `cp_${task.id}_${Date.parse(now)}_${sanitizeId(input.stepName)}`,
+      simulationId,
+      stageIndex: input.stageIndex,
+      stepName: input.stepName,
+      checkpoint: {
+        ...input.checkpoint,
+        userInput: task.userInput,
+        mode: task.mode,
+      },
+      createdAt: now,
+    };
+
+    await this.repo.saveCheckpoint(checkpoint);
+    return checkpoint;
   }
 
   async listStepRuns(simulationId: string): Promise<SimulationStepRunRecord[]> {

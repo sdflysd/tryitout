@@ -52,7 +52,11 @@ test("hashPrompt is deterministic, bounded, and does not expose prompt text", ()
 
 test("createLogEntry records safe success metadata without prompt contents", () => {
   const request = makeRequest();
-  const result = makeResult();
+  const result = makeResult({
+    transport: "stream",
+    firstByteLatencyMs: 1200,
+    streamChunkCount: 18,
+  });
   const entry = createLogEntry(
     request,
     result,
@@ -68,6 +72,9 @@ test("createLogEntry records safe success metadata without prompt contents", () 
   assert.equal(entry.inputTokens, 11);
   assert.equal(entry.outputTokens, 22);
   assert.equal(entry.latencyMs, 33);
+  assert.equal(entry.transport, "stream");
+  assert.equal(entry.firstByteLatencyMs, 1200);
+  assert.equal(entry.streamChunkCount, 18);
   assert.equal(entry.success, true);
   assert.equal(entry.requestId, "request-1");
   assert.equal(entry.simulationId, hashPrompt("sim-1"));

@@ -15,6 +15,9 @@ export interface AiDebugTraceEntry {
   stageIndex?: number;
   success: boolean;
   latencyMs?: number;
+  transport?: AiCallResult["transport"];
+  firstByteLatencyMs?: number;
+  streamChunkCount?: number;
   requestId?: string;
   stopReason?: string;
   errorCode?: string;
@@ -53,6 +56,9 @@ export function createDebugTraceEntry(
     stageIndex: getSafeStageIndex(request.metadata.stageIndex),
     success: !error,
     latencyMs: result?.latencyMs,
+    transport: result?.transport,
+    firstByteLatencyMs: result?.firstByteLatencyMs,
+    streamChunkCount: result?.streamChunkCount,
     requestId: result?.requestId,
     stopReason: result?.stopReason,
     errorCode: getErrorCode(error),

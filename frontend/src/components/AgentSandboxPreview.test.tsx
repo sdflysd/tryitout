@@ -37,6 +37,16 @@ test("preview sandbox changes copy for dating mode", () => {
   assert.doesNotMatch(html, /目标客户/);
 });
 
+test("preview sandbox can render English UI text", () => {
+  const html = renderToStaticMarkup(<AgentSandboxPreview simulationType="side_hustle" language="en-US" />);
+
+  assert.match(html, /AI Starmap Sandbox/);
+  assert.match(html, /Future outcomes/);
+  assert.match(html, /Target Customer/);
+  assert.match(html, /Days 8-15/);
+  assert.doesNotMatch(html, /未来后果可视化/);
+});
+
 test("preview sandbox includes a non-absolute mobile starmap layout", () => {
   const html = renderToStaticMarkup(<AgentSandboxPreview simulationType="side_hustle" />);
 

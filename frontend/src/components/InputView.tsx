@@ -3,8 +3,9 @@ import { motion } from "motion/react";
 import { ArrowLeft, Play, Check, BadgeAlert, Flame, Heart, Compass, ListChecks, Plus, Trash2 } from "lucide-react";
 import { AgentRuntimeCapabilities, UserInput, SimulationType } from "../types";
 import { getDeepModeCopy, getDeepModeDisabledCopy } from "./deep-mode-copy";
-import { START_SIMULATION_BUTTON_LABEL } from "./input-view-copy";
+import { getStartSimulationButtonLabel } from "./input-view-copy";
 import { getPrivacySafetyCopy } from "./privacy-copy";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 import {
   CUSTOM_OPTION_VALUE,
   resolveCustomMultiChoice,
@@ -37,6 +38,7 @@ interface InputViewProps {
   deepAgentMode?: boolean;
   onDeepAgentModeChange?: (enabled: boolean) => void;
   runtimeCapabilities?: AgentRuntimeCapabilities;
+  language?: Language;
 }
 
 interface InputViewInitialState {
@@ -148,6 +150,276 @@ const SUPPORT_OPTIONS = [
 
 const LIGHT_FIELD_TEXT_CLASS = "text-gray-950 placeholder:text-gray-400";
 
+const SKILL_OPTION_LABELS_EN: Record<string, string> = {
+  写代码: "Coding",
+  剪辑视频: "Video editing",
+  设计排版: "Design and layout",
+  小红书运营: "Xiaohongshu operations",
+  网络销售: "Online sales",
+  文案撰写: "Copywriting",
+  AI工具使用: "AI tool use",
+  社群管理: "Community management",
+  英语翻译: "English translation",
+  线下推广: "Offline promotion",
+};
+
+const TIME_OPTION_LABELS_EN: Record<string, string> = {
+  "30分钟以内": "Up to 30 minutes",
+  "1小时": "1 hour per day",
+  "2小时": "2 hours per day",
+  "3-4小时": "3-4 hours per day",
+  "5小时以上": "5+ hours per day",
+};
+
+const BUDGET_OPTION_LABELS_EN: Record<string, string> = {
+  "0元": "$0 / bootstrap",
+  "100元以内": "Under 100 RMB",
+  "500元以内": "Under 500 RMB",
+  "1000元以内": "Under 1,000 RMB",
+  "3000元以上": "3,000+ RMB",
+};
+
+const MONETIZATION_OPTION_LABELS_EN: Record<string, string> = {
+  "单次收费 (如按次帮改简历、按次付费买资料)": "One-off payment, such as per resume edit or paid resource",
+  "会员订阅 (如月度学习群、工具会员周期订阅)": "Membership or subscription",
+  "接单服务 (如帮剪视频、代发文章、定制开发)": "Freelance service orders",
+  "流量/广告变现 (如起号接广、挂横幅联盟广告)": "Traffic or ad monetization",
+  "私域成交 (如引流到微信卖高客单咨询、实物)": "Private-domain sales",
+  "卖网课/社群资料 (如新手AI实操指南、变现资料包)": "Courses, community, or paid resource packs",
+};
+
+const CHANNEL_OPTION_LABELS_EN: Record<string, string> = {
+  "小红书 (视觉对比/图文种草)": "Xiaohongshu visual posts",
+  "闲鱼 (二手转让/资料交易/服务代挂)": "Xianyu listings or service posts",
+  "微信群/微信朋友圈 (私域圈子冷启动)": "WeChat groups or Moments",
+  "抖音/快手 (短视频引流/切片带货)": "Douyin/Kuaishou short videos",
+  "知乎/垂直论坛 (知识解答/硬核测评引流)": "Zhihu or niche forums",
+  "B站 (长视频干货/项目拆解)": "Bilibili long-form content",
+  "SEO自然流/独立站 (搜索引擎关键词自然流)": "SEO or independent site traffic",
+};
+
+const BACKGROUND_OPTION_LABELS_EN: Record<string, string> = {
+  "在校大学生 (每天下课有闲、缺乏实战经验)": "College student with spare time after class",
+  "刚毕业求职者 (对工作迷茫、急迫渴望搞钱)": "Recent graduate looking for direction and income",
+  "初入职场新人 (搬砖累、工资不高、想求第二收入)": "Early-career worker seeking a second income",
+  "自由职业者 (时间充裕、多线作战、有一定网感)": "Freelancer with flexible time and platform sense",
+  "朝九晚五上班族 (寻求副业防御风险、精力有限)": "9-to-5 worker with limited energy for a side income",
+};
+
+const RELATIONSHIP_STATUS_OPTION_LABELS_EN: Record<string, string> = {
+  "暗恋暗戳戳 (没表白、试探中)": "Crush / testing the waters",
+  "暧昧拉扯期 (聊得热烈、未确定关系)": "Situationship / not official yet",
+  "冷战危机中 (刚吵架、互相不理睬)": "Cold war after a conflict",
+  "热恋磨合期 (常因为生活琐事碰撞)": "In love but adjusting to friction",
+  "面临分手/挽回期 (临近冰点，想高情商逆盘)": "Breakup or repair phase",
+};
+
+const DATING_DURATION_OPTION_LABELS_EN: Record<string, string> = {
+  "1个月以内 (热乎劲刚起)": "Less than 1 month",
+  "1-3个月 (暧昧正浓)": "1-3 months",
+  "3-12个月 (深层磨合阶段)": "3-12 months",
+  "1-3年 (长线稳定有倦怠)": "1-3 years",
+  "3年以上 (老夫老妻/长跑瓶颈)": "3+ years",
+};
+
+const PERSONALITY_OPTION_LABELS_EN: Record<string, string> = {
+  "敏感慢热、防备心极强、极度吃软不吃硬": "Sensitive, slow to warm up, guarded, responds better to softness",
+  "活泼外向、直爽急性子、极度注重情绪价值": "Outgoing, direct, impatient, highly values emotional care",
+  "理智现实、极强边界感、注重实质行动与付出": "Practical, rational, strong boundaries, values concrete action",
+  "回避型人格、一遇冲突就消失、内心极缺乏安全感": "Avoidant under conflict, disappears when stressed, insecure underneath",
+  "骄傲自负、嘴硬心软、喜欢被捧着、对细节敏感": "Proud, stubborn, soft-hearted, sensitive to details and affirmation",
+};
+
+const FINANCIAL_BUFFER_OPTION_LABELS_EN: Record<string, string> = {
+  [DEFAULT_LIFE_CHOICE_FINANCIAL_BUFFER]: "No independent income; mainly family support, allowance, or aid",
+  "生活费紧张，需要兼职或打工才能维持": "Tight living expenses; need part-time work to stay afloat",
+  "已断供/欠费/负债，短期必须先赚钱": "Already overdue or in debt; must earn money soon",
+  "存款不足 5000 元，几乎没有缓冲": "Under 5,000 RMB saved; almost no buffer",
+  "能撑 1-3 个月，压力很快会到": "Can last 1-3 months before pressure arrives",
+  "能撑 3-6 个月，有一点试错空间": "Can last 3-6 months with some room to experiment",
+  "能撑半年以上，经济安全垫较厚": "Can last 6+ months with a solid buffer",
+};
+
+const SUPPORT_OPTION_LABELS_EN: Record<string, string> = {
+  "强力催逼/极力干涉 (压力拉满)": "Strong pressure or heavy interference",
+  "放任自流/自主支配 (不帮也不干涉)": "Hands-off; neither helping nor interfering",
+  "鼎力支持/精神金钱双垫底 (全力配合)": "Strong emotional and financial support",
+};
+
+const INPUT_FORM_COPY = {
+  "zh-CN": {
+    currentLength: (count: number, minimum?: number) =>
+      minimum ? `目前字数: ${count} (需 ≥${minimum})` : `目前字数: ${count}`,
+    sideHustle: {
+      projectSection: "你的项目构想",
+      projectQuestion: "你想做什么副业想法？",
+      projectPlaceholder: "我想做一个 AI 简历优化小程序，帮面临求职的应届生和转行者优化简历。打算在小红书发改前/改后的对比图引流，收费 9.9 元一次...",
+      projectHint: "建议输入 15 - 500 字，越详细模拟越准",
+      targetUserLabel: "你准备卖给谁？（你的目标客户是谁）",
+      targetUserPlaceholder: "如：高校应届求职生、找网感想在小红书副业起步的宝妈等",
+      resourcesSection: "你的现有一手资源",
+      skillsLabel: "你目前会些什么技能？（可多选）",
+      timeLabel: "每天可投空闲时间",
+      budgetLabel: "准备投入的启动资金",
+      strategySection: "运营与变现策略",
+      monetizationLabel: "你计划通过什么方式赚到钱？",
+      monetizationPlaceholder: "-- 由 AI 评估制定最合理的变现方式 --",
+      customMonetizationOption: "其他/自定义变现方式",
+      customMonetizationLabel: "自定义变现方式",
+      customMonetizationPlaceholder: "如：校园代理分销、线下工作坊、企业内训、联名返佣...",
+      channelLabel: "你打算在哪里找到第一批客户？（可多选）",
+      customChannelLabel: "自定义获客渠道",
+      customChannelPlaceholder: "如：校园社群、线下摆摊、豆瓣小组、行业微信群...",
+      customChannelHelp: "填写后会和上面的已选渠道一起提交。",
+      backgroundSection: "你的现实状态背景",
+      userStatusLabel: "你当前属于哪类年轻人群？",
+      customUserStatusOption: "其他/自定义现实状态背景",
+      customUserStatusLabel: "自定义现实状态背景",
+      customUserStatusPlaceholder: "如：宝妈重返职场、县城自由职业、备考间隙做副业...",
+    },
+    dating: {
+      conflictSection: "双方相处背景与核心冲突",
+      conflictLabel: "事件核心、导火索或当下现状",
+      conflictPlaceholder: "如：我们本来是暧昧期，但昨晚我因为急于确立关系，发了一段长作文告白。对方却回了一句『我觉得有点太快了，还是慢点吧』，然后今天一天回复都冷冷清清，很敷衍...",
+      conflictHint: "描述越生动具体、细节越多，推导结果越精准",
+      actionLabel: "你下一步打算怎么回复、或准备怎么做？",
+      actionPlaceholder: "如：我打算回复说『对不起，昨晚是我太冲动给你压力了，我们还是做朋友吧，不用有心理包袱』，然后这周末不主动约TA了...",
+      actionHint: "你的待评估话术/方案",
+      statusSection: "关系属性与交往时长",
+      statusLabel: "你们目前处于哪种相处阶段？",
+      durationLabel: "你们已经相识/恋爱多久了？",
+      personalitySection: "对方的性格侧写",
+      personalityLabel: "选择最符合 TA 性格底色的一项：",
+      customPersonalityOption: "其他/自定义性格侧写",
+      customPersonalityLabel: "自定义性格侧写",
+      customPersonalityPlaceholder: "如：表面很洒脱但很怕被抛下，遇到压力会先冷处理，确认安全后才愿意解释...",
+    },
+    lifeChoice: {
+      dilemmaSection: "先把纠结原样写下来",
+      dilemmaLabel: "你正在纠结什么？",
+      dilemmaPlaceholder: "不用整理成 A/B。直接写：我现在在考虑继续留上海大厂、回老家进事业单位，也可能先休息三个月。我的存款大概能撑半年，父母希望我回去，最怕选错之后后悔...",
+      dilemmaHint: "写背景、可能方向、现实限制和担心就好",
+      organizeIdle: "整理选择",
+      organizeBusy: "正在整理",
+      organizeHelp: "Agent 会先识别出 2-4 个可能选择，你可以改字、删掉或新增。",
+      reviewTitle: "确认我整理出的选择",
+      reviewHelp: "提交前可以手动修改，最多保留 4 个核心方向。",
+      addChoice: "新增选择",
+      optionTitlePlaceholder: "这个选择是什么",
+      optionDescriptionPlaceholder: "补充代价、收益或限制，可不填",
+      deleteChoice: "删除选择",
+      fearLabel: "你在这场抉择中，最大的恐惧或最坏的担忧是什么？",
+      fearPlaceholder: "如：最怕考研没考上，白白荒废两年，家里还没钱，最后连外包工作也找不到，彻底跟社会脱节...",
+      fearHint: "可选补充；如果上面已经写清楚，我会结合原始描述分析",
+      realitySection: "现实粮草与后盾安全底气",
+      financialBufferQuestion: LIFE_CHOICE_FINANCIAL_BUFFER_QUESTION,
+      familySupportQuestion: "父母/长辈对你做出的抉择是什么态度？",
+    },
+  },
+  "en-US": {
+    currentLength: (count: number, minimum?: number) =>
+      minimum ? `Current length: ${count} (min ${minimum})` : `Current length: ${count}`,
+    sideHustle: {
+      projectSection: "Your project idea",
+      projectQuestion: "What side-hustle idea do you want to test?",
+      projectPlaceholder: "Example: I want to build an AI resume optimization mini-tool for graduates and career switchers, promote before/after examples on Xiaohongshu, and charge 9.9 RMB per edit...",
+      projectHint: "Aim for 15-500 characters; more detail makes the simulation sharper",
+      targetUserLabel: "Who are you selling to?",
+      targetUserPlaceholder: "Example: college job seekers, career switchers, parents starting a Xiaohongshu side hustle...",
+      resourcesSection: "Your existing resources",
+      skillsLabel: "What skills do you already have? Multiple choices allowed.",
+      timeLabel: "Daily free time",
+      budgetLabel: "Startup budget",
+      strategySection: "Your operations and monetization strategy",
+      monetizationLabel: "How do you plan to make money?",
+      monetizationPlaceholder: "-- Let AI assess the most reasonable monetization model --",
+      customMonetizationOption: "Other/custom monetization",
+      customMonetizationLabel: "Custom monetization",
+      customMonetizationPlaceholder: "Example: campus resellers, offline workshop, corporate training, affiliate commission...",
+      channelLabel: "Where will you find the first customers? Multiple choices allowed.",
+      customChannelLabel: "Custom acquisition channel",
+      customChannelPlaceholder: "Example: campus communities, offline booth, Douban group, industry WeChat group...",
+      customChannelHelp: "This will be submitted together with the selected channels above.",
+      backgroundSection: "Your real-world background",
+      userStatusLabel: "Which real-world situation best describes you?",
+      customUserStatusOption: "Other/custom background",
+      customUserStatusLabel: "Custom background",
+      customUserStatusPlaceholder: "Example: parent returning to work, county-town freelancer, side hustle while preparing for exams...",
+    },
+    dating: {
+      conflictSection: "Relationship background and core conflict",
+      conflictLabel: "Current status or trigger",
+      conflictPlaceholder: "Example: We were in a situationship, but last night I pushed for clarity too quickly. They replied that things felt too fast, and today their messages have been cold...",
+      conflictHint: "The more vivid and specific the context, the sharper the simulation.",
+      actionLabel: "Your planned reply or action",
+      actionPlaceholder: "Example: I want to say, 'Sorry, I was too impulsive last night and put pressure on you. We can stay friends for now, no pressure.' Then I will stop initiating plans this weekend...",
+      actionHint: "The message or plan you want evaluated",
+      statusSection: "Relationship status and duration",
+      statusLabel: "What stage are you currently in?",
+      durationLabel: "How long have you known or dated each other?",
+      personalitySection: "TA personality profile",
+      personalityLabel: "Choose the profile closest to TA:",
+      customPersonalityOption: "Other/custom personality profile",
+      customPersonalityLabel: "Custom personality profile",
+      customPersonalityPlaceholder: "Example: looks relaxed on the surface but fears abandonment; goes silent under pressure, then explains once safe...",
+    },
+    lifeChoice: {
+      dilemmaSection: "Write the dilemma as-is",
+      dilemmaLabel: "What are you torn about?",
+      dilemmaPlaceholder: "No need to format it as A/B. Write the raw context: I am considering staying at a big-city tech job, returning home for a public-sector role, or taking three months off...",
+      dilemmaHint: "Include background, possible directions, constraints, and worries.",
+      organizeIdle: "Organize options",
+      organizeBusy: "Organizing",
+      organizeHelp: "Agent will identify 2-4 possible options; you can edit, delete, or add them.",
+      reviewTitle: "Confirm the organized options",
+      reviewHelp: "You can edit before submitting. Keep up to 4 core directions.",
+      addChoice: "Add option",
+      optionTitlePlaceholder: "What is this option?",
+      optionDescriptionPlaceholder: "Add costs, upside, or constraints; optional",
+      deleteChoice: "Delete option",
+      fearLabel: "What is your biggest fear or worst-case worry in this decision?",
+      fearPlaceholder: "Example: I fear failing the exam, wasting two years, running out of family support, and falling behind professionally...",
+      fearHint: "Optional. If you already wrote it above, the simulation will use that context.",
+      realitySection: "Reality buffer and support base",
+      financialBufferQuestion: "What is your current income and safety buffer?",
+      familySupportQuestion: "How do your parents or elders feel about this decision?",
+    },
+  },
+} as const;
+
+function getInputFormCopy(language: Language) {
+  return INPUT_FORM_COPY[language];
+}
+
+function getLocalizedOptionLabel(
+  value: string,
+  language: Language,
+  englishLabels: Record<string, string>,
+): string {
+  return language === "en-US" ? englishLabels[value] ?? value : value;
+}
+
+function getLocalizedOptionLabelWithDefault(
+  value: string,
+  defaultLabel: string,
+  language: Language,
+  englishLabels: Record<string, string>,
+): string {
+  return language === "en-US" ? englishLabels[value] ?? defaultLabel : defaultLabel;
+}
+
+function getCompactLocalizedOptionLabel(
+  value: string,
+  language: Language,
+  englishLabels: Record<string, string>,
+): string {
+  if (language === "en-US") {
+    return englishLabels[value] ?? value;
+  }
+
+  return value.split(" (")[0];
+}
+
 function createEmptyInitialInputState(): InputViewInitialState {
   return {
     projectIdea: "",
@@ -216,6 +488,7 @@ export default function InputView({
   deepAgentMode = false,
   onDeepAgentModeChange,
   runtimeCapabilities,
+  language = DEFAULT_LANGUAGE,
 }: InputViewProps) {
   // Side Hustle States
   const [projectIdea, setProjectIdea] = useState("");
@@ -249,12 +522,14 @@ export default function InputView({
   const [coreFear, setCoreFear] = useState("");
 
   const [error, setError] = useState("");
-  const deepModeCopy = getDeepModeCopy();
+  const isEnglish = language === "en-US";
+  const formCopy = getInputFormCopy(language);
+  const deepModeCopy = getDeepModeCopy(language);
   const deepModeUnavailable = runtimeCapabilities?.deepModeAvailable === false;
   const deepModeDescription = deepModeUnavailable
-    ? getDeepModeDisabledCopy(runtimeCapabilities.reason)
+    ? getDeepModeDisabledCopy(runtimeCapabilities.reason, language)
     : deepModeCopy.description;
-  const privacySafetyCopy = getPrivacySafetyCopy();
+  const privacySafetyCopy = getPrivacySafetyCopy(language);
 
   useEffect(() => {
     if (!initialInput) return;
@@ -365,7 +640,9 @@ export default function InputView({
     setLifeChoiceStructureNotice("");
 
     if (!decisionContext || decisionContext.trim().length < 15) {
-      setError("把你正在纠结的事先写完整一点，至少 15 个字。可以直接说背景、可能选择和担心。");
+      setError(isEnglish
+        ? "Describe the decision in at least 15 characters. Include the context, possible options, and worries."
+        : "把你正在纠结的事先写完整一点，至少 15 个字。可以直接说背景、可能选择和担心。");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -374,7 +651,9 @@ export default function InputView({
     try {
       const structured = await structureLifeChoiceForReview(decisionContext);
       if (structured.options.length < 2) {
-        setError("我还没能从你的描述里整理出至少 2 个选择。可以多写一句：你正在考虑哪些方向？");
+        setError(isEnglish
+          ? "I could not identify at least 2 options from your description. Add one sentence about the directions you are considering."
+          : "我还没能从你的描述里整理出至少 2 个选择。可以多写一句：你正在考虑哪些方向？");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
@@ -424,16 +703,18 @@ export default function InputView({
 
     if (simulationType === "side_hustle") {
       if (!projectIdea || projectIdea.trim().length < 15) {
-        setError("兄弟，副业项目描述至少需要输入 15 个字以上，写详细点推演才够准！");
+        setError(isEnglish
+          ? "Please describe the side-hustle idea in at least 15 characters so the simulation has enough signal."
+          : "兄弟，副业项目描述至少需要输入 15 个字以上，写详细点推演才够准！");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       if (!dailyTime) {
-        setError("请选择你每天能够投入的空闲时间。");
+        setError(isEnglish ? "Choose how much free time you can invest each day." : "请选择你每天能够投入的空闲时间。");
         return;
       }
       if (!budget) {
-        setError("请选择你准备投入的资金预算。");
+        setError(isEnglish ? "Choose the budget you are willing to invest." : "请选择你准备投入的资金预算。");
         return;
       }
 
@@ -477,12 +758,16 @@ export default function InputView({
       });
     } else if (simulationType === "dating") {
       if (!chatLogOrIssue || chatLogOrIssue.trim().length < 15) {
-        setError("恋爱矛盾与现状背景至少需要输入 15 个字以上，写详细点推导才符合TA的真实心理！");
+        setError(isEnglish
+          ? "Describe the relationship conflict and current context in at least 15 characters."
+          : "恋爱矛盾与现状背景至少需要输入 15 个字以上，写详细点推导才符合TA的真实心理！");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       if (!proposedAction || proposedAction.trim().length < 5) {
-        setError("你打算回复的话语或行动方案过短（需 ≥5字），不然AI没法精确评估TA的内心防备喔。");
+        setError(isEnglish
+          ? "Your planned reply or action is too short. Add at least 5 characters."
+          : "你打算回复的话语或行动方案过短（需 ≥5字），不然AI没法精确评估TA的内心防备喔。");
         return;
       }
 
@@ -507,13 +792,17 @@ export default function InputView({
       });
     } else if (simulationType === "life_choice") {
       if (!decisionContext || decisionContext.trim().length < 15) {
-        setError("把你正在纠结的事先写完整一点，至少 15 个字。可以直接说背景、可能选择和担心。");
+        setError(isEnglish
+          ? "Describe the decision in at least 15 characters. Include the context, possible options, and worries."
+          : "把你正在纠结的事先写完整一点，至少 15 个字。可以直接说背景、可能选择和担心。");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const normalizedLifeChoiceOptions = normalizeLifeChoiceOptions(lifeChoiceOptions);
       if (normalizedLifeChoiceOptions.length < 2) {
-        setError("请先点击“整理选择”，并确认至少 2 个可比较的选择。");
+        setError(isEnglish
+          ? "Click \"Organize options\" first and confirm at least 2 comparable choices."
+          : "请先点击“整理选择”，并确认至少 2 个可比较的选择。");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
@@ -570,6 +859,17 @@ export default function InputView({
       icon: <Compass className="w-6 h-6 text-indigo-500 shrink-0" />
     }
   }[simulationType];
+  const inputHeaders: Record<SimulationType, string> = isEnglish
+    ? {
+        side_hustle: "TryItOut Side-Hustle Sandbox",
+        dating: "Dating Communication Sandbox",
+        life_choice: "Life Choice Regret Calculator",
+      }
+    : {
+        side_hustle: "试一下",
+        dating: "恋爱沟通与矛盾破解沙盘",
+        life_choice: "重大人生抉择与后悔精算盘",
+      };
 
   return (
     <div id="input-view-container" className="max-w-3xl mx-auto px-4 py-6">
@@ -582,7 +882,7 @@ export default function InputView({
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-950 transition-colors p-2 -ml-2 hover:bg-gray-100 rounded-lg cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>返回首页</span>
+          <span>{isEnglish ? "Back home" : "返回首页"}</span>
         </button>
         <span className="text-2xs font-mono text-gray-400 uppercase tracking-widest">{simulationType} MODE</span>
       </div>
@@ -590,10 +890,12 @@ export default function InputView({
       <div className="mb-6 text-left">
         <h1 id="input-view-title" className="text-xl md:text-2xl font-black text-gray-950 flex items-center gap-2">
           {theme.icon}
-          <span>{theme.header}</span>
+          <span>{inputHeaders[simulationType]}</span>
         </h1>
         <p className="text-xs text-gray-500 mt-1">
-          请诚恳填写。本沙盘将根据你提供的一手信息、性格数据及环境阻力，推演出最严苛、最真实的冲突过程。
+          {isEnglish
+            ? "Fill this in honestly. The sandbox uses your first-hand context, personality signals, and constraints to simulate the strictest conflict path."
+            : "请诚恳填写。本沙盘将根据你提供的一手信息、性格数据及环境阻力，推演出最严苛、最真实的冲突过程。"}
         </p>
         <p className="text-3xs text-gray-400 leading-relaxed bg-gray-50 border border-gray-150 rounded-xl p-3 mt-3">
           {privacySafetyCopy}
@@ -613,9 +915,9 @@ export default function InputView({
                 : "text-gray-500 hover:text-gray-800"
             }`}
           >
-            {t === "side_hustle" && "副业搞钱"}
-            {t === "dating" && "恋爱聊天"}
-            {t === "life_choice" && "人生选择"}
+            {t === "side_hustle" && (isEnglish ? "Side Hustle" : "副业搞钱")}
+            {t === "dating" && (isEnglish ? "Dating Chat" : "恋爱聊天")}
+            {t === "life_choice" && (isEnglish ? "Life Choice" : "人生选择")}
           </button>
         ))}
       </div>
@@ -624,7 +926,7 @@ export default function InputView({
         <div id="error-banner" className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl text-xs flex items-start gap-2.5 mb-6 text-left">
           <BadgeAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold">输入不完整提示</p>
+            <p className="font-bold">{isEnglish ? "Incomplete input" : "输入不完整提示"}</p>
             <p className="mt-0.5">{error}</p>
           </div>
         </div>
@@ -638,12 +940,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-amber-600 font-mono tracking-widest mr-2">01.</span>
-                <span className="text-sm font-bold text-gray-950">你的项目构想</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.sideHustle.projectSection}</span>
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="input-project-idea" className="block text-xs font-bold text-gray-800">
-                  你想做什么副业想法？ <span className="text-rose-500">*</span>
+                  {formCopy.sideHustle.projectQuestion} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   id="input-project-idea"
@@ -651,27 +953,27 @@ export default function InputView({
                   required
                   value={projectIdea}
                   onChange={(e) => setProjectIdea(e.target.value)}
-                  placeholder="我想做一个 AI 简历优化小程序，帮面临求职的应届生和转行者优化简历。打算在小红书发改前/改后的对比图引流，收费 9.9 元一次..."
+                  placeholder={formCopy.sideHustle.projectPlaceholder}
                   className={`w-full text-xs md:text-sm p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-amber-300 focus:border-amber-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
                 <div className="flex justify-between items-center text-2xs text-gray-400">
-                  <span>建议输入 15 - 500 字，越详细模拟越准</span>
+                  <span>{formCopy.sideHustle.projectHint}</span>
                   <span className={projectIdea.length >= 15 ? "text-emerald-600 font-medium" : "text-rose-500"}>
-                    目前字数: {projectIdea.length} (需 ≥15)
+                    {formCopy.currentLength(projectIdea.length, 15)}
                   </span>
                 </div>
               </div>
 
               <div className="space-y-1.5 pt-1">
                 <label htmlFor="input-target-user" className="block text-xs font-bold text-gray-800">
-                  你准备卖给谁？（你的目标客户是谁）
+                  {formCopy.sideHustle.targetUserLabel}
                 </label>
                 <input
                   id="input-target-user"
                   type="text"
                   value={targetUser}
                   onChange={(e) => setTargetUser(e.target.value)}
-                  placeholder="如：高校应届求职生、找网感想在小红书副业起步的宝妈等"
+                  placeholder={formCopy.sideHustle.targetUserPlaceholder}
                   className={`w-full text-xs md:text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-amber-300 focus:border-amber-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
               </div>
@@ -681,13 +983,13 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-5">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-amber-600 font-mono tracking-widest mr-2">02.</span>
-                <span className="text-sm font-bold text-gray-950">你的现有一手资源</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.sideHustle.resourcesSection}</span>
               </div>
 
               {/* Skills */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-gray-800">
-                  你目前会些什么技能？（可多选）
+                  {formCopy.sideHustle.skillsLabel}
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {SKILL_OPTIONS.map((skill) => {
@@ -705,7 +1007,7 @@ export default function InputView({
                         }`}
                       >
                         {isSelected && <Check className="w-3.5 h-3.5" />}
-                        <span>{skill}</span>
+                        <span>{getLocalizedOptionLabel(skill, language, SKILL_OPTION_LABELS_EN)}</span>
                       </button>
                     );
                   })}
@@ -717,7 +1019,7 @@ export default function InputView({
                 {/* Time */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    每天可投空闲时间 <span className="text-rose-500">*</span>
+                    {formCopy.sideHustle.timeLabel} <span className="text-rose-500">*</span>
                   </label>
                   <div className="space-y-1.5">
                     {TIME_OPTIONS.map((opt) => (
@@ -737,7 +1039,7 @@ export default function InputView({
                           onChange={() => setDailyTime(opt.value)}
                           className="accent-amber-500 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.label}</span>
+                        <span>{getLocalizedOptionLabelWithDefault(opt.value, opt.label, language, TIME_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -746,7 +1048,7 @@ export default function InputView({
                 {/* Budget */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    准备投入的启动资金 <span className="text-rose-500">*</span>
+                    {formCopy.sideHustle.budgetLabel} <span className="text-rose-500">*</span>
                   </label>
                   <div className="space-y-1.5">
                     {BUDGET_OPTIONS.map((opt) => (
@@ -766,7 +1068,7 @@ export default function InputView({
                           onChange={() => setBudget(opt.value)}
                           className="accent-amber-500 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.label}</span>
+                        <span>{getLocalizedOptionLabelWithDefault(opt.value, opt.label, language, BUDGET_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -778,12 +1080,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-amber-600 font-mono tracking-widest mr-2">03.</span>
-                <span className="text-sm font-bold text-gray-950">运营与变现策略</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.sideHustle.strategySection}</span>
               </div>
 
               <div className="space-y-2">
                 <label htmlFor="select-monetization" className="block text-xs font-bold text-gray-800">
-                  你计划通过什么方式赚到钱？
+                  {formCopy.sideHustle.monetizationLabel}
                 </label>
                 <select
                   id="select-monetization"
@@ -791,23 +1093,25 @@ export default function InputView({
                   onChange={(e) => setMonetization(e.target.value)}
                   className={`w-full text-xs md:text-sm p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 bg-gray-50/40 cursor-pointer ${LIGHT_FIELD_TEXT_CLASS}`}
                 >
-                  <option value="">-- 由 AI 评估制定最合理的变现方式 --</option>
+                  <option value="">{formCopy.sideHustle.monetizationPlaceholder}</option>
                   {MONETIZATION_OPTIONS.map((opt, i) => (
-                    <option key={i} value={opt}>{opt}</option>
+                    <option key={i} value={opt}>
+                      {getLocalizedOptionLabel(opt, language, MONETIZATION_OPTION_LABELS_EN)}
+                    </option>
                   ))}
-                  <option value={CUSTOM_OPTION_VALUE}>其他/自定义变现方式</option>
+                  <option value={CUSTOM_OPTION_VALUE}>{formCopy.sideHustle.customMonetizationOption}</option>
                 </select>
                 {monetization === CUSTOM_OPTION_VALUE && (
                   <div className="space-y-1.5 pt-1">
                     <label htmlFor="input-custom-monetization" className="block text-2xs font-bold text-gray-700">
-                      自定义变现方式
+                      {formCopy.sideHustle.customMonetizationLabel}
                     </label>
                     <input
                       id="input-custom-monetization"
                       type="text"
                       value={customMonetization}
                       onChange={(e) => setCustomMonetization(e.target.value)}
-                      placeholder="如：校园代理分销、线下工作坊、企业内训、联名返佣..."
+                      placeholder={formCopy.sideHustle.customMonetizationPlaceholder}
                       className={`w-full text-xs md:text-sm p-3 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-300 focus:border-amber-400 outline-none bg-amber-50/30 ${LIGHT_FIELD_TEXT_CLASS}`}
                     />
                   </div>
@@ -816,7 +1120,7 @@ export default function InputView({
 
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-gray-800">
-                  你打算在哪里找到第一批客户？（可多选）
+                  {formCopy.sideHustle.channelLabel}
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {CHANNEL_OPTIONS.map((ch, i) => {
@@ -838,24 +1142,24 @@ export default function InputView({
                         }`}>
                           {isSelected ? "✓" : ""}
                         </span>
-                        <span>{ch}</span>
+                        <span>{getLocalizedOptionLabel(ch, language, CHANNEL_OPTION_LABELS_EN)}</span>
                       </button>
                     );
                   })}
                 </div>
                 <div className="space-y-1.5 pt-1">
                   <label htmlFor="input-custom-channel" className="block text-2xs font-bold text-gray-700">
-                    自定义获客渠道
+                    {formCopy.sideHustle.customChannelLabel}
                   </label>
                   <input
                     id="input-custom-channel"
                     type="text"
                     value={customChannel}
                     onChange={(e) => setCustomChannel(e.target.value)}
-                    placeholder="如：校园社群、线下摆摊、豆瓣小组、行业微信群..."
+                    placeholder={formCopy.sideHustle.customChannelPlaceholder}
                     className={`w-full text-xs md:text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-amber-300 focus:border-amber-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                   />
-                  <p className="text-2xs text-gray-400">填写后会和上面的已选渠道一起提交。</p>
+                  <p className="text-2xs text-gray-400">{formCopy.sideHustle.customChannelHelp}</p>
                 </div>
               </div>
             </div>
@@ -864,12 +1168,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-amber-600 font-mono tracking-widest mr-2">04.</span>
-                <span className="text-sm font-bold text-gray-950">你的现实状态背景</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.sideHustle.backgroundSection}</span>
               </div>
 
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-gray-800">
-                  你当前属于哪类年轻人群？
+                  {formCopy.sideHustle.userStatusLabel}
                 </label>
                 <div className="space-y-2">
                   {BACKGROUND_OPTIONS.map((opt, i) => (
@@ -889,7 +1193,7 @@ export default function InputView({
                         onChange={() => setUserStatus(opt)}
                         className="accent-amber-500 w-4.5 h-4.5 mt-0.5 shrink-0"
                       />
-                      <span>{opt}</span>
+                      <span>{getLocalizedOptionLabel(opt, language, BACKGROUND_OPTION_LABELS_EN)}</span>
                     </label>
                   ))}
                   <label
@@ -907,19 +1211,19 @@ export default function InputView({
                       onChange={() => setUserStatus(CUSTOM_OPTION_VALUE)}
                       className="accent-amber-500 w-4.5 h-4.5 mt-0.5 shrink-0"
                     />
-                    <span>其他/自定义现实状态背景</span>
+                    <span>{formCopy.sideHustle.customUserStatusOption}</span>
                   </label>
                   {userStatus === CUSTOM_OPTION_VALUE && (
                     <div className="space-y-1.5 pl-0 md:pl-7">
                       <label htmlFor="input-custom-user-status" className="block text-2xs font-bold text-gray-700">
-                        自定义现实状态背景
+                        {formCopy.sideHustle.customUserStatusLabel}
                       </label>
                       <input
                         id="input-custom-user-status"
                         type="text"
                         value={customUserStatus}
                         onChange={(e) => setCustomUserStatus(e.target.value)}
-                        placeholder="如：宝妈重返职场、县城自由职业、备考间隙做副业..."
+                        placeholder={formCopy.sideHustle.customUserStatusPlaceholder}
                         className={`w-full text-xs md:text-sm p-3 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-300 focus:border-amber-400 outline-none bg-amber-50/30 ${LIGHT_FIELD_TEXT_CLASS}`}
                       />
                     </div>
@@ -937,12 +1241,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-rose-600 font-mono tracking-widest mr-2">01.</span>
-                <span className="text-sm font-bold text-gray-950">双方相处背景与核心冲突</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.dating.conflictSection}</span>
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="input-chat-log" className="block text-xs font-bold text-gray-800">
-                  事件核心、导火索或当下现状 <span className="text-rose-500">*</span>
+                  {formCopy.dating.conflictLabel} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   id="input-chat-log"
@@ -950,20 +1254,20 @@ export default function InputView({
                   required
                   value={chatLogOrIssue}
                   onChange={(e) => setChatLogOrIssue(e.target.value)}
-                  placeholder="如：我们本来是暧昧期，但昨晚我因为急于确立关系，发了一段长作文告白。对方却回了一句『我觉得有点太快了，还是慢点吧』，然后今天一天回复都冷冷清清，很敷衍..."
+                  placeholder={formCopy.dating.conflictPlaceholder}
                   className={`w-full text-xs md:text-sm p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-rose-300 focus:border-rose-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
                 <div className="flex justify-between items-center text-2xs text-gray-400">
-                  <span>描述越生动具体、细节越多，推导结果越精准</span>
+                  <span>{formCopy.dating.conflictHint}</span>
                   <span className={chatLogOrIssue.length >= 15 ? "text-emerald-600 font-medium" : "text-rose-500"}>
-                    目前字数: {chatLogOrIssue.length} (需 ≥15)
+                    {formCopy.currentLength(chatLogOrIssue.length, 15)}
                   </span>
                 </div>
               </div>
 
               <div className="space-y-1.5 pt-1">
                 <label htmlFor="input-proposed-action" className="block text-xs font-bold text-gray-800">
-                  你下一步打算怎么回复、或准备怎么做？ <span className="text-rose-500">*</span>
+                  {formCopy.dating.actionLabel} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   id="input-proposed-action"
@@ -971,13 +1275,13 @@ export default function InputView({
                   required
                   value={proposedAction}
                   onChange={(e) => setProposedAction(e.target.value)}
-                  placeholder="如：我打算回复说『对不起，昨晚是我太冲动给你压力了，我们还是做朋友吧，不用有心理包袱』，然后这周末不主动约TA了..."
+                  placeholder={formCopy.dating.actionPlaceholder}
                   className={`w-full text-xs md:text-sm p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-rose-300 focus:border-rose-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
                 <div className="flex justify-between items-center text-2xs text-gray-400">
-                  <span>你的待评估话术/方案</span>
+                  <span>{formCopy.dating.actionHint}</span>
                   <span className={proposedAction.length >= 5 ? "text-emerald-600 font-medium" : "text-rose-500"}>
-                    目前字数: {proposedAction.length} (需 ≥5)
+                    {formCopy.currentLength(proposedAction.length, 5)}
                   </span>
                 </div>
               </div>
@@ -987,14 +1291,14 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-5">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-rose-600 font-mono tracking-widest mr-2">02.</span>
-                <span className="text-sm font-bold text-gray-950">关系属性与交往时长</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.dating.statusSection}</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {/* Status */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    你们目前处于哪种相处阶段？
+                    {formCopy.dating.statusLabel}
                   </label>
                   <div className="space-y-1.5">
                     {RELATIONSHIP_STATUS_OPTIONS.map((opt) => (
@@ -1014,7 +1318,7 @@ export default function InputView({
                           onChange={() => setRelationshipStatus(opt)}
                           className="accent-rose-500 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.split(" (")[0]}</span>
+                        <span>{getCompactLocalizedOptionLabel(opt, language, RELATIONSHIP_STATUS_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -1023,7 +1327,7 @@ export default function InputView({
                 {/* Duration */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    你们已经相识/恋爱多久了？
+                    {formCopy.dating.durationLabel}
                   </label>
                   <div className="space-y-1.5">
                     {DATING_DURATION_OPTIONS.map((opt) => (
@@ -1043,7 +1347,7 @@ export default function InputView({
                           onChange={() => setDatingDuration(opt)}
                           className="accent-rose-500 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.split(" (")[0]}</span>
+                        <span>{getCompactLocalizedOptionLabel(opt, language, DATING_DURATION_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -1055,12 +1359,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-rose-600 font-mono tracking-widest mr-2">03.</span>
-                <span className="text-sm font-bold text-gray-950">对方的性格侧写</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.dating.personalitySection}</span>
               </div>
 
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-gray-800">
-                  选择最符合 TA 性格底色的一项：
+                  {formCopy.dating.personalityLabel}
                 </label>
                 <div className="space-y-2">
                   {PERSONALITY_OPTIONS.map((opt) => (
@@ -1080,7 +1384,7 @@ export default function InputView({
                         onChange={() => setTargetPersonality(opt)}
                         className="accent-rose-500 w-4.5 h-4.5 mt-0.5 shrink-0"
                       />
-                      <span>{opt}</span>
+                      <span>{getLocalizedOptionLabel(opt, language, PERSONALITY_OPTION_LABELS_EN)}</span>
                     </label>
                   ))}
                   <label
@@ -1098,19 +1402,19 @@ export default function InputView({
                       onChange={() => setTargetPersonality(CUSTOM_OPTION_VALUE)}
                       className="accent-rose-500 w-4.5 h-4.5 mt-0.5 shrink-0"
                     />
-                    <span>其他/自定义性格侧写</span>
+                    <span>{formCopy.dating.customPersonalityOption}</span>
                   </label>
                   {targetPersonality === CUSTOM_OPTION_VALUE && (
                     <div className="space-y-1.5 pl-0 md:pl-7">
                       <label htmlFor="input-custom-target-personality" className="block text-2xs font-bold text-gray-700">
-                        自定义性格侧写
+                        {formCopy.dating.customPersonalityLabel}
                       </label>
                       <textarea
                         id="input-custom-target-personality"
                         rows={3}
                         value={customTargetPersonality}
                         onChange={(e) => setCustomTargetPersonality(e.target.value)}
-                        placeholder="如：表面很洒脱但很怕被抛下，遇到压力会先冷处理，确认安全后才愿意解释..."
+                        placeholder={formCopy.dating.customPersonalityPlaceholder}
                         className={`w-full text-xs md:text-sm p-3 border border-rose-200 rounded-xl focus:ring-2 focus:ring-rose-300 focus:border-rose-400 outline-none bg-rose-50/30 ${LIGHT_FIELD_TEXT_CLASS}`}
                       />
                     </div>
@@ -1128,12 +1432,12 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-4">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-indigo-600 font-mono tracking-widest mr-2">01.</span>
-                <span className="text-sm font-bold text-gray-950">先把纠结原样写下来</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.lifeChoice.dilemmaSection}</span>
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="input-decision-context" className="block text-xs font-bold text-gray-800">
-                  你正在纠结什么？ <span className="text-rose-500">*</span>
+                  {formCopy.lifeChoice.dilemmaLabel} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   id="input-decision-context"
@@ -1141,13 +1445,13 @@ export default function InputView({
                   required
                   value={decisionContext}
                   onChange={(e) => setDecisionContext(e.target.value)}
-                  placeholder="不用整理成 A/B。直接写：我现在在考虑继续留上海大厂、回老家进事业单位，也可能先休息三个月。我的存款大概能撑半年，父母希望我回去，最怕选错之后后悔..."
+                  placeholder={formCopy.lifeChoice.dilemmaPlaceholder}
                   className={`w-full text-xs md:text-sm p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none bg-gray-50/40 leading-relaxed ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
                 <div className="flex justify-between items-center text-2xs text-gray-400">
-                  <span>写背景、可能方向、现实限制和担心就好</span>
+                  <span>{formCopy.lifeChoice.dilemmaHint}</span>
                   <span className={decisionContext.length >= 15 ? "text-emerald-600 font-medium" : "text-rose-500"}>
-                    目前字数: {decisionContext.length} (需 ≥15)
+                    {formCopy.currentLength(decisionContext.length, 15)}
                   </span>
                 </div>
               </div>
@@ -1165,10 +1469,10 @@ export default function InputView({
                   }`}
                 >
                   <ListChecks className="w-4 h-4" />
-                  <span>{isStructuringLifeChoice ? "正在整理" : "整理选择"}</span>
+                  <span>{isStructuringLifeChoice ? formCopy.lifeChoice.organizeBusy : formCopy.lifeChoice.organizeIdle}</span>
                 </button>
                 <p className="text-2xs text-gray-500 leading-relaxed">
-                  Agent 会先识别出 2-4 个可能选择，你可以改字、删掉或新增。
+                  {formCopy.lifeChoice.organizeHelp}
                 </p>
               </div>
 
@@ -1176,8 +1480,8 @@ export default function InputView({
                 <div className="space-y-3 border-t border-gray-100 pt-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-black text-gray-950">确认我整理出的选择</p>
-                      <p className="text-2xs text-gray-400 mt-0.5">提交前可以手动修改，最多保留 4 个核心方向。</p>
+                      <p className="text-xs font-black text-gray-950">{formCopy.lifeChoice.reviewTitle}</p>
+                      <p className="text-2xs text-gray-400 mt-0.5">{formCopy.lifeChoice.reviewHelp}</p>
                     </div>
                     <button
                       type="button"
@@ -1188,8 +1492,8 @@ export default function InputView({
                           ? "bg-gray-50 border-gray-150 text-gray-300 cursor-not-allowed"
                           : "bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-50 cursor-pointer"
                       }`}
-                      aria-label="新增选择"
-                      title="新增选择"
+                      aria-label={formCopy.lifeChoice.addChoice}
+                      title={formCopy.lifeChoice.addChoice}
                     >
                       <Plus className="w-4 h-4" />
                     </button>
@@ -1220,13 +1524,13 @@ export default function InputView({
                           <input
                             value={option.title}
                             onChange={(e) => handleLifeChoiceOptionChange(option.id, "title", e.target.value)}
-                            placeholder="这个选择是什么"
+                            placeholder={formCopy.lifeChoice.optionTitlePlaceholder}
                             className={`w-full text-xs md:text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 bg-white ${LIGHT_FIELD_TEXT_CLASS}`}
                           />
                           <input
                             value={option.description}
                             onChange={(e) => handleLifeChoiceOptionChange(option.id, "description", e.target.value)}
-                            placeholder="补充代价、收益或限制，可不填"
+                            placeholder={formCopy.lifeChoice.optionDescriptionPlaceholder}
                             className={`w-full text-2xs md:text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 bg-white ${LIGHT_FIELD_TEXT_CLASS}`}
                           />
                         </div>
@@ -1239,8 +1543,8 @@ export default function InputView({
                               ? "text-gray-300 cursor-not-allowed"
                               : "text-gray-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
                           }`}
-                          aria-label={`删除选择 ${option.label}`}
-                          title="删除选择"
+                          aria-label={`${formCopy.lifeChoice.deleteChoice} ${option.label}`}
+                          title={formCopy.lifeChoice.deleteChoice}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1252,20 +1556,20 @@ export default function InputView({
 
               <div className="space-y-1.5 pt-2">
                 <label htmlFor="input-core-fear" className="block text-xs font-bold text-gray-800">
-                  你在这场抉择中，最大的恐惧或最坏的担忧是什么？
+                  {formCopy.lifeChoice.fearLabel}
                 </label>
                 <textarea
                   id="input-core-fear"
                   rows={3}
                   value={coreFear}
                   onChange={(e) => setCoreFear(e.target.value)}
-                  placeholder="如：最怕考研没考上，白白荒废两年，家里还没钱，最后连外包工作也找不到，彻底跟社会脱节..."
+                  placeholder={formCopy.lifeChoice.fearPlaceholder}
                   className={`w-full text-xs md:text-sm p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none bg-gray-50/40 ${LIGHT_FIELD_TEXT_CLASS}`}
                 />
                 <div className="flex justify-between items-center text-2xs text-gray-400">
-                  <span>可选补充；如果上面已经写清楚，我会结合原始描述分析</span>
+                  <span>{formCopy.lifeChoice.fearHint}</span>
                   <span className={coreFear.trim().length >= 5 ? "text-emerald-600 font-medium" : "text-gray-400"}>
-                    目前字数: {coreFear.length}
+                    {formCopy.currentLength(coreFear.length)}
                   </span>
                 </div>
               </div>
@@ -1275,14 +1579,14 @@ export default function InputView({
             <div className="bg-white p-5 rounded-2xl border border-gray-150 shadow-xs space-y-5">
               <div className="border-b border-gray-100 pb-3">
                 <span className="text-xs font-black text-indigo-600 font-mono tracking-widest mr-2">02.</span>
-                <span className="text-sm font-bold text-gray-950">现实粮草与后盾安全底气</span>
+                <span className="text-sm font-bold text-gray-950">{formCopy.lifeChoice.realitySection}</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {/* Financial Buffer */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    {LIFE_CHOICE_FINANCIAL_BUFFER_QUESTION}
+                    {formCopy.lifeChoice.financialBufferQuestion}
                   </label>
                   <div className="space-y-1.5">
                     {LIFE_CHOICE_FINANCIAL_BUFFER_OPTIONS.map((opt) => (
@@ -1302,7 +1606,7 @@ export default function InputView({
                           onChange={() => setFinancialBuffer(opt)}
                           className="accent-indigo-600 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.split(" (")[0]}</span>
+                        <span>{getCompactLocalizedOptionLabel(opt, language, FINANCIAL_BUFFER_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -1311,7 +1615,7 @@ export default function InputView({
                 {/* Family support */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-800">
-                    父母/长辈对你做出的抉择是什么态度？
+                    {formCopy.lifeChoice.familySupportQuestion}
                   </label>
                   <div className="space-y-1.5">
                     {SUPPORT_OPTIONS.map((opt) => (
@@ -1331,7 +1635,7 @@ export default function InputView({
                           onChange={() => setFamilySupport(opt)}
                           className="accent-indigo-600 w-4 h-4 shrink-0"
                         />
-                        <span>{opt.split(" (")[0]}</span>
+                        <span>{getCompactLocalizedOptionLabel(opt, language, SUPPORT_OPTION_LABELS_EN)}</span>
                       </label>
                     ))}
                   </div>
@@ -1365,7 +1669,10 @@ export default function InputView({
             }`}
           >
             <Play className="w-5 h-5 fill-white" />
-            <span>{isGenerating ? "正在加载博弈沙盘并进行演化..." : START_SIMULATION_BUTTON_LABEL}</span>
+            <span>{isGenerating
+              ? (isEnglish ? "Loading and evolving the sandbox..." : "正在加载博弈沙盘并进行演化...")
+              : getStartSimulationButtonLabel(language)}
+            </span>
           </button>
         </div>
       </form>

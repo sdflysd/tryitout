@@ -4,7 +4,7 @@
 
 [中文说明](README.zh-CN.md) | [Commercial licensing](COMMERCIAL-LICENSE.md)
 
-TryItOut is a multi-agent decision sandbox for side-hustle ideas, dating conversations, and major life choices. Instead of asking one AI for advice, you drop a real situation into a small simulated world, let multiple AI agents debate the risks and trade-offs, then get a practical report with next steps.
+TryItOut is a multi-agent decision sandbox for side-hustle ideas, dating conversations, and major life choices. Instead of asking one AI for advice, you drop a real situation into a small simulated world, let a team of role-based AI agents pressure-test it from different incentives and viewpoints, then get a practical report with next steps.
 
 ![TryItOut desktop home](docs/assets/desktop-home-lifeform-starmap.png)
 
@@ -30,11 +30,21 @@ The goal is not to predict the future. The goal is to make assumptions, risks, h
 - **Dating Conversation Sandbox**: simulate replies, emotional boundaries, timing, possible misunderstandings, and relationship risk.
 - **Life Choice Sandbox**: compare options such as exams vs work, big city vs hometown, resigning vs staying, or stable job vs upside.
 
+## Agent Capabilities
+
+TryItOut is built around agent collaboration rather than single-response prompting:
+
+- **Scenario-aware agent teams**: each sandbox activates roles that match the decision, such as customers, competitors, execution coaches, risk auditors, emotional boundary observers, or route evaluators.
+- **Structured disagreement**: agents inspect the same situation from different goals and constraints, exposing weak assumptions, hidden costs, second-order risks, and overlooked upside.
+- **Deep interaction runtime**: optional deep mode adds world events, agent actions, votes, arbitration, memory, and cross-agent validation for richer simulations.
+- **Explainable synthesis**: the final report turns agent debate into route comparisons, risk/opportunity summaries, regret analysis, and a concrete 7-day action plan.
+- **Provider-flexible orchestration**: the AI gateway supports Gemini, Anthropic, and OpenAI-compatible providers, so agent workflows are not tied to a single model vendor.
+
 ## Highlights
 
-- Multi-agent simulation with scenario-specific roles.
-- Fast staged simulation mode for local MVP usage.
-- Optional deep agent interaction mode with world events, actions, votes, arbitration, and memory.
+- Multi-agent simulation engine with scenario-specific role cards, activation, composition, and safety checks.
+- Fast staged simulation mode for local MVP usage, plus optional deep agent interaction mode.
+- Agent collaboration primitives: world events, actions, votes, arbitration, memory, validation, and cost logging.
 - Streaming progress UI for long-running simulations.
 - Report page with risk, opportunity, route comparison, and 7-day action plan.
 - Share-card workflow for result screenshots.
@@ -73,7 +83,6 @@ The goal is not to predict the future. The goal is to make assumptions, risks, h
 ├── COMMERCIAL-LICENSE.md      # Commercial licensing terms
 ├── LICENSE                    # Current non-commercial source license
 ├── README.zh-CN.md
-├── PRD-人生试错机-搞钱模拟器.md
 └── README.md
 ```
 

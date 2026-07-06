@@ -217,6 +217,10 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
   const keyVariables = buildKeyVariables(simulation);
   const agentMemoryEvidence = buildAgentMemoryEvidence(simulation);
   const reportModeSummary = getReportModeSummary(simulation);
+  const reportEvidenceRows = report.agentEvidence?.slice(0, 3) ?? [];
+  const agentNameById = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const formatAgentNames = (agentIds: string[]) =>
+    agentIds.map((agentId) => agentNameById.get(agentId) ?? agentId).join("、") || "无";
   const coreAgentCount = agents.filter((agent) => agent.layer !== "peripheral").length;
   const peripheralAgentCount = agents.filter((agent) => agent.layer === "peripheral").length;
   const agentPanelDescription =
@@ -499,6 +503,33 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           </div>
         </div>
       </div>
+
+      {(report.disagreementSummary || reportEvidenceRows.length > 0) && (
+        <div id="report-agent-disagreement-evidence" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-gray-950">Agent 分歧证据</h2>
+            {report.disagreementSummary && (
+              <p className="text-2xs text-gray-600 leading-relaxed mt-1">
+                {report.disagreementSummary}
+              </p>
+            )}
+          </div>
+          {reportEvidenceRows.length > 0 && (
+            <div className="space-y-3">
+              {reportEvidenceRows.map((row, index) => (
+                <div key={`${row.conclusion}-${index}`} className="bg-gray-50 border border-gray-150 rounded-2xl p-4 space-y-2">
+                  <p className="text-xs font-bold text-gray-900">{row.conclusion}</p>
+                  <p className="text-2xs text-gray-600 leading-relaxed">{row.evidence}</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-3xs text-gray-500">
+                    <span>支持：{formatAgentNames(row.supportingAgentIds)}</span>
+                    <span>反对：{formatAgentNames(row.opposingAgentIds)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {agentMemoryEvidence.length > 0 && (
         <div id="report-agent-memory-evidence" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left space-y-3">
@@ -1104,6 +1135,11 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
       {/* Bottom Disclaimer */}
       <div id="report-bottom-credits" className="text-center pt-4">
+        {report.disclaimer && (
+          <p id="report-disclaimer" className="mx-auto mb-2 max-w-2xl text-2xs leading-relaxed text-gray-500">
+            {report.disclaimer}
+          </p>
+        )}
         <p className="text-2xs text-gray-400 font-mono">
           试一下 | Powered by Google Gemini 3.5 Flash & Antigravity Agent
         </p>

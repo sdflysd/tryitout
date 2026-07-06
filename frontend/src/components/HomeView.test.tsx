@@ -48,6 +48,24 @@ test("homepage renders agent sandbox preview near the hero", () => {
   assert.match(html, /目标客户/);
 });
 
+test("homepage can render English entry workflow copy", () => {
+  const html = renderToStaticMarkup(
+    <HomeView
+      historyList={[]}
+      onStart={() => undefined}
+      onSelectHistory={() => undefined}
+      onSelectTemplate={() => undefined}
+      language="en-US"
+    />,
+  );
+
+  assert.match(html, /rush to send it/);
+  assert.match(html, /AI Starmap Sandbox/);
+  assert.match(html, /Enter simulation/);
+  assert.match(html, /Load a real example/);
+  assert.doesNotMatch(html, /点击加载真实案例/);
+});
+
 test("home templates provide complete simulation input for confirmation before running", async () => {
   const homeModule = await import("./HomeView.js") as typeof import("./HomeView.js") & {
     getTemplateSimulationInput?: (type: SimulationType, index: number) => UserInput;

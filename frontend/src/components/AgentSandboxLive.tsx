@@ -5,10 +5,12 @@ import React from "react";
 import AgentLifeformNetwork from "./AgentLifeformNetwork";
 import { getAgentSandboxScenario, getLiveSandboxPhase } from "./agent-sandbox-model";
 import type { SimulationProgressEvent, SimulationType } from "../types";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 
 interface AgentSandboxLiveProps {
   simulationType: SimulationType;
   progressEvent?: SimulationProgressEvent | null;
+  language?: Language;
 }
 
 const ACCENT_STYLES = {
@@ -59,29 +61,49 @@ const PHASE_CHIPS = [
   "报告合成",
 ];
 
+const EN_PHASE_CHIPS = [
+  "Agents Arriving",
+  "World Setup",
+  "Event Generation",
+  "Agent Challenge",
+  "Arbiter Review",
+  "Report Synthesis",
+];
+
 function clampPercent(percent: number): number {
   return Math.max(0, Math.min(100, Math.round(percent)));
 }
 
-export default function AgentSandboxLive({ simulationType, progressEvent = null }: AgentSandboxLiveProps) {
-  const scenario = getAgentSandboxScenario(simulationType);
+export default function AgentSandboxLive({
+  simulationType,
+  progressEvent = null,
+  language = DEFAULT_LANGUAGE,
+}: AgentSandboxLiveProps) {
+  const scenario = getAgentSandboxScenario(simulationType, language);
   const accent = ACCENT_STYLES[scenario.accentName];
   const shouldReduceMotion = useReducedMotion();
+  const isEnglish = language === "en-US";
   const percent = clampPercent(progressEvent?.percent ?? 0);
   const phase = getLiveSandboxPhase({
     scenario,
     step: progressEvent?.step,
     percent,
     stageIndex: progressEvent?.stageIndex,
+    language,
   });
   const activeStage = scenario.stages[phase.activeStageIndex] ?? scenario.stages[0];
-  const message = progressEvent?.message?.trim() || "建立沙盘连接";
-  const activeChipLabel = phase.label === "智能体交互" ? "Agent 交锋" : phase.label;
+  const message = progressEvent?.message?.trim() || (isEnglish ? "Opening sandbox connection" : "建立沙盘连接");
+  const activeChipLabel = phase.label === "智能体交互"
+    ? "Agent 交锋"
+    : phase.label === "Agent Interaction"
+    ? "Agent Challenge"
+    : phase.label;
+  const phaseChips = isEnglish ? EN_PHASE_CHIPS : PHASE_CHIPS;
 
   return (
     <section
       id="agent-starmap-live"
-      aria-label="实时 AI 星图沙盘"
+      aria-label={isEnglish ? "Live AI starmap sandbox" : "实时 AI 星图沙盘"}
       className="mx-auto w-full max-w-6xl overflow-hidden px-4 py-6 text-left text-white"
     >
       <div id="simulation-command-center" className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#050711] p-4 shadow-2xl shadow-black/35 sm:p-5">
@@ -107,8 +129,12 @@ export default function AgentSandboxLive({ simulationType, progressEvent = null 
                 <Radio className={`h-5 w-5 ${accent.strongText}`} aria-hidden="true" />
               </span>
               <div className="min-w-0">
-                <h2 className="text-lg font-black text-white">实时 AI 星图沙盘</h2>
-                <p className="truncate text-xs font-semibold text-white/50">{scenario.title} · {phase.label} · 推演引擎在线</p>
+                <h2 className="text-lg font-black text-white">
+                  {isEnglish ? "Live AI Starmap Sandbox" : "实时 AI 星图沙盘"}
+                </h2>
+                <p className="truncate text-xs font-semibold text-white/50">
+                  {scenario.title} · {phase.label} · {isEnglish ? "simulation engine online" : "推演引擎在线"}
+                </p>
               </div>
             </div>
             <p className="max-w-2xl text-sm font-semibold leading-6 text-white/74">{message}</p>
@@ -127,7 +153,7 @@ export default function AgentSandboxLive({ simulationType, progressEvent = null 
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percent}
-              aria-label="实时 Agent 沙盘进度"
+                aria-label={isEnglish ? "Live Agent sandbox progress" : "实时 Agent 沙盘进度"}
               className="h-2.5 overflow-hidden rounded-full bg-white/12"
             >
               <motion.div
@@ -150,6 +176,7 @@ export default function AgentSandboxLive({ simulationType, progressEvent = null 
             activeStageTitle={activeStage.title}
             progressPercent={percent}
             variant="live"
+            language={language}
           />
 
           <aside className="min-w-0 space-y-4">
@@ -159,7 +186,7 @@ export default function AgentSandboxLive({ simulationType, progressEvent = null 
                 <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">Live Phases</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {PHASE_CHIPS.map((chip) => {
+                {phaseChips.map((chip) => {
                   const isActive = chip === activeChipLabel;
 
                   return (
@@ -214,9 +241,9 @@ export default function AgentSandboxLive({ simulationType, progressEvent = null 
                 aria-atomic="true"
                 className="space-y-2 text-xs font-semibold leading-5 text-white/62"
               >
-                <p>连接状态：{progressEvent ? "接收后端事件" : "建立沙盘连接"}</p>
-                <p>当前阶段：{activeStage.label}，{activeStage.title}</p>
-                <p>事件摘要：{message}</p>
+                <p>{isEnglish ? "Connection:" : "连接状态："}{progressEvent ? (isEnglish ? " receiving backend events" : "接收后端事件") : (isEnglish ? " opening sandbox connection" : "建立沙盘连接")}</p>
+                <p>{isEnglish ? "Current stage:" : "当前阶段："}{activeStage.label}{isEnglish ? ", " : "，"}{activeStage.title}</p>
+                <p>{isEnglish ? "Event summary:" : "事件摘要："}{message}</p>
               </div>
             </div>
           </aside>

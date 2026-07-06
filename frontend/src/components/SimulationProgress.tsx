@@ -3,14 +3,17 @@ import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, Bot, ShieldAlert, Sparkles, Terminal } from "lucide-react";
 import AgentSandboxLive from "./AgentSandboxLive";
 import type { SimulationProgressEvent, SimulationType } from "../types";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 
 interface SimulationProgressProps {
   isGenerating: boolean;
   simulationType: SimulationType;
   errorMsg?: string;
+  canResume?: boolean;
   onRetry?: () => void;
   onCancel?: () => void;
   progressEvent?: SimulationProgressEvent | null;
+  language?: Language;
 }
 
 type ProgressLog = {
@@ -66,7 +69,115 @@ function withDelays(texts: string[]): ProgressLog[] {
   }));
 }
 
-export function getSimulationProgressCopy(type: SimulationType): ProgressCopy {
+export function getSimulationProgressCopy(
+  type: SimulationType,
+  language: Language = DEFAULT_LANGUAGE,
+): ProgressCopy {
+  if (language === "en-US") {
+    if (type === "dating") {
+      return {
+        logs: withDelays([
+          "Parsing your relationship status, conflict trigger, and planned message...",
+          "Extracting safety, boundaries, and emotional risk zones...",
+          "Generating 7 relationship Agents: you, TA, coach, boundaries, and reality checks...",
+          "TA Agent is entering the sandbox to simulate guarded expectations and real responses...",
+          "Communication Coach Agent is marking what helps and what hurts...",
+          "External Pressure Agent is checking misunderstandings, rivals, and real-life friction...",
+          "Relationship Analyst Agent is calculating warmth and communication resistance...",
+          "[Sandbox online] Simulating the next 30 days of relationship interaction...",
+          "> Days 1-3: first response and repair test...",
+          "> Days 4-7: pacing, warmth, and restraint...",
+          "> Days 8-15: old friction and core conflict may resurface...",
+          "> Days 16-23: trust rebuild or cooldown pressure...",
+          "> Days 24-30: outcome narrows toward closeness, distance, or letting go...",
+          "Relationship Coach Agent is summarizing shifts, risks, and repair strategy...",
+          "Drafting a 7-day high-EQ communication calendar...",
+          "Rendering the final relationship decision report and share card...",
+        ]),
+        heading: "Building the AI relationship multi-agent sandbox...",
+        subHeading: "We are simulating 7 emotional roles over the next 30 days around TA's response, communication rhythm, and relationship safety. This usually takes 10 to 30 seconds.",
+        progressLabel: "Calculating relationship simulation confidence...",
+        tipLead: "Relationship sandbox note:",
+        tipBody: "We simulate 5 stages because many relationships do not break on one sentence, but on follow-up pressure, old triggers, or unstable pacing. Seeing the rhythm first is cheaper than testing it live.",
+        accentBg: "bg-rose-500",
+        accentText: "text-rose-500",
+        accentBorder: "border-rose-300",
+        tipBg: "bg-rose-50/60",
+        tipBorder: "border-rose-100",
+        tipText: "text-rose-800",
+        icon: "heart",
+      };
+    }
+
+    if (type === "life_choice") {
+      return {
+        logs: withDelays([
+          "Parsing your options, real resources, and biggest fear...",
+          "Extracting opportunity cost, regret risk, and survival assumptions...",
+          "Generating 7 decision Agents: self, route advocates, peers, family, resources, and fear...",
+          "Primary Route Agent is entering to amplify upside and hidden costs...",
+          "Alternative Route Agent is calculating stability and ceiling limits...",
+          "Peer Pressure Agent is simulating comparison, FOMO, and mental drag...",
+          "Survival Baseline Agent is checking cash buffer and worst-case resilience...",
+          "[Sandbox online] Simulating 30 days of decision friction...",
+          "> Days 1-3: competing voices enter at once...",
+          "> Days 4-7: small attempts and sunk-cost signals begin...",
+          "> Days 8-15: the hardest pain points become visible...",
+          "> Days 16-23: opportunity cost and regret push back...",
+          "> Days 24-30: results converge around long-term value and reality costs...",
+          "Life Coach Agent is summarizing trade-offs, upside, and fallback routes...",
+          "Drafting a 7-day regret-defense checklist...",
+          "Rendering the final life choice report and share card...",
+        ]),
+        heading: "Building the AI life-choice multi-agent sandbox...",
+        subHeading: "We are simulating 7 real-world voices over the next 30 days around opportunity cost, stress tolerance, and survival baseline. This usually takes 10 to 30 seconds.",
+        progressLabel: "Calculating life-choice simulation confidence...",
+        tipLead: "Decision sandbox note:",
+        tipBody: "Major choices are rarely hard only at the moment of decision. The hard parts often show up in delayed pressure, regret, and resource limits. Simulating them first helps you move with less fog.",
+        accentBg: "bg-indigo-600",
+        accentText: "text-indigo-500",
+        accentBorder: "border-indigo-300",
+        tipBg: "bg-indigo-50/60",
+        tipBorder: "border-indigo-100",
+        tipText: "text-indigo-800",
+        icon: "compass",
+      };
+    }
+
+    return {
+      logs: withDelays([
+        "Parsing your side-hustle idea and current resources...",
+        "Extracting the 4 core business validation assumptions...",
+        "Generating 7 business Agents with different incentives...",
+        "Target Customer Agent is entering to test pain intensity and budget resistance...",
+        "Competitor Agent is checking commoditization and free alternatives...",
+        "Platform Traffic Agent is simulating cold-start friction across channels...",
+        "Execution Coach Agent is estimating how your available time converts into output...",
+        "[Sandbox online] Simulating a 30-day business worldline...",
+        "> Days 1-3: idea meets execution detail creep...",
+        "> Days 4-7: first MVP test meets real feedback...",
+        "> Days 8-15: acquisition test exposes traffic quality...",
+        "> Days 16-23: bottlenecks, energy dips, and pivot decisions appear...",
+        "> Days 24-30: trial users, paid conversion, and cash flow are reconciled...",
+        "Business Analyst Agent is summarizing gains, risks, and pivot strategy...",
+        "Execution Coach is drafting next week's 7-day MVP action plan...",
+        "Rendering the final decision report and share card...",
+      ]),
+      heading: "Building the AI business multi-agent sandbox...",
+      subHeading: "We are simulating 7 roles over the next 30 days around target customer demand, competitors, platform traffic, execution, and cash flow. This usually takes 10 to 30 seconds.",
+      progressLabel: "Calculating sandbox simulation confidence...",
+      tipLead: "Sandbox note:",
+      tipBody: "We simulate 5 stages because many side-hustle ideas fail after the first traffic test or when energy and cash flow start to bite. A dry run can save real money and time.",
+      accentBg: "bg-amber-500",
+      accentText: "text-amber-500",
+      accentBorder: "border-amber-300",
+      tipBg: "bg-amber-50/60",
+      tipBorder: "border-amber-100",
+      tipText: "text-amber-800",
+      icon: "cpu",
+    };
+  }
+
   if (type === "dating") {
     return {
       logs: withDelays([
@@ -173,8 +284,17 @@ export function getSimulationProgressCopy(type: SimulationType): ProgressCopy {
 
 export function getProgressDisplayState(
   progressEvent?: SimulationProgressEvent | null,
+  language: Language = DEFAULT_LANGUAGE,
 ): ProgressDisplayState {
   if (!progressEvent) {
+    if (language === "en-US") {
+      return {
+        percent: 0,
+        logs: ["Waiting for backend progress events and opening the sandbox connection..."],
+        activeMessage: "Waiting for backend progress events...",
+      };
+    }
+
     return {
       percent: 0,
       logs: ["等待后端进度事件，正在建立沙盘连接..."],
@@ -193,20 +313,23 @@ export default function SimulationProgress({
   isGenerating,
   simulationType,
   errorMsg,
+  canResume = false,
   onRetry,
   onCancel,
   progressEvent,
+  language = DEFAULT_LANGUAGE,
 }: SimulationProgressProps) {
   const [visibleLogs, setVisibleLogs] = useState<string[]>(
-    () => getProgressDisplayState(progressEvent).logs,
+    () => getProgressDisplayState(progressEvent, language).logs,
   );
+  const isEnglish = language === "en-US";
   const copy = useMemo(
-    () => getSimulationProgressCopy(simulationType),
-    [simulationType],
+    () => getSimulationProgressCopy(simulationType, language),
+    [simulationType, language],
   );
   const displayState = useMemo(
-    () => getProgressDisplayState(progressEvent),
-    [progressEvent],
+    () => getProgressDisplayState(progressEvent, language),
+    [progressEvent, language],
   );
   const percent = displayState.percent;
 
@@ -239,9 +362,13 @@ export default function SimulationProgress({
             <ShieldAlert className="w-6 h-6" />
           </div>
           
-          <h2 id="sim-error-title" className="text-lg font-bold text-gray-950 mb-2">沙盘模拟计算失败</h2>
+          <h2 id="sim-error-title" className="text-lg font-bold text-gray-950 mb-2">
+            {isEnglish ? "Sandbox simulation failed" : "沙盘模拟计算失败"}
+          </h2>
           <p id="sim-error-desc" className="text-xs text-gray-600 leading-relaxed mb-6">
-            抱歉兄弟，模型计算似乎开小差了，或者是你的想法太奇妙，AI在演绎过程中撞墙了。报错信息如下：
+            {isEnglish
+              ? "The model run did not complete. This may be a temporary model or server issue. Error details:"
+              : "抱歉兄弟，模型计算似乎开小差了，或者是你的想法太奇妙，AI在演绎过程中撞墙了。报错信息如下："}
             <br />
             <span className="block bg-gray-50 text-rose-700 p-3 rounded-lg font-mono text-2xs mt-2 border border-gray-150 overflow-x-auto whitespace-pre-wrap">
               {errorMsg}
@@ -255,7 +382,9 @@ export default function SimulationProgress({
                 onClick={onRetry}
                 className="flex-1 bg-gray-950 hover:bg-gray-850 text-white font-semibold text-xs py-2.5 rounded-lg transition-colors cursor-pointer text-center"
               >
-                重新开始模拟
+                {canResume
+                  ? isEnglish ? "Resume simulation" : "继续模拟"
+                  : isEnglish ? "Restart simulation" : "重新开始模拟"}
               </button>
             )}
             {onCancel && (
@@ -264,7 +393,7 @@ export default function SimulationProgress({
                 onClick={onCancel}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold text-xs py-2.5 rounded-lg transition-colors cursor-pointer text-center"
               >
-                修改输入配置
+                {isEnglish ? "Edit input" : "修改输入配置"}
               </button>
             )}
           </div>
@@ -275,7 +404,7 @@ export default function SimulationProgress({
 
   return (
     <div id="simulation-progress-container" className="mx-auto w-full max-w-6xl bg-[#050711] py-6 text-white md:py-8">
-      <AgentSandboxLive simulationType={simulationType} progressEvent={progressEvent} />
+      <AgentSandboxLive simulationType={simulationType} progressEvent={progressEvent} language={language} />
 
       <div className="mx-auto max-w-3xl px-4">
         <div className="rounded-3xl border border-white/10 bg-white/[0.055] p-4 text-left shadow-xl shadow-black/20 backdrop-blur-xl sm:p-5">

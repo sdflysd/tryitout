@@ -207,6 +207,101 @@ test("OpenAiCompatibleAdapter uses request generationConfig before profile defau
   assert.equal(body.max_tokens, 550);
 });
 
+test("OpenAiCompatibleAdapter streams chat completions and reconstructs JSON content", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const encoder = new TextEncoder();
+  const adapter = new OpenAiCompatibleAdapter({
+    apiKey: "test-openai-compatible-key",
+    baseUrl: "https://server-configured.example/v1",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init: init ?? {} });
+
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            "data: {\"id\":\"chatcmpl_stream\",\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\"\"},\"finish_reason\":null}]}\n\n",
+          ));
+          controller.enqueue(encoder.encode(
+            "data: {\"id\":\"chatcmpl_stream\",\"choices\":[{\"delta\":{\"content\":\":true}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\n\n",
+          ));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      }), {
+        headers: {
+          "content-type": "text/event-stream",
+        },
+      });
+    },
+  });
+
+  const result = await adapter.generateJson<{ ok: boolean }>(
+    makeRequest({
+      generationConfig: {
+        maxOutputTokens: 400,
+        timeoutMs: 5_000,
+        maxRetries: 1,
+      },
+    }),
+  );
+
+  assert.deepEqual(result.data, { ok: true });
+  assert.equal(result.rawText, "{\"ok\":true}");
+  assert.equal(result.transport, "stream");
+  assert.equal(result.streamChunkCount, 3);
+  assert.equal(result.requestId, "chatcmpl_stream");
+  assert.equal(result.stopReason, "stop");
+  assert.deepEqual(result.usage, {
+    inputTokens: 3,
+    outputTokens: 4,
+    totalTokens: 7,
+  });
+  assert.equal(calls.length, 1);
+
+  const body = JSON.parse(String(calls[0]?.init.body));
+  assert.equal(body.stream, true);
+  assert.deepEqual(body.stream_options, { include_usage: true });
+});
+
+test("OpenAiCompatibleAdapter treats timeout as stream idle timeout instead of total duration", async () => {
+  const encoder = new TextEncoder();
+  const adapter = new OpenAiCompatibleAdapter({
+    apiKey: "test-openai-compatible-key",
+    baseUrl: "https://server-configured.example/v1",
+    fetch: async () =>
+      new Response(new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode(
+            "data: {\"id\":\"chatcmpl_stream\",\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\"\"},\"finish_reason\":null}]}\n\n",
+          ));
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          controller.enqueue(encoder.encode(
+            "data: {\"id\":\"chatcmpl_stream\",\"choices\":[{\"delta\":{\"content\":\":true}\"},\"finish_reason\":\"stop\"}]}\n\n",
+          ));
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      }), {
+        headers: {
+          "content-type": "text/event-stream",
+        },
+      }),
+  });
+
+  const result = await adapter.generateJson<{ ok: boolean }>(
+    makeRequest({
+      generationConfig: {
+        maxOutputTokens: 400,
+        timeoutMs: 40,
+        maxRetries: 1,
+      },
+    }),
+  );
+
+  assert.deepEqual(result.data, { ok: true });
+});
+
 test("OpenAiCompatibleAdapter honors request maxRetries for long simulation calls", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const adapter = new OpenAiCompatibleAdapter({

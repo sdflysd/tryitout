@@ -1,6 +1,7 @@
 import type { AiCallLogEntry } from "../ai/call-log.js";
 import type { SimulationApiResponse, SimulationProgressEvent } from "../../types.js";
 import type { SimulationTaskService } from "./task-service.js";
+import type { SimulationCheckpointPayload } from "./task-types.js";
 
 interface RunSimulationTaskDeps {
   service: SimulationTaskService;
@@ -8,6 +9,8 @@ interface RunSimulationTaskDeps {
   runSimulation: (hooks: {
     onProgress: (event: SimulationProgressEvent) => void;
     onAiCallLog: (entry: AiCallLogEntry) => void;
+    onCheckpoint: (checkpoint: Partial<SimulationCheckpointPayload>) => void;
+    resumeFrom?: SimulationCheckpointPayload;
   }) => Promise<SimulationApiResponse>;
 }
 
@@ -28,15 +31,31 @@ export async function runSimulationTaskOnce(
     currentStepName: "run_simulation",
     progressPercent: 1,
   });
+  const resumeCheckpoint = await service.getLatestCheckpoint(simulationId);
 
   try {
     const report = await runSimulation({
+      resumeFrom: resumeCheckpoint?.checkpoint,
       onProgress: (event) => {
         enqueueWrite(
           () => service.markRunning(simulationId, {
             currentStageIndex: event.stageIndex,
             currentStepName: event.step,
             progressPercent: event.percent,
+          }),
+        );
+      },
+      onCheckpoint: (checkpoint) => {
+        enqueueWrite(
+          () => service.recordCheckpoint(simulationId, {
+            stageIndex: checkpoint.completedStages?.at(-1)?.stageIndex,
+            stepName: checkpoint.nextStep ?? "checkpoint",
+            checkpoint: {
+              ...checkpoint,
+              userInput: resumeCheckpoint?.checkpoint.userInput ??
+                ({} as SimulationCheckpointPayload["userInput"]),
+              mode: resumeCheckpoint?.checkpoint.mode ?? "legacy",
+            },
           }),
         );
       },

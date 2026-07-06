@@ -7,6 +7,7 @@ import type {
   SandboxInteractionMode,
   SandboxScenario,
 } from "./agent-sandbox-model";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 
 interface AgentLifeformNetworkProps {
   scenario: SandboxScenario;
@@ -16,6 +17,7 @@ interface AgentLifeformNetworkProps {
   activeStageTitle?: string;
   progressPercent?: number;
   variant?: "preview" | "live";
+  language?: Language;
 }
 
 type NodePosition = {
@@ -48,6 +50,14 @@ const MODE_COPY: Record<SandboxInteractionMode, string> = {
   challenge: "质疑交锋",
   arbitrate: "仲裁校准",
   synthesize: "信号汇聚",
+};
+
+const EN_MODE_COPY: Record<SandboxInteractionMode, string> = {
+  observe: "Observing agents",
+  support: "Support signal",
+  challenge: "Challenge exchange",
+  arbitrate: "Arbiter calibration",
+  synthesize: "Signal synthesis",
 };
 
 const MODE_TONE: Record<SandboxInteractionMode, string> = {
@@ -166,7 +176,19 @@ function isInteractionLinkActive(
   return activeIds.has(link.sourceAgentId) || activeIds.has(link.targetAgentId);
 }
 
-function getNodeStateLabel(isActive: boolean, interactionMode: SandboxInteractionMode): string {
+function getNodeStateLabel(
+  isActive: boolean,
+  interactionMode: SandboxInteractionMode,
+  language: Language = DEFAULT_LANGUAGE,
+): string {
+  if (language === "en-US") {
+    if (!isActive) return "Observing";
+    if (interactionMode === "challenge") return "Challenging";
+    if (interactionMode === "arbitrate") return "Arbitrating";
+    if (interactionMode === "synthesize") return "Synthesizing";
+    return "Collaborating";
+  }
+
   if (!isActive) return "漂浮观测";
   if (interactionMode === "challenge") return "正在交锋";
   if (interactionMode === "arbitrate") return "正在仲裁";
@@ -182,6 +204,7 @@ export default function AgentLifeformNetwork({
   activeStageTitle = scenario.centerLabel,
   progressPercent,
   variant = "preview",
+  language = DEFAULT_LANGUAGE,
 }: AgentLifeformNetworkProps) {
   const accent = ACCENT_STYLES[scenario.accentName];
   const shouldReduceMotion = useReducedMotion();
@@ -195,6 +218,8 @@ export default function AgentLifeformNetwork({
     sourceLabel: getAgentLabel(scenario, link.sourceAgentId),
     targetLabel: getAgentLabel(scenario, link.targetAgentId),
   }));
+  const isEnglish = language === "en-US";
+  const modeCopy = isEnglish ? EN_MODE_COPY : MODE_COPY;
 
   return (
     <div
@@ -216,14 +241,16 @@ export default function AgentLifeformNetwork({
               <Sparkles className={`h-4 w-4 ${accent.strongText}`} aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <p className="text-xs font-black text-white">每个 Agent 都是一个生命体</p>
+              <p className="text-xs font-black text-white">
+                {isEnglish ? "Every Agent is a living signal" : "每个 Agent 都是一个生命体"}
+              </p>
               <p className="truncate text-[10px] font-bold text-white/48">{activeStageLabel} · {activeStageTitle}</p>
             </div>
           </div>
         </div>
         <div className={`inline-flex min-h-8 items-center gap-2 rounded-full border px-3 text-[10px] font-black ${MODE_TONE[interactionMode]}`}>
           <Radio className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>{MODE_COPY[interactionMode]}</span>
+          <span>{modeCopy[interactionMode]}</span>
           {progressPercent !== undefined && <span>{percent}%</span>}
         </div>
       </div>
@@ -232,7 +259,7 @@ export default function AgentLifeformNetwork({
         <div
           id="agent-active-collaboration-panel"
           className="relative z-20 mb-3 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-black/22 p-2"
-          aria-label="当前 Agent 协作链路"
+          aria-label={isEnglish ? "Current Agent collaboration path" : "当前 Agent 协作链路"}
         >
           {activeLinkSummaries.map((link) => (
             <span
@@ -270,7 +297,7 @@ export default function AgentLifeformNetwork({
               </div>
               <p className="truncate text-xs font-black text-white">{agent.label}</p>
               <p className="truncate text-[10px] font-semibold text-white/48">{agent.role}</p>
-              <p className="mt-2 text-[10px] font-bold text-white/40">{getNodeStateLabel(isActive, interactionMode)}</p>
+              <p className="mt-2 text-[10px] font-bold text-white/40">{getNodeStateLabel(isActive, interactionMode, language)}</p>
             </div>
           );
         })}
@@ -483,7 +510,7 @@ export default function AgentLifeformNetwork({
               <span className="relative truncate text-xs font-black text-white">{agent.label}</span>
               <span className="relative truncate text-[10px] font-semibold text-white/48">{agent.role}</span>
               <span className={`relative mt-1.5 text-[9px] font-black ${isActive ? accent.strongText : "text-white/34"}`}>
-                {getNodeStateLabel(isActive, interactionMode)}
+                {getNodeStateLabel(isActive, interactionMode, language)}
               </span>
             </motion.div>
           );
@@ -491,10 +518,18 @@ export default function AgentLifeformNetwork({
       </div>
 
       <div className="relative z-10 mt-3 flex flex-wrap gap-2 text-[10px] font-black text-white/42">
-        <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1">协作信号</span>
-        <span className="rounded-full border border-rose-300/20 bg-rose-300/8 px-2.5 py-1 text-rose-100/68">质疑</span>
-        <span className="rounded-full border border-amber-300/20 bg-amber-300/8 px-2.5 py-1 text-amber-100/68">仲裁</span>
-        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/8 px-2.5 py-1 text-cyan-100/68">汇聚</span>
+        <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1">
+          {isEnglish ? "Support signal" : "协作信号"}
+        </span>
+        <span className="rounded-full border border-rose-300/20 bg-rose-300/8 px-2.5 py-1 text-rose-100/68">
+          {isEnglish ? "Challenge" : "质疑"}
+        </span>
+        <span className="rounded-full border border-amber-300/20 bg-amber-300/8 px-2.5 py-1 text-amber-100/68">
+          {isEnglish ? "Arbitrate" : "仲裁"}
+        </span>
+        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/8 px-2.5 py-1 text-cyan-100/68">
+          {isEnglish ? "Synthesize" : "汇聚"}
+        </span>
       </div>
     </div>
   );

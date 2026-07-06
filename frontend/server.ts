@@ -17,6 +17,7 @@ import { buildRuntimeDiagnostics } from "./src/server/agent-runtime/diagnostics.
 import { resolveInteractionMode } from "./src/server/interaction-mode.js";
 import { handleLifeChoiceStructureRequest } from "./src/server/life-choice-structure-api.js";
 import { runMultiAgentSimulation } from "./src/server/simulations/multi-agent-runner.js";
+import { assessUserInputSafety } from "./src/server/simulations/safety.js";
 import {
   handleCancelSimulationTaskRequest,
   handleCreateSimulationTaskRequest,
@@ -106,6 +107,11 @@ function validateSimulationInput(userInput: UserInput | undefined): string | und
     return "至少需要 2 个可比较的人生选择";
   }
 
+  const safety = assessUserInputSafety(userInput);
+  if (!safety.ok) {
+    return safety.message;
+  }
+
   return undefined;
 }
 
@@ -154,7 +160,12 @@ app.get("/api/agent-runtime/capabilities", (req, res) => {
 async function runDurableCompatibilityTask(simulationId: string): Promise<void> {
   await runSimulationTaskOnce(simulationId, {
     service: taskService,
-    runSimulation: async ({ onProgress, onAiCallLog }) => {
+    runSimulation: async ({
+      onProgress,
+      onAiCallLog,
+      onCheckpoint,
+      resumeFrom,
+    }) => {
       const task = await taskRepository.getTask(simulationId);
       if (!task) {
         throw new Error("simulation task not found");
@@ -178,6 +189,8 @@ async function runDurableCompatibilityTask(simulationId: string): Promise<void> 
           simulationId,
           userInput: task.userInput,
           interactionMode,
+          resumeFrom,
+          onCheckpoint,
           onProgress,
         });
 

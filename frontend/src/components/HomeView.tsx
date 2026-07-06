@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { AlertCircle, ArrowRight, Compass, Flame, Heart, History, PencilLine, Play, Sparkles, Trash2 } from "lucide-react";
 import { Simulation, SimulationType, UserInput } from "../types";
+import { DEFAULT_LANGUAGE, Language } from "../language";
 import { postValidationEvent } from "../validation-events";
 import AgentSandboxPreview from "./AgentSandboxPreview";
 import { getHomeHeroCopy } from "./home-copy";
@@ -15,6 +16,7 @@ interface HomeViewProps {
   lastInputDraft?: UserInput;
   onContinueDraft?: (input: UserInput) => void;
   onDeleteHistory?: (simulationId: string) => void;
+  language?: Language;
 }
 
 type TemplateItem = {
@@ -207,6 +209,30 @@ const categoryInfo = {
   },
 } as const;
 
+const categoryInfoEn = {
+  side_hustle: {
+    ...categoryInfo.side_hustle,
+    title: "Side Hustle",
+    subtitle: "Run the idea through market, traffic, and cash-flow pressure first",
+    desc: "Target customers, competitors, platform traffic, execution coaching, cash flow, risk audit, and the arbiter stress-test your idea across 30 days.",
+    tagline: "Business worldline",
+  },
+  dating: {
+    ...categoryInfo.dating,
+    title: "Dating Chat",
+    subtitle: "Preview the next message against TA, emotions, boundaries, and reality",
+    desc: "TA, a communication coach, boundaries, emotions, reality constraints, an outside friend, and the arbiter simulate how the relationship warms up or cools down.",
+    tagline: "Relationship worldline",
+  },
+  life_choice: {
+    ...categoryInfo.life_choice,
+    title: "Life Choice",
+    subtitle: "Let future self, resources, and opportunity cost debate the fork",
+    desc: "Option A, Option B, future self, family reality, resources, core fear, and the arbiter lay out the trade-offs.",
+    tagline: "Decision worldline",
+  },
+};
+
 export default function HomeView({
   onStart,
   onSelectHistory,
@@ -215,11 +241,14 @@ export default function HomeView({
   lastInputDraft,
   onContinueDraft,
   onDeleteHistory,
+  language = DEFAULT_LANGUAGE,
 }: HomeViewProps) {
   const [activeTab, setActiveTab] = useState<SimulationType>("side_hustle");
-  const heroCopy = getHomeHeroCopy();
-  const privacySafetyCopy = getPrivacySafetyCopy();
-  const activeInfo = categoryInfo[activeTab];
+  const isEnglish = language === "en-US";
+  const heroCopy = getHomeHeroCopy(language);
+  const privacySafetyCopy = getPrivacySafetyCopy(language);
+  const localizedCategoryInfo = isEnglish ? categoryInfoEn : categoryInfo;
+  const activeInfo = localizedCategoryInfo[activeTab];
   const ActiveIcon = activeInfo.icon;
 
   const handleStart = (type: SimulationType) => {
@@ -261,10 +290,10 @@ export default function HomeView({
             <div className="text-left">
               <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-amber-300/10 px-3.5 py-2 text-xs font-black tracking-wide text-amber-100 shadow-[0_0_28px_rgba(251,191,36,0.12)] backdrop-blur-md">
                 <Sparkles className="h-3.5 w-3.5 text-amber-200" aria-hidden="true" />
-                <span>AI 星图沙盘 · 30 天推演</span>
+                <span>{isEnglish ? "AI Starmap Sandbox · 30-Day Simulation" : "AI 星图沙盘 · 30 天推演"}</span>
               </div>
               <div className="mb-4 w-fit border-l border-cyan-200/40 pl-3 text-[11px] font-black uppercase tracking-[0.24em] text-cyan-100/72">
-                传播级 AI 决策沙盘
+                {isEnglish ? "Shareable AI Decision Sandbox" : "传播级 AI 决策沙盘"}
               </div>
 
               <h1 id="home-main-title" className="max-w-3xl text-4xl font-black leading-[1.03] tracking-tight text-white md:text-6xl">
@@ -276,7 +305,9 @@ export default function HomeView({
               </h1>
 
               <p id="home-subtitle" className="mt-5 max-w-xl text-sm leading-7 text-white/68 md:text-base">
-                {heroCopy.subtitle} 7 个智能体正在围绕你的选择建立世界线，先把后果推演一遍，再决定要不要真的行动。
+                {heroCopy.subtitle} {isEnglish
+                  ? "7 agents build a worldline around your choice so you can see the consequences before acting."
+                  : "7 个智能体正在围绕你的选择建立世界线，先把后果推演一遍，再决定要不要真的行动。"}
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -286,7 +317,7 @@ export default function HomeView({
                   className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-6 text-sm font-black transition-all duration-200 active:scale-98 cursor-pointer ${activeInfo.button}`}
                 >
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-                  <span>进入星图推演</span>
+                  <span>{isEnglish ? "Enter simulation" : "进入星图推演"}</span>
                 </button>
                 <div className="inline-flex min-h-12 items-center gap-2 rounded-2xl border border-white/12 bg-white/7 px-4 text-xs font-bold text-white/70 backdrop-blur-md">
                   <ActiveIcon className="h-4 w-4" aria-hidden="true" />
@@ -295,12 +326,12 @@ export default function HomeView({
               </div>
             </div>
 
-            <AgentSandboxPreview simulationType={activeTab} />
+            <AgentSandboxPreview simulationType={activeTab} language={language} />
           </motion.div>
 
           <div id="sandbox-selector-tabs" className="mt-7 grid grid-cols-3 gap-2 rounded-3xl border border-white/10 bg-white/[0.06] p-1.5 backdrop-blur-xl">
             {(["side_hustle", "dating", "life_choice"] as SimulationType[]).map((type) => {
-              const info = categoryInfo[type];
+              const info = localizedCategoryInfo[type];
               const Icon = info.icon;
               const isActive = activeTab === type;
 
@@ -345,7 +376,7 @@ export default function HomeView({
                 onClick={() => handleStart(activeTab)}
                 className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-2xl px-5 text-xs font-black transition-all duration-200 active:scale-98 cursor-pointer ${activeInfo.button}`}
               >
-                <span>开始模拟</span>
+                <span>{isEnglish ? "Start simulation" : "开始模拟"}</span>
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
@@ -363,9 +394,11 @@ export default function HomeView({
                     <PencilLine className="h-5 w-5" aria-hidden="true" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-black text-white">继续编辑上次输入</h2>
+                    <h2 className="text-sm font-black text-white">{isEnglish ? "Continue last draft" : "继续编辑上次输入"}</h2>
                     <p className="mt-1 text-xs leading-relaxed text-white/50">
-                      上次开始推演时的内容还在本机，可以回到表单修改后重新模拟。
+                      {isEnglish
+                        ? "Your last simulation input is saved locally. Return to the form, adjust it, and simulate again."
+                        : "上次开始推演时的内容还在本机，可以回到表单修改后重新模拟。"}
                     </p>
                   </div>
                 </div>
@@ -374,7 +407,7 @@ export default function HomeView({
                   onClick={() => onContinueDraft(lastInputDraft)}
                   className="inline-flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-4 text-xs font-black text-slate-950 transition-colors hover:bg-cyan-200 cursor-pointer"
                 >
-                  <span>继续编辑</span>
+                  <span>{isEnglish ? "Continue editing" : "继续编辑"}</span>
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
@@ -384,7 +417,7 @@ export default function HomeView({
           <div id="templates-section" className="text-left">
             <h2 className="mb-5 flex items-center gap-2 text-base font-black text-white md:text-lg">
               <Sparkles className="h-5 w-5 text-amber-200" aria-hidden="true" />
-              <span>点击加载真实案例，确认后再开始推演</span>
+              <span>{isEnglish ? "Load a real example, review it, then start the simulation" : "点击加载真实案例，确认后再开始推演"}</span>
             </h2>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -401,7 +434,7 @@ export default function HomeView({
                         {tpl.tag}
                       </span>
                       <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-200 opacity-0 transition-opacity group-hover:opacity-100">
-                        载入模板
+                        {isEnglish ? "Load template" : "载入模板"}
                         <ArrowRight className="h-3 w-3" aria-hidden="true" />
                       </span>
                     </div>
@@ -417,7 +450,7 @@ export default function HomeView({
             <div id="history-section" className="mt-10 rounded-3xl border border-white/10 bg-white/[0.055] p-6 text-left shadow-xl shadow-black/15 backdrop-blur-xl">
               <h2 className="mb-4 flex items-center gap-2 text-base font-black text-white md:text-lg">
                 <History className="h-5 w-5 text-white/55" aria-hidden="true" />
-                <span>我的历史推演记录</span>
+                <span>{isEnglish ? "My simulation history" : "我的历史推演记录"}</span>
               </h2>
 
               <div className="divide-y divide-white/10">
@@ -428,9 +461,9 @@ export default function HomeView({
                     ? "text-amber-100 bg-amber-300/10 border-amber-300/20"
                     : "text-rose-100 bg-rose-300/10 border-rose-300/20";
 
-                  let scenarioTag = "副业搞钱";
-                  if (hist.type === "dating") scenarioTag = "恋爱聊天";
-                  if (hist.type === "life_choice") scenarioTag = "重大选择";
+                  let scenarioTag = isEnglish ? "Side Hustle" : "副业搞钱";
+                  if (hist.type === "dating") scenarioTag = isEnglish ? "Dating Chat" : "恋爱聊天";
+                  if (hist.type === "life_choice") scenarioTag = isEnglish ? "Life Choice" : "重大选择";
 
                   return (
                     <div
@@ -445,20 +478,20 @@ export default function HomeView({
                             {scenarioTag}
                           </span>
                           <h3 className="truncate text-xs font-bold text-white">
-                            {hist.report.projectName || "未命名推演"}
+                            {hist.report.projectName || (isEnglish ? "Untitled simulation" : "未命名推演")}
                           </h3>
                         </div>
                         <p className="text-[10px] text-white/35">
-                          推演时间: {new Date(hist.createdAt).toLocaleString("zh-CN", { hour12: false })}
+                          {isEnglish ? "Simulated at" : "推演时间"}: {new Date(hist.createdAt).toLocaleString(isEnglish ? "en-US" : "zh-CN", { hour12: false })}
                         </p>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <span className={`rounded-lg border px-2 py-1 text-[10px] font-black ${statusColor}`}>
-                          胜率: {hist.report.successProbability}%
+                          {isEnglish ? "Win rate" : "胜率"}: {hist.report.successProbability}%
                         </span>
                         <span className="hidden text-xs font-bold text-white/45 md:inline">
-                          查看报告
+                          {isEnglish ? "View report" : "查看报告"}
                         </span>
                         {onDeleteHistory && (
                           <button
@@ -469,8 +502,8 @@ export default function HomeView({
                               onDeleteHistory(hist.id);
                             }}
                             className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-white/42 transition-colors hover:border-rose-300/35 hover:bg-rose-300/12 hover:text-rose-100 cursor-pointer"
-                            aria-label="删除报告"
-                            title="删除报告"
+                            aria-label={isEnglish ? "Delete report" : "删除报告"}
+                            title={isEnglish ? "Delete report" : "删除报告"}
                           >
                             <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </button>
@@ -486,7 +519,11 @@ export default function HomeView({
           <div id="home-disclaimer" className="mt-10 flex items-start gap-2 rounded-3xl border border-white/10 bg-white/[0.045] p-4 text-left">
             <AlertCircle className="mt-0.5 h-4.5 w-4.5 shrink-0 text-white/38" aria-hidden="true" />
             <p className="text-[10px] leading-relaxed text-white/36">
-              <span className="font-bold text-white/50">免责声明：</span>本试一下提供之恋爱契合度、高情商回复评价、重大抉择机会成本损益以及胜率百分比，均由大语言模型经过设定利益角色智能体模拟博弈演算而来。真实人生受制于无数变量与不可抗力，模拟所得结论不构成任何实质的投资建议、法律声明、职业推荐或情感契约，请带着批判性思维理性参考。{privacySafetyCopy}
+              <span className="font-bold text-white/50">{isEnglish ? "Disclaimer:" : "免责声明："}</span>
+              {isEnglish
+                ? "Relationship fit, high-EQ reply evaluation, life-choice opportunity cost, and win-rate percentages are simulated by large language models through configured Agent roles. Real life has countless variables and force majeure. Results are not investment, legal, career, or emotional-contract advice; review them critically. "
+                : "本试一下提供之恋爱契合度、高情商回复评价、重大抉择机会成本损益以及胜率百分比，均由大语言模型经过设定利益角色智能体模拟博弈演算而来。真实人生受制于无数变量与不可抗力，模拟所得结论不构成任何实质的投资建议、法律声明、职业推荐或情感契约，请带着批判性思维理性参考。"}
+              {privacySafetyCopy}
             </p>
           </div>
         </div>

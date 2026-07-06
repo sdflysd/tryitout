@@ -189,3 +189,55 @@ test("selectActivatedAgents boosts low-trust conflict relevance", () => {
 
   assert.equal(selected[0].id, "z_core_low_trust");
 });
+
+test("selectActivatedAgents prioritizes role card trigger matches", () => {
+  const triggered = makeAgent("z_trigger_match", "core", "观望", {
+    role: "观察者",
+    roleCard: {
+      category: "stakeholder",
+      triggerConditions: ["缺少案例"],
+    },
+  });
+  const ordinary = makeAgent("a_plain_agent", "core", "观望", {
+    role: "观察者",
+    roleCard: {
+      category: "environment_system",
+      triggerConditions: ["现金流压力"],
+    },
+  });
+
+  const selected = selectActivatedAgents({
+    coreAgents: [ordinary, triggered],
+    peripheralAgents: [],
+    event: {
+      type: "customer_feedback",
+      title: "客户质疑缺少案例",
+      description: "用户没有真实案例，客户不信任。",
+      impact: "negative",
+    },
+    state: makeHighRiskLowConfidenceState(),
+  });
+
+  assert.equal(selected[0].id, "z_trigger_match");
+});
+
+test("selectActivatedAgents prioritizes agents whose state influence is under pressure", () => {
+  const riskAgent = makeAgent("z_risk_agent", "core", "观望", {
+    role: "观察者",
+    roleCard: {
+      category: "expert_arbiter",
+      stateInfluence: ["riskLevel"],
+    },
+  });
+  const selected = selectActivatedAgents({
+    coreAgents: [
+      makeAgent("neutral_agent", "core", "观望", { role: "观察者" }),
+      riskAgent,
+    ],
+    peripheralAgents: [],
+    event: makeEvent(),
+    state: { ...makeHighRiskLowConfidenceState(), riskLevel: 82 },
+  });
+
+  assert.equal(selected[0].id, "z_risk_agent");
+});

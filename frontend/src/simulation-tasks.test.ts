@@ -6,8 +6,12 @@ import {
   createSimulationTask,
   getSimulationTaskReport,
   getSimulationTaskStatus,
+  isRecoverableSimulationTaskError,
   resumeSimulationTask,
+  resumeSimulationTaskUntilComplete,
+  runSimulationTaskUntilComplete,
 } from "./simulation-tasks.js";
+import type { SimulationProgressEvent } from "./types.js";
 
 test("createSimulationTask posts to durable task endpoint", async () => {
   const calls: unknown[] = [];
@@ -82,3 +86,213 @@ test("durable task client throws API error messages", async () => {
     /not recoverable/,
   );
 });
+
+test("runSimulationTaskUntilComplete creates, polls, emits progress, and reads final report", async () => {
+  const calls: string[] = [];
+  const statuses = [
+    {
+      simulationId: "sim_1",
+      scenarioType: "side_hustle",
+      mode: "legacy",
+      status: "running",
+      currentStepName: "generate_agents",
+      progressPercent: 20,
+      recoverable: false,
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    },
+    {
+      simulationId: "sim_1",
+      scenarioType: "side_hustle",
+      mode: "legacy",
+      status: "completed",
+      currentStepName: "generate_report",
+      progressPercent: 100,
+      recoverable: false,
+      updatedAt: "2026-07-02T00:00:01.000Z",
+    },
+  ];
+  const progress: SimulationProgressEvent[] = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url === "/api/simulation-tasks") {
+      return new Response(JSON.stringify({ simulationId: "sim_1", status: "queued" }), {
+        status: 200,
+      });
+    }
+    if (url === "/api/simulation-tasks/sim_1/status") {
+      return new Response(JSON.stringify(statuses.shift()), { status: 200 });
+    }
+    if (url === "/api/simulation-tasks/sim_1/report") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_1",
+          status: "completed",
+          report: makeReport("sim_1"),
+        }),
+        { status: 200 },
+      );
+    }
+
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  const report = await runSimulationTaskUntilComplete(
+    {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "AI 简历优化",
+      },
+      interactionMode: "legacy",
+    },
+    {
+      fetchImpl: fetchImpl as typeof fetch,
+      pollIntervalMs: 0,
+      sleep: async () => undefined,
+      onProgress: (event) => progress.push(event),
+    },
+  );
+
+  assert.equal(report.id, "sim_1");
+  assert.deepEqual(calls, [
+    "POST /api/simulation-tasks",
+    "GET /api/simulation-tasks/sim_1/status",
+    "GET /api/simulation-tasks/sim_1/status",
+    "GET /api/simulation-tasks/sim_1/report",
+  ]);
+  assert.deepEqual(
+    progress.map((event) => `${event.step}:${event.percent}`),
+    ["generate_agents:20", "generate_report:100"],
+  );
+});
+
+test("runSimulationTaskUntilComplete surfaces recoverable task id for resume", async () => {
+  const fetchImpl = async (url: string) => {
+    if (url === "/api/simulation-tasks") {
+      return new Response(JSON.stringify({ simulationId: "sim_retry", status: "queued" }), {
+        status: 200,
+      });
+    }
+    if (url === "/api/simulation-tasks/sim_retry/status") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_retry",
+          scenarioType: "life_choice",
+          mode: "enabled",
+          status: "recoverable_failed",
+          currentStepName: "generate_agents",
+          progressPercent: 20,
+          recoverable: true,
+          errorCode: "model_timeout",
+          updatedAt: "2026-07-02T00:00:01.000Z",
+        }),
+        { status: 200 },
+      );
+    }
+
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  await assert.rejects(
+    () =>
+      runSimulationTaskUntilComplete(
+        {
+          userInput: {
+            type: "life_choice",
+            optionA: "继续做 AI 产品",
+            optionB: "找工作",
+          },
+          interactionMode: "enabled",
+        },
+        {
+          fetchImpl: fetchImpl as typeof fetch,
+          pollIntervalMs: 0,
+          sleep: async () => undefined,
+        },
+      ),
+    (error) =>
+      isRecoverableSimulationTaskError(error) &&
+      error.simulationId === "sim_retry" &&
+      /model_timeout/.test(error.message),
+  );
+});
+
+test("resumeSimulationTaskUntilComplete resumes existing task before polling", async () => {
+  const calls: string[] = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url === "/api/simulation-tasks/sim_resume/resume") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    if (url === "/api/simulation-tasks/sim_resume/status") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_resume",
+          scenarioType: "side_hustle",
+          mode: "legacy",
+          status: "completed",
+          currentStepName: "generate_report",
+          progressPercent: 100,
+          recoverable: false,
+          updatedAt: "2026-07-02T00:00:02.000Z",
+        }),
+        { status: 200 },
+      );
+    }
+    if (url === "/api/simulation-tasks/sim_resume/report") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_resume",
+          status: "completed",
+          report: makeReport("sim_resume"),
+        }),
+        { status: 200 },
+      );
+    }
+
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  const report = await resumeSimulationTaskUntilComplete("sim_resume", {
+    fetchImpl: fetchImpl as typeof fetch,
+    pollIntervalMs: 0,
+    sleep: async () => undefined,
+  });
+
+  assert.equal(report.id, "sim_resume");
+  assert.deepEqual(calls, [
+    "POST /api/simulation-tasks/sim_resume/resume",
+    "GET /api/simulation-tasks/sim_resume/status",
+    "GET /api/simulation-tasks/sim_resume/report",
+  ]);
+});
+
+function makeReport(id: string) {
+  return {
+    id,
+    status: "completed" as const,
+    agents: [],
+    stages: [],
+    createdAt: "2026-07-02T00:00:00.000Z",
+    report: {
+      projectName: "测试报告",
+      successProbability: 50,
+      expectedRevenue: "待验证",
+      riskLevel: "medium" as const,
+      finalRecommendation: "继续小步验证",
+      scores: {
+        demandStrength: 50,
+        willingnessToPay: 50,
+        acquisitionDifficulty: 50,
+        competitionPressure: 50,
+        executionFit: 50,
+        monetizationClarity: 50,
+      },
+      finalOutcome: "可继续观察",
+      opportunities: [],
+      risks: [],
+      pivotSuggestions: [],
+      actionPlan7Days: [],
+      shouldDo: "test_small" as const,
+    },
+  };
+}
