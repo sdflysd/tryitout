@@ -11,6 +11,7 @@ import {
 import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
+import { FeedbackService } from "./feedback-service.js";
 import { PostgresCommercialRepository, type QueryClient } from "./postgres-repository.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 
@@ -68,6 +69,7 @@ test("commercial service factory builds Postgres, BullMQ, auth, credit, and task
   assert.ok(services.creditService instanceof CreditService);
   assert.ok(services.taskService instanceof CommercialSimulationTaskService);
   assert.ok(services.analyticsService instanceof AnalyticsService);
+  assert.ok(services.feedbackService instanceof FeedbackService);
 });
 
 class InMemoryQueueLike {

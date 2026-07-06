@@ -10,6 +10,7 @@ import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
+import { FeedbackService } from "./feedback-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
@@ -76,6 +77,16 @@ interface AuditLogsBody {
   }>;
 }
 
+interface FeedbackBody {
+  feedback: {
+    taskId: string;
+    reportId: string;
+    rating: number;
+    useful: boolean;
+    text?: string;
+  };
+}
+
 function createHarness(): {
   repository: InMemoryCommercialRepository;
   handlers: ReturnType<typeof createCommercialApiHandlers>;
@@ -106,6 +117,7 @@ function createHarness(): {
     creditService,
     taskService,
     adminService,
+    feedbackService: new FeedbackService(repository, { now: () => now }),
   };
   return {
     repository,
@@ -293,6 +305,49 @@ test("task status, report, and cancel handlers use session user", async () => {
   const cancelled = await handlers.cancelTask({ sessionToken: token, params: { taskId } });
   assert.equal(cancelled.status, 200);
   assert.equal((cancelled.body as TaskBody).status, "completed");
+});
+
+test("report feedback handler requires auth and stores owner feedback", async () => {
+  const { repository, handlers, taskService } = createHarness();
+  await seedAccessCode(repository);
+  const token = await registerAndLogin(handlers);
+  await handlers.redeemAccessCode({ sessionToken: token, body: { code: "TIO-ABCD-1234-WXYZ" } });
+  const created = await handlers.createTask({
+    sessionToken: token,
+    body: {
+      scenario: "side_hustle",
+      userInput: "launch",
+      interactionMode: "legacy",
+      providerMode: "platform",
+    },
+  });
+  const taskId = (created.body as TaskBody).taskId;
+  const completed = await taskService.markCompleted({ taskId, report: sampleReport });
+  assert.ok(completed.reportId);
+
+  const missingAuth = await handlers.handleReportFeedbackRequest({
+    body: { taskId, reportId: completed.reportId, rating: 4, useful: true },
+  });
+  assert.equal(missingAuth.status, 401);
+
+  const submitted = await handlers.handleReportFeedbackRequest({
+    sessionToken: token,
+    body: {
+      taskId,
+      reportId: completed.reportId,
+      rating: 4,
+      useful: true,
+      text: "  helpful report  ",
+    },
+  });
+
+  assert.equal(submitted.status, 201);
+  const body = submitted.body as FeedbackBody;
+  assert.equal(body.feedback.taskId, taskId);
+  assert.equal(body.feedback.reportId, completed.reportId);
+  assert.equal(body.feedback.rating, 4);
+  assert.equal(body.feedback.useful, true);
+  assert.equal(body.feedback.text, "helpful report");
 });
 
 test("admin handlers reject non-admin sessions", async () => {

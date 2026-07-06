@@ -8,6 +8,7 @@ import { CommercialAuthServiceError } from "./auth-service.js";
 import type { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CommercialSimulationTaskServiceError } from "./commercial-task-service.js";
 import { CreditServiceError, type CreditService } from "./credit-service.js";
+import { FeedbackServiceError, type FeedbackService } from "./feedback-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type { CommercialFeature, CommercialProviderMode, UserTier } from "../../contracts/commercial.js";
 import type { InteractionMode, SimulationType } from "../../types.js";
@@ -19,6 +20,7 @@ export interface CommercialApiServices {
   taskService: CommercialSimulationTaskService;
   adminService?: CommercialAdminService;
   analyticsService?: AnalyticsService;
+  feedbackService?: FeedbackService;
 }
 
 export interface CommercialApiOptions {
@@ -231,6 +233,36 @@ export function createCommercialApiHandlers(
       }
     },
 
+    async handleReportFeedbackRequest(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const user = await requireUser(request);
+      if (isApiResponse(user)) {
+        return user;
+      }
+      if (!services.feedbackService) {
+        return { status: 503, body: { error: "feedback_unavailable" } };
+      }
+      const body = request.body as {
+        taskId?: string;
+        reportId?: string;
+        rating?: number;
+        useful?: boolean;
+        text?: string;
+      };
+      try {
+        const feedback = await services.feedbackService.submitFeedback({
+          userId: user.id,
+          taskId: String(body?.taskId ?? ""),
+          reportId: String(body?.reportId ?? ""),
+          rating: Number(body?.rating),
+          useful: body?.useful === true,
+          text: body?.text,
+        });
+        return { status: 201, body: { feedback } };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
     async createAdminAccessCode(request: CommercialApiRequest): Promise<CommercialApiResponse> {
       const admin = await requireAdminUser(request);
       if (isApiResponse(admin)) {
@@ -385,6 +417,10 @@ function mapError(error: unknown): CommercialApiResponse<{ error: string }> {
       : error.code.endsWith("_not_found")
         ? 404
         : 400;
+    return { status, body: { error: error.code } };
+  }
+  if (error instanceof FeedbackServiceError) {
+    const status = error.code.endsWith("_not_found") ? 404 : 400;
     return { status, body: { error: error.code } };
   }
   if (error instanceof CreditServiceError) {

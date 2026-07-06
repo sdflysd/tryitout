@@ -14,6 +14,7 @@ import { AnalyticsService } from "./analytics-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import { CommercialSimulationTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
+import { FeedbackService } from "./feedback-service.js";
 import { PostgresCommercialRepository, type QueryClient } from "./postgres-repository.js";
 import type { CommercialRepository } from "./repository.js";
 import type { SimulationQueue } from "./simulation-queue.js";
@@ -108,6 +109,7 @@ function createRuntimeServices(input: {
     accessCodePepper: input.accessCodePepper,
   });
   const analyticsService = new AnalyticsService(input.repository);
+  const feedbackService = new FeedbackService(input.repository);
   const taskService = new CommercialSimulationTaskService(
     input.repository,
     creditService,
@@ -120,6 +122,7 @@ function createRuntimeServices(input: {
     taskService,
     adminService,
     analyticsService,
+    feedbackService,
   };
 
   return {

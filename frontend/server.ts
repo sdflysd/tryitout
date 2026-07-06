@@ -406,6 +406,21 @@ app.get("/api/simulation-tasks/:id/report", async (req, res) => {
   res.status(result.status).json(result.body);
 });
 
+app.post("/api/simulation-tasks/:id/report/feedback", async (req, res) => {
+  if (!commercialModeEnabled) {
+    return res.status(410).json({ error: "commercial_feedback_required" });
+  }
+
+  const result = await requireCommercialServices().apiHandlers.handleReportFeedbackRequest({
+    body: {
+      ...(req.body as object),
+      taskId: req.params.id,
+    },
+    sessionToken: getSessionToken(req),
+  });
+  return sendCommercialApiResponse(res, result);
+});
+
 app.get("/api/admin/simulation-tasks/:id/cost-summary", async (req, res) => {
   // TODO: Protect admin routes before production deployment.
   const result = await handleGetSimulationCostSummaryRequest(req.params.id, {
