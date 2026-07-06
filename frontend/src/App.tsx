@@ -8,6 +8,7 @@ import InputView from "./components/InputView";
 import SimulationProgress from "./components/SimulationProgress";
 import ReportView from "./components/ReportView";
 import ShareCard from "./components/ShareCard";
+import AdminDashboard from "./components/admin/AdminDashboard";
 import {
   DEFAULT_LANGUAGE,
   LANGUAGE_STORAGE_KEY,
@@ -52,6 +53,7 @@ type ViewState = "home" | "input" | "generating" | "report";
 
 interface AppProps {
   commercialMode?: boolean;
+  initialCommercialUser?: CommercialUser;
 }
 
 export const HISTORY_STORAGE_KEY = "money_simulator_history";
@@ -112,7 +114,10 @@ export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidat
   };
 }
 
-export default function App({ commercialMode = isCommercialClientModeEnabled() }: AppProps = {}) {
+export default function App({
+  commercialMode = isCommercialClientModeEnabled(),
+  initialCommercialUser,
+}: AppProps = {}) {
   const [view, setView] = useState<ViewState>("home");
   const [historyList, setHistoryList] = useState<Simulation[]>([]);
   const [currentSimulation, setCurrentSimulation] = useState<Simulation | null>(null);
@@ -128,7 +133,7 @@ export default function App({ commercialMode = isCommercialClientModeEnabled() }
   const [deepModeNotice, setDeepModeNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<AgentRuntimeCapabilities | undefined>(undefined);
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
-  const [commercialUser, setCommercialUser] = useState<CommercialUser | undefined>(undefined);
+  const [commercialUser, setCommercialUser] = useState<CommercialUser | undefined>(initialCommercialUser);
   const [creditBalance, setCreditBalance] = useState(0);
   const [commercialEmail, setCommercialEmail] = useState("");
   const [commercialPassword, setCommercialPassword] = useState("");
@@ -637,22 +642,26 @@ export default function App({ commercialMode = isCommercialClientModeEnabled() }
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
-              <HomeView
-                onStart={(type) => {
-                  setSelectedType(type);
-                  setTemplateIdea("");
-                  setTemplateInput(undefined);
-                  setView("input");
-                  scrollToTopForViewChange();
-                }}
-                onSelectHistory={handleSelectHistory}
-                historyList={historyList}
-                onSelectTemplate={handleLoadTemplate}
-                lastInputDraft={lastInputDraft}
-                onContinueDraft={handleEditInput}
-                onDeleteHistory={handleDeleteHistory}
-                language={language}
-              />
+              {commercialUser?.isAdmin ? (
+                <AdminDashboard adminEmail={commercialUser.email} />
+              ) : (
+                <HomeView
+                  onStart={(type) => {
+                    setSelectedType(type);
+                    setTemplateIdea("");
+                    setTemplateInput(undefined);
+                    setView("input");
+                    scrollToTopForViewChange();
+                  }}
+                  onSelectHistory={handleSelectHistory}
+                  historyList={historyList}
+                  onSelectTemplate={handleLoadTemplate}
+                  lastInputDraft={lastInputDraft}
+                  onContinueDraft={handleEditInput}
+                  onDeleteHistory={handleDeleteHistory}
+                  language={language}
+                />
+              )}
             </motion.div>
           )}
 

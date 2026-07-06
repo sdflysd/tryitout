@@ -36,6 +36,25 @@ test("app can render compact commercial account and credit controls", async () =
   assert.match(html, /Credit balance/);
 });
 
+test("app renders admin dashboard skeleton for admin commercial users", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(
+    <App
+      commercialMode
+      initialCommercialUser={{
+        id: "admin_1",
+        email: "admin@tryitout.ai",
+        tier: "business",
+        features: ["custom_model_provider"],
+        isAdmin: true,
+      }}
+    />,
+  );
+
+  assert.match(html, /Commercial Admin/);
+  assert.match(html, /admin-dashboard-root/);
+});
+
 test("view changes can reset scroll before showing a new workflow", async () => {
   const { scrollToTopForViewChange } = await import("./App.js");
   const calls: ScrollToOptions[] = [];
