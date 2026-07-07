@@ -303,10 +303,21 @@ CREATE TABLE admin_audit_logs (
   CONSTRAINT admin_audit_logs_action_check CHECK (
     action IN (
       'access_code_batch_created',
+      'access_code_batch_disabled',
+      'access_code_batch_exported',
       'access_code_disabled',
+      'user_credit_adjusted',
       'credits_adjusted',
       'task_refunded',
-      'user_tier_changed'
+      'task_retried',
+      'task_cancelled',
+      'user_disabled',
+      'user_restored',
+      'user_tier_changed',
+      'sensitive_report_viewed',
+      'system_setting_updated',
+      'queue_paused',
+      'queue_resumed'
     )
   ),
   CONSTRAINT admin_audit_logs_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')

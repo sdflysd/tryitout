@@ -67,3 +67,5 @@ Never run a drop/reset workflow against staging or production. Production recove
 Commercial mode must not use file-backed or in-memory repositories in production. Those stores cannot provide the durability, concurrency control, relational constraints, idempotency guarantees, backup/restore path, or audit trail required for paid credits and admin operations.
 
 Credits are financial-adjacent state: every redeem, hold, capture, release, refund, and adjustment must be recoverable from durable ledger rows with stable idempotency keys. Access-code raw values and provider API keys must also never be reconstructed from temporary process memory or plaintext files. Use Postgres-backed repositories for commercial deployments.
+
+Fields such as `simulation_tasks.input_summary`, `analytics_events.properties`, `user_feedback.metadata`, `user_feedback.comment`, and report JSON are for sanitized operational data only. They must not contain raw prompts, full private user input, secrets, access-code raw values, or provider API keys.
