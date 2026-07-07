@@ -239,30 +239,15 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     batch: AccessCodeBatchRecord,
     codes: AccessCodeRecord[],
   ): Promise<void> {
+    validateAccessCodeBatchCodes(batch, codes);
     if (this.accessCodeBatches.has(batch.id)) {
       throw new Error("access_code_batches.id must be unique");
     }
-    if (batch.codeCount !== codes.length) {
-      throw new Error("access_code_batches.codeCount must match access_codes");
-    }
 
-    const incomingCodeIds = new Set<string>();
-    const incomingCodeHashes = new Set<string>();
     for (const code of codes) {
-      if (code.batchId !== batch.id) {
-        throw new Error("access_codes.batchId must match access_code_batches.id");
-      }
-      if (incomingCodeIds.has(code.id) || this.accessCodes.has(code.id)) {
+      if (this.accessCodes.has(code.id)) {
         throw new Error("access_codes.id must be unique");
       }
-      if (incomingCodeHashes.has(code.codeHash)) {
-        throw new Error("access_codes.codeHash must be unique");
-      }
-      incomingCodeIds.add(code.id);
-      incomingCodeHashes.add(code.codeHash);
-    }
-
-    for (const code of codes) {
       assertUniqueById(
         this.accessCodes.values(),
         code.id,
@@ -333,6 +318,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     code: AccessCodeRecord,
     redemption: AccessCodeRedemptionRecord,
   ): Promise<boolean> {
+    if (redemption.accessCodeId !== code.id) {
+      throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
+    }
+
     const existing = this.accessCodes.get(code.id);
     if (
       !existing ||
@@ -573,6 +562,31 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+export function validateAccessCodeBatchCodes(
+  batch: AccessCodeBatchRecord,
+  codes: AccessCodeRecord[],
+): void {
+  if (batch.codeCount !== codes.length) {
+    throw new Error("access_code_batches.codeCount must match access_codes");
+  }
+
+  const incomingCodeIds = new Set<string>();
+  const incomingCodeHashes = new Set<string>();
+  for (const code of codes) {
+    if (code.batchId !== batch.id) {
+      throw new Error("access_codes.batchId must match access_code_batches.id");
+    }
+    if (incomingCodeIds.has(code.id)) {
+      throw new Error("access_codes.id must be unique");
+    }
+    if (incomingCodeHashes.has(code.codeHash)) {
+      throw new Error("access_codes.codeHash must be unique");
+    }
+    incomingCodeIds.add(code.id);
+    incomingCodeHashes.add(code.codeHash);
+  }
 }
 
 function upsertById<T extends { id: string }>(items: T[], item: T): void {

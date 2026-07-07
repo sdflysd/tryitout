@@ -18,6 +18,7 @@ import type {
   UserModelProviderRecord,
 } from "./types.js";
 import type { CommercialRepository } from "./repository.js";
+import { validateAccessCodeBatchCodes } from "./repository.js";
 
 export interface QueryClient {
   query<T = Record<string, unknown>>(
@@ -341,6 +342,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
     batch: AccessCodeBatchRecord,
     codes: AccessCodeRecord[],
   ): Promise<void> {
+    validateAccessCodeBatchCodes(batch, codes);
+
     await this.client.query(
       `
         with inserted_batch as (
@@ -554,7 +557,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
             and status = 'active'
             and redeemed_at is null
             and disabled_at is null
-          returning id
+            and (expires_at is null or expires_at > $3)
+          returning id, credits, tier, features
         ),
         inserted_redemption as (
           insert into access_code_redemptions (
@@ -562,7 +566,15 @@ export class PostgresCommercialRepository implements CommercialRepository {
             tier_granted, features_granted, redeemed_at, metadata
           )
           select
-            $4, updated_code.id, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb
+            $4,
+            updated_code.id,
+            $5,
+            $6,
+            updated_code.credits,
+            updated_code.tier,
+            updated_code.features,
+            $7,
+            $8::jsonb
           from updated_code
           returning id
         )
@@ -576,9 +588,6 @@ export class PostgresCommercialRepository implements CommercialRepository {
         redemption.id,
         redemption.userId,
         redemption.creditLedgerId ?? null,
-        redemption.credits,
-        redemption.tierGranted ?? null,
-        toJsonb(redemption.featuresGranted),
         redemption.redeemedAt,
         toJsonb(redemption.metadata),
       ],

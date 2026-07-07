@@ -375,6 +375,15 @@ test("service reports invalid input and missing records with domain errors", asy
     (error) => hasServiceCode(error, "invalid_access_code_input"),
   );
   await assert.rejects(
+    service.createAccessCodeBatch({
+      name: "Fractional credits",
+      codeCount: 1,
+      credits: 1.5,
+      features: [],
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
     service.markRedeemed("missing", "user_1"),
     (error) => hasServiceCode(error, "access_code_not_found"),
   );

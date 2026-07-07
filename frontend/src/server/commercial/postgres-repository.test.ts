@@ -959,6 +959,152 @@ test("postgres repository creates access code batch and codes in one CTE query",
   ]);
 });
 
+test("postgres repository rejects mismatched access code batch ids before querying", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await assert.rejects(
+    repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Launch",
+        codeCount: 1,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "created",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "other_batch",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+      ],
+    ),
+    /access_codes\.batchId/,
+  );
+
+  assert.equal(queries.length, 0);
+});
+
+test("postgres repository rejects batch code count mismatch before querying", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await assert.rejects(
+    repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Launch",
+        codeCount: 2,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "created",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+      ],
+    ),
+    /access_code_batches\.codeCount/,
+  );
+
+  assert.equal(queries.length, 0);
+});
+
+test("postgres repository rejects duplicate incoming code ids and hashes before querying", async () => {
+  const duplicateIds = createCapturingRepository();
+  await assert.rejects(
+    duplicateIds.repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Launch",
+        codeCount: 2,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "created",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_2",
+          codeMask: "TEST-****-002",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+      ],
+    ),
+    /access_codes\.id/,
+  );
+  assert.equal(duplicateIds.queries.length, 0);
+
+  const duplicateHashes = createCapturingRepository();
+  await assert.rejects(
+    duplicateHashes.repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Launch",
+        codeCount: 2,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "created",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+        {
+          id: "code_2",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-002",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "created",
+        },
+      ],
+    ),
+    /access_codes\.codeHash/,
+  );
+  assert.equal(duplicateHashes.queries.length, 0);
+});
+
 test("postgres repository redeems access code with conditional update and redemption insert", async () => {
   const { repo, queries } = createRowRepository([{ redeemed: true }]);
 
@@ -997,8 +1143,13 @@ test("postgres repository redeems access code with conditional update and redemp
   assert.match(queries[0].sql, /status = 'active'/i);
   assert.match(queries[0].sql, /redeemed_at is null/i);
   assert.match(queries[0].sql, /disabled_at is null/i);
+  assert.match(queries[0].sql, /expires_at is null\s+or expires_at > \$3/i);
   assert.match(queries[0].sql, /insert into access_code_redemptions/i);
   assert.match(queries[0].sql, /from updated_code/i);
+  assert.match(
+    queries[0].sql,
+    /updated_code\.credits,\s+updated_code\.tier,\s+updated_code\.features/i,
+  );
   assert.deepEqual(queries[0].params?.slice(0, 4), [
     "code_1",
     "user_1",

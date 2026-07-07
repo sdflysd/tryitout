@@ -479,6 +479,53 @@ test("repository redeemAccessCode does not mutate code if redemption insert woul
   );
 });
 
+test("repository redeemAccessCode rejects mismatched redemption code id before mutating", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+
+  await assert.rejects(
+    repo.redeemAccessCode(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_1",
+        redeemedAt: "now",
+        createdAt: "now",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_2",
+        userId: "user_1",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "now",
+        metadata: {},
+      },
+    ),
+    /access_code_redemptions\.accessCodeId/,
+  );
+
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "active");
+  assert.equal(
+    await repo.findAccessCodeRedemptionByCodeId("code_2"),
+    undefined,
+  );
+});
+
 test("repository redeemAccessCode returns false without overwriting redeemed codes", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveAccessCode({

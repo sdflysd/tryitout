@@ -396,16 +396,10 @@ function validateBatchInput(input: CreateAccessCodeBatchInput): void {
       "Code count must be a positive integer",
     );
   }
-  if (!Number.isFinite(input.credits) || input.credits < 0) {
+  if (!Number.isInteger(input.credits) || input.credits <= 0) {
     throw new AccessCodeServiceError(
       "invalid_access_code_input",
-      "Credits must be a positive number",
-    );
-  }
-  if (input.credits <= 0) {
-    throw new AccessCodeServiceError(
-      "invalid_access_code_input",
-      "Credits must be a positive number",
+      "Credits must be a positive integer",
     );
   }
   if (!Array.isArray(input.features)) {
