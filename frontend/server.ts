@@ -16,6 +16,11 @@ import { resolveAgentRuntimeCapabilities } from "./src/server/agent-runtime/capa
 import { buildRuntimeDiagnostics } from "./src/server/agent-runtime/diagnostics.js";
 import { resolveInteractionMode } from "./src/server/interaction-mode.js";
 import { handleLifeChoiceStructureRequest } from "./src/server/life-choice-structure-api.js";
+import {
+  legacySimulationRouteBlockedResponse,
+  resolveSimulationTaskRouteMode,
+  shouldBlockLegacySimulationRoute,
+} from "./src/server/commercial/commercial-routing.js";
 import { runMultiAgentSimulation } from "./src/server/simulations/multi-agent-runner.js";
 import { assessUserInputSafety } from "./src/server/simulations/safety.js";
 import {
@@ -219,6 +224,13 @@ app.post("/api/life-choice/structure", async (req, res) => {
 });
 
 app.post("/api/simulation-tasks", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    return res.status(503).json({
+      error: "Commercial service factory is not wired yet",
+      code: "commercial_services_unavailable",
+    });
+  }
+
   const result = await handleCreateSimulationTaskRequest(req.body, {
     service: taskService,
   });
@@ -273,6 +285,11 @@ app.get("/api/admin/simulation-tasks/:id/cost-summary", async (req, res) => {
 
 // API: Run multi-agent simulation for Side Hustle, Dating, or Life Choice
 app.post("/api/simulations", async (req, res) => {
+  if (shouldBlockLegacySimulationRoute(req.path, process.env)) {
+    const blocked = legacySimulationRouteBlockedResponse();
+    return res.status(blocked.status).json(blocked.body);
+  }
+
   try {
     const userInput = req.body.userInput as UserInput | undefined;
     const validationError = validateSimulationInput(userInput);
@@ -319,6 +336,11 @@ app.post("/api/simulations", async (req, res) => {
 });
 
 app.post("/api/simulations/stream", async (req, res) => {
+  if (shouldBlockLegacySimulationRoute(req.path, process.env)) {
+    const blocked = legacySimulationRouteBlockedResponse();
+    return res.status(blocked.status).json(blocked.body);
+  }
+
   const userInput = req.body.userInput as UserInput | undefined;
   const validationError = validateSimulationInput(userInput);
   if (validationError) {
