@@ -133,6 +133,53 @@ test("postgres repository maps saveCreditAccount to user_credit_accounts upsert"
   assert.deepEqual(queries[0].params, ["user_1", 20, 3, 25, 5, "now"]);
 });
 
+test("postgres repository creates user with credit account in one atomic query", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await repo.createUserWithCreditAccount(
+    {
+      id: "user_1",
+      email: "user@example.test",
+      emailNormalized: "user@example.test",
+      passwordHash: "hash",
+      role: "user",
+      tier: "basic",
+      status: "active",
+      features: [],
+      createdAt: "now",
+      updatedAt: "now",
+    },
+    {
+      userId: "user_1",
+      balance: 0,
+      frozenCredits: 0,
+      totalRedeemed: 0,
+      totalCaptured: 0,
+      updatedAt: "now",
+    },
+  );
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with inserted_user as/i);
+  assert.match(queries[0].sql, /insert into users/i);
+  assert.match(queries[0].sql, /insert into user_credit_accounts/i);
+  assert.doesNotMatch(queries[0].sql, /on conflict/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "user_1",
+    "user@example.test",
+    "user@example.test",
+    "hash",
+  ]);
+  assert.deepEqual(queries[0].params?.slice(11), [
+    "user_1",
+    0,
+    0,
+    0,
+    0,
+    "now",
+  ]);
+});
+
 test("postgres repository maps appendCreditLedgerEntry to credit_ledger insert", async () => {
   const queries: Array<{ sql: string; params?: unknown[] }> = [];
   const repo = new PostgresCommercialRepository({
@@ -536,6 +583,18 @@ test("postgres repository maps sessions writes and nullable row fields", async (
     createdAt: "2026-07-07T00:00:00.000Z",
   });
   assert.deepEqual(readQueries[0].params, ["token_hash"]);
+});
+
+test("postgres repository revokes active sessions for a user", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await repo.revokeUserSessions("user_1", "revoked-now");
+
+  assert.match(queries[0].sql, /update user_sessions/i);
+  assert.match(queries[0].sql, /set revoked_at = \$2/i);
+  assert.match(queries[0].sql, /where user_id = \$1/i);
+  assert.match(queries[0].sql, /revoked_at is null/i);
+  assert.deepEqual(queries[0].params, ["user_1", "revoked-now"]);
 });
 
 test("postgres repository maps access code batches writes and reads", async () => {

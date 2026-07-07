@@ -69,6 +69,27 @@ test("register rejects duplicate normalized email", async () => {
   );
 });
 
+test("register rejects blank email and password", async () => {
+  const { service } = makeService();
+
+  await assert.rejects(
+    () => service.register({ email: "   ", password: "commercial-secret" }),
+    authError("invalid_input"),
+  );
+  await assert.rejects(
+    () =>
+      service.register({
+        email: "not-an-email",
+        password: "commercial-secret",
+      }),
+    authError("invalid_input"),
+  );
+  await assert.rejects(
+    () => service.register({ email: "user@example.test", password: "   " }),
+    authError("invalid_input"),
+  );
+});
+
 test("register maps repository normalized email uniqueness errors to auth errors", async () => {
   const repo = new DuplicateEmailRepository();
   const service = new CommercialAuthService({
@@ -124,7 +145,7 @@ test("login returns a raw session token and stores only its hash", async () => {
   assert.equal(session.expiresAt, "2026-08-06T00:00:00.000Z");
 });
 
-test("login rejects wrong password and disabled users", async () => {
+test("login rejects wrong password and inactive users without leaking account status", async () => {
   const { repo, service } = makeService();
   await service.register({
     email: "user@example.test",
@@ -153,7 +174,7 @@ test("login rejects wrong password and disabled users", async () => {
         email: "user@example.test",
         password: "commercial-secret",
       }),
-    authError("user_disabled"),
+    authError("invalid_credentials"),
   );
 });
 
@@ -210,6 +231,53 @@ test("getUserForSessionToken rejects expired and revoked sessions", async () => 
   );
 });
 
+test("getUserForSessionToken rejects invalid session and clock dates", async () => {
+  const invalidSession = makeService({
+    now: () => NOW,
+    sessionToken: "invalid-expiry-token",
+  });
+  await invalidSession.service.register({
+    email: "invalid-expiry@example.test",
+    password: "commercial-secret",
+  });
+  await invalidSession.service.login({
+    email: "invalid-expiry@example.test",
+    password: "commercial-secret",
+  });
+  const tokenHash = hashSessionToken("invalid-expiry-token", SESSION_SECRET);
+  const session = await invalidSession.repo.findSessionByTokenHash(tokenHash);
+  assert.ok(session);
+  await invalidSession.repo.saveSession({
+    ...session,
+    expiresAt: "not-a-date",
+  });
+
+  assert.equal(
+    await invalidSession.service.getUserForSessionToken("invalid-expiry-token"),
+    undefined,
+  );
+
+  const clock = makeClock(NOW);
+  const invalidClock = makeService({
+    now: clock.now,
+    sessionToken: "invalid-clock-token",
+  });
+  await invalidClock.service.register({
+    email: "invalid-clock@example.test",
+    password: "commercial-secret",
+  });
+  await invalidClock.service.login({
+    email: "invalid-clock@example.test",
+    password: "commercial-secret",
+  });
+  clock.set("not-a-date");
+
+  assert.equal(
+    await invalidClock.service.getUserForSessionToken("invalid-clock-token"),
+    undefined,
+  );
+});
+
 test("logout revokes the matching session and is idempotent for unknown tokens", async () => {
   const { repo, service } = makeService({ sessionToken: "raw-session-token" });
   await service.register({
@@ -233,6 +301,33 @@ test("logout revokes the matching session and is idempotent for unknown tokens",
   );
 
   await assert.doesNotReject(() => service.logout("unknown-token"));
+});
+
+test("changePassword revokes existing sessions for the user", async () => {
+  const { service } = makeService({ sessionToken: "raw-session-token" });
+  await service.register({
+    email: "user@example.test",
+    password: "old-commercial-secret",
+  });
+  await service.login({
+    email: "user@example.test",
+    password: "old-commercial-secret",
+  });
+  assert.equal(
+    (await service.getUserForSessionToken("raw-session-token"))?.id,
+    "user_1",
+  );
+
+  await service.changePassword({
+    userId: "user_1",
+    currentPassword: "old-commercial-secret",
+    newPassword: "new-commercial-secret",
+  });
+
+  assert.equal(
+    await service.getUserForSessionToken("raw-session-token"),
+    undefined,
+  );
 });
 
 test("changePassword verifies current password and stores a new hash", async () => {
@@ -298,6 +393,24 @@ test("changePassword verifies current password and stores a new hash", async () 
   );
 });
 
+test("changePassword rejects blank new passwords", async () => {
+  const { service } = makeService();
+  await service.register({
+    email: "user@example.test",
+    password: "old-commercial-secret",
+  });
+
+  await assert.rejects(
+    () =>
+      service.changePassword({
+        userId: "user_1",
+        currentPassword: "old-commercial-secret",
+        newPassword: "   ",
+      }),
+    authError("invalid_input"),
+  );
+});
+
 function makeService({
   now = () => NOW,
   sessionToken = "raw-session-token",
@@ -349,7 +462,7 @@ function authError(code: string): {
 }
 
 class DuplicateEmailRepository extends InMemoryCommercialRepository {
-  override async saveUser(): Promise<void> {
+  override async createUserWithCreditAccount(): Promise<void> {
     throw new Error("users_email_normalized_unique");
   }
 }

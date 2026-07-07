@@ -15,6 +15,7 @@ const DEFAULT_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type CommercialAuthErrorCode =
   | "email_already_registered"
+  | "invalid_input"
   | "invalid_credentials"
   | "user_disabled"
   | "user_not_found";
@@ -97,6 +98,9 @@ export class CommercialAuthService {
     input: RegisterInput,
   ): Promise<{ user: CommercialAuthUser }> {
     const email = input.email.trim();
+    validateEmail(email);
+    validatePassword(input.password);
+
     const emailNormalized = normalizeEmail(input.email);
     const existingUser = await this.repository.findUserByEmail(emailNormalized);
     if (existingUser) {
@@ -122,7 +126,14 @@ export class CommercialAuthService {
     };
 
     try {
-      await this.repository.saveUser(user);
+      await this.repository.createUserWithCreditAccount(user, {
+        userId: user.id,
+        balance: 0,
+        frozenCredits: 0,
+        totalRedeemed: 0,
+        totalCaptured: 0,
+        updatedAt: nowIso,
+      });
     } catch (error) {
       if (isEmailUniquenessError(error)) {
         throw new CommercialAuthError(
@@ -134,21 +145,16 @@ export class CommercialAuthService {
       throw error;
     }
 
-    await this.repository.saveCreditAccount({
-      userId: user.id,
-      balance: 0,
-      frozenCredits: 0,
-      totalRedeemed: 0,
-      totalCaptured: 0,
-      updatedAt: nowIso,
-    });
-
     return { user: toAuthUser(user) };
   }
 
   async login(
     input: LoginInput,
   ): Promise<{ user: CommercialAuthUser; sessionToken: string }> {
+    const email = input.email.trim();
+    validateEmail(email, "invalid_credentials");
+    validatePassword(input.password, "invalid_credentials");
+
     const user = await this.repository.findUserByEmail(input.email);
     if (!user) {
       throw new CommercialAuthError(
@@ -156,15 +162,12 @@ export class CommercialAuthService {
         "Invalid email or password",
       );
     }
-    if (user.status !== "active") {
-      throw new CommercialAuthError("user_disabled", "User is disabled");
-    }
 
     const passwordMatches = await this.verifyPassword(
       input.password,
       user.passwordHash,
     );
-    if (!passwordMatches) {
+    if (!passwordMatches || user.status !== "active") {
       throw new CommercialAuthError(
         "invalid_credentials",
         "Invalid email or password",
@@ -208,7 +211,9 @@ export class CommercialAuthService {
       return undefined;
     }
 
-    if (Date.parse(session.expiresAt) <= this.currentDate().getTime()) {
+    const now = this.safeCurrentDate();
+    const expiresAtMs = Date.parse(session.expiresAt);
+    if (!now || !Number.isFinite(expiresAtMs) || expiresAtMs <= now.getTime()) {
       return undefined;
     }
 
@@ -237,6 +242,9 @@ export class CommercialAuthService {
   async changePassword(
     input: ChangePasswordInput,
   ): Promise<{ user: CommercialAuthUser }> {
+    validatePassword(input.currentPassword, "invalid_credentials");
+    validatePassword(input.newPassword);
+
     const user = await this.repository.getUser(input.userId);
     if (!user) {
       throw new CommercialAuthError("user_not_found", "User not found");
@@ -263,6 +271,7 @@ export class CommercialAuthService {
     };
 
     await this.repository.saveUser(updatedUser);
+    await this.repository.revokeUserSessions(user.id, updatedUser.updatedAt);
 
     return { user: toAuthUser(updatedUser) };
   }
@@ -271,10 +280,33 @@ export class CommercialAuthService {
     const value = this.now();
     return value instanceof Date ? value : new Date(value);
   }
+
+  private safeCurrentDate(): Date | undefined {
+    const date = this.currentDate();
+    return Number.isFinite(date.getTime()) ? date : undefined;
+  }
 }
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function validateEmail(
+  email: string,
+  code: CommercialAuthErrorCode = "invalid_input",
+): void {
+  if (!email || !email.includes("@")) {
+    throw new CommercialAuthError(code, "Invalid email");
+  }
+}
+
+function validatePassword(
+  password: string,
+  code: CommercialAuthErrorCode = "invalid_input",
+): void {
+  if (!password.trim()) {
+    throw new CommercialAuthError(code, "Password is required");
+  }
 }
 
 function toAuthUser(user: CommercialUserRecord): CommercialAuthUser {

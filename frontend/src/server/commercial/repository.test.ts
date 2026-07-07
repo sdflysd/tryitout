@@ -21,6 +21,89 @@ test("repository finds users case-insensitively by email", async () => {
   assert.equal((await repo.findUserByEmail("USER@example.test"))?.id, "user_1");
 });
 
+test("repository atomically creates a user with its credit account", async () => {
+  const repo = new InMemoryCommercialRepository();
+
+  await repo.createUserWithCreditAccount(makeUser(), makeCreditAccount());
+
+  assert.equal(
+    (await repo.getUser("user_1"))?.emailNormalized,
+    "user@example.test",
+  );
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 0);
+});
+
+test("repository createUserWithCreditAccount rejects duplicate user before mutating credit account", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveUser(makeUser());
+
+  await assert.rejects(
+    repo.createUserWithCreditAccount(
+      { ...makeUser("user_2"), emailNormalized: "user@example.test" },
+      makeCreditAccount("user_2"),
+    ),
+    /users\.emailNormalized/,
+  );
+
+  assert.equal(await repo.getCreditAccount("user_2"), undefined);
+});
+
+test("repository createUserWithCreditAccount rejects existing credit account before mutating user", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1"));
+
+  await assert.rejects(
+    repo.createUserWithCreditAccount(
+      makeUser("user_1"),
+      makeCreditAccount("user_1"),
+    ),
+    /user_credit_accounts\.userId/,
+  );
+
+  assert.equal(await repo.getUser("user_1"), undefined);
+});
+
+test("repository revokes all active sessions for a user", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveSession({
+    id: "sess_1",
+    userId: "user_1",
+    tokenHash: "hash_1",
+    expiresAt: "later",
+    createdAt: "now",
+  });
+  await repo.saveSession({
+    id: "sess_2",
+    userId: "user_1",
+    tokenHash: "hash_2",
+    expiresAt: "later",
+    revokedAt: "already-revoked",
+    createdAt: "now",
+  });
+  await repo.saveSession({
+    id: "sess_3",
+    userId: "user_2",
+    tokenHash: "hash_3",
+    expiresAt: "later",
+    createdAt: "now",
+  });
+
+  await repo.revokeUserSessions("user_1", "revoked-now");
+
+  assert.equal(
+    (await repo.findSessionByTokenHash("hash_1"))?.revokedAt,
+    "revoked-now",
+  );
+  assert.equal(
+    (await repo.findSessionByTokenHash("hash_2"))?.revokedAt,
+    "already-revoked",
+  );
+  assert.equal(
+    (await repo.findSessionByTokenHash("hash_3"))?.revokedAt,
+    undefined,
+  );
+});
+
 test("repository stores credit accounts, ledger entries, sessions, tasks, and audit logs", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCreditAccount({
@@ -403,3 +486,30 @@ test("repository rejects duplicate primary ids on append-only records", async ()
     /admin_audit_logs\.id/,
   );
 });
+
+function makeUser(id = "user_1") {
+  const email = id === "user_1" ? "user@example.test" : `${id}@example.test`;
+  return {
+    id,
+    email,
+    emailNormalized: email,
+    passwordHash: "hash",
+    role: "user" as const,
+    tier: "basic" as const,
+    status: "active" as const,
+    features: [],
+    createdAt: "now",
+    updatedAt: "now",
+  };
+}
+
+function makeCreditAccount(userId = "user_1") {
+  return {
+    userId,
+    balance: 0,
+    frozenCredits: 0,
+    totalRedeemed: 0,
+    totalCaptured: 0,
+    updatedAt: "now",
+  };
+}

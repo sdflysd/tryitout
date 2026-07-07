@@ -106,6 +106,49 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCommercialUser);
   }
 
+  async createUserWithCreditAccount(
+    user: CommercialUserRecord,
+    account: UserCreditAccountRecord,
+  ): Promise<void> {
+    await this.client.query(
+      `
+        with inserted_user as (
+          insert into users (
+            id, email, email_normalized, password_hash, role, tier, status,
+            features, last_login_at, created_at, updated_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+          returning id
+        )
+        insert into user_credit_accounts (
+          user_id, balance, frozen_credits, total_redeemed, total_captured,
+          updated_at
+        )
+        select $12, $13, $14, $15, $16, $17
+        from inserted_user
+      `,
+      [
+        user.id,
+        user.email,
+        user.emailNormalized,
+        user.passwordHash,
+        user.role,
+        user.tier,
+        user.status,
+        toJsonb(user.features),
+        user.lastLoginAt ?? null,
+        user.createdAt,
+        user.updatedAt,
+        account.userId,
+        account.balance,
+        account.frozenCredits,
+        account.totalRedeemed,
+        account.totalCaptured,
+        account.updatedAt,
+      ],
+    );
+  }
+
   async saveSession(session: CommercialSessionRecord): Promise<void> {
     await this.client.query(
       `
@@ -150,6 +193,18 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [tokenHash],
     );
     return mapOptional(rows[0], mapCommercialSession);
+  }
+
+  async revokeUserSessions(userId: string, revokedAt: string): Promise<void> {
+    await this.client.query(
+      `
+        update user_sessions
+        set revoked_at = $2
+        where user_id = $1
+          and revoked_at is null
+      `,
+      [userId, revokedAt],
+    );
   }
 
   async saveCreditAccount(account: UserCreditAccountRecord): Promise<void> {

@@ -21,11 +21,16 @@ export interface CommercialRepository {
   saveUser(user: CommercialUserRecord): Promise<void>;
   getUser(userId: string): Promise<CommercialUserRecord | undefined>;
   findUserByEmail(email: string): Promise<CommercialUserRecord | undefined>;
+  createUserWithCreditAccount(
+    user: CommercialUserRecord,
+    account: UserCreditAccountRecord,
+  ): Promise<void>;
 
   saveSession(session: CommercialSessionRecord): Promise<void>;
   findSessionByTokenHash(
     tokenHash: string,
   ): Promise<CommercialSessionRecord | undefined>;
+  revokeUserSessions(userId: string, revokedAt: string): Promise<void>;
 
   saveCreditAccount(account: UserCreditAccountRecord): Promise<void>;
   getCreditAccount(
@@ -120,6 +125,30 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     );
   }
 
+  async createUserWithCreditAccount(
+    user: CommercialUserRecord,
+    account: UserCreditAccountRecord,
+  ): Promise<void> {
+    if (this.users.has(user.id)) {
+      throw new Error("users.id must be unique");
+    }
+    assertUniqueById(
+      this.users.values(),
+      user.id,
+      (existing) => existing.emailNormalized === user.emailNormalized,
+      "users.emailNormalized",
+    );
+    if (user.id !== account.userId) {
+      throw new Error("user_credit_accounts.userId must match users.id");
+    }
+    if (this.creditAccounts.has(account.userId)) {
+      throw new Error("user_credit_accounts.userId must be unique");
+    }
+
+    this.users.set(user.id, user);
+    this.creditAccounts.set(account.userId, account);
+  }
+
   async saveSession(session: CommercialSessionRecord): Promise<void> {
     assertUniqueById(
       this.sessions.values(),
@@ -136,6 +165,17 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return [...this.sessions.values()].find(
       (session) => session.tokenHash === tokenHash,
     );
+  }
+
+  async revokeUserSessions(userId: string, revokedAt: string): Promise<void> {
+    for (const [sessionId, session] of this.sessions) {
+      if (session.userId === userId && session.revokedAt === undefined) {
+        this.sessions.set(sessionId, {
+          ...session,
+          revokedAt,
+        });
+      }
+    }
   }
 
   async saveCreditAccount(account: UserCreditAccountRecord): Promise<void> {
