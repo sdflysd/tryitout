@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AccessCodeService } from "./access-code-service.js";
+import { AdminAuditService } from "./audit-service.js";
 import { hashAccessCode } from "./access-code-secrets.js";
+import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import {
   COMMERCIAL_SESSION_COOKIE_NAME,
+  handleAdjustAdminUserCreditsRequest,
   handleCancelCommercialTaskRequest,
+  handleCreateAdminAccessCodeBatchRequest,
   handleCreateCommercialTaskRequest,
+  handleDisableAdminAccessCodeBatchRequest,
+  handleGetAdminOverviewRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
+  handleListAdminAuditLogsRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
@@ -36,6 +44,11 @@ const ACCESS_CODE_PEPPER = "commercial-api-pepper";
 const SESSION_SECRET = "commercial-api-session-secret-with-at-least-32-chars";
 const CREATED_AT = "2026-07-07T00:00:00.000Z";
 const RAW_ACCESS_CODE = "TIO-ABCD-EFGH-JKLM";
+const RAW_ADMIN_CODES = [
+  "TIO-ABCD-EFGH-JK23",
+  "TIO-ABCD-EFGH-JK24",
+  "TIO-ABCD-EFGH-JK25",
+];
 
 test("register creates a user DTO without returning password hash", async () => {
   const deps = makeDeps();
@@ -289,6 +302,169 @@ test("cancel task requires auth and releases held credits", async () => {
   assert.equal(result.body.account?.frozenCredits, 0);
 });
 
+test("admin overview rejects non-admin sessions and returns operating metrics to admins", async () => {
+  const deps = makeDeps();
+  const userSession = await loginUser(deps);
+  const adminSession = await loginAdmin(deps);
+
+  const forbidden = await handleGetAdminOverviewRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: userSession } }),
+    deps,
+  );
+  const overview = await handleGetAdminOverviewRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession } }),
+    deps,
+  );
+
+  assert.equal(forbidden.status, 403);
+  assert.deepEqual(forbidden.body, {
+    error: "Admin privileges required",
+    code: "admin_required",
+  });
+  assert.equal(overview.status, 200);
+  assert.equal("overview" in overview.body, true);
+  if (!("overview" in overview.body)) return;
+  assert.equal(overview.body.overview.users.total, 2);
+  assert.equal(overview.body.overview.users.active, 2);
+  assert.equal(overview.body.overview.credits.totalBalance, 0);
+});
+
+test("admin can create a single copyable access code without exposing stored hashes", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+
+  const result = await handleCreateAdminAccessCodeBatchRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: {
+        name: "VIP recovery",
+        codeCount: 1,
+        credits: 20,
+        tier: "pro",
+        features: ["priority_queue"],
+        metadata: { channel: "manual" },
+      },
+    }),
+    deps,
+  );
+
+  assert.equal(result.status, 201);
+  assert.equal("batch" in result.body, true);
+  if (!("batch" in result.body)) return;
+  assert.equal(result.body.batch.createdByUserId, "user_1");
+  assert.deepEqual(result.body.codes.map((code) => code.rawCode), [RAW_ADMIN_CODES[0]]);
+  assert.equal(result.body.codes[0]?.codeMask, "TIO-****-****-JK23");
+  assert.equal("codeHash" in result.body.codes[0]!, false);
+  assert.equal(JSON.stringify(await deps.repository.listAccessCodes()).includes(RAW_ADMIN_CODES[0]), false);
+});
+
+test("admin can create and disable access-code batches", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+
+  const created = await handleCreateAdminAccessCodeBatchRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: {
+        name: "Launch partners",
+        source: "sales",
+        codeCount: 2,
+        credits: 12,
+        features: ["deep_mode", "priority_queue"],
+        expiresAt: "2026-08-01T00:00:00.000Z",
+        notes: "Q3 signed customers",
+      },
+    }),
+    deps,
+  );
+  assert.equal(created.status, 201);
+  assert.equal("batch" in created.body, true);
+  if (!("batch" in created.body)) return;
+
+  const disabled = await handleDisableAdminAccessCodeBatchRequest(
+    created.body.batch.id,
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: { reason: "campaign ended" },
+    }),
+    deps,
+  );
+
+  assert.equal(created.body.codes.length, 2);
+  assert.deepEqual(
+    created.body.codes.map((code) => code.rawCode),
+    RAW_ADMIN_CODES.slice(0, 2),
+  );
+  assert.equal(disabled.status, 200);
+  assert.deepEqual(disabled.body, {
+    batch: {
+      ...created.body.batch,
+      disabledAt: "2026-07-07T00:06:00.000Z",
+    },
+    disabledCodeCount: 2,
+  });
+  assert.deepEqual(
+    (await deps.repository.listAccessCodes()).map((code) => code.status),
+    ["disabled", "disabled"],
+  );
+});
+
+test("admin can adjust user credits and list resulting audit logs", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  await registerUser(deps, "customer@example.test");
+  const customer = await deps.repository.findUserByEmail("customer@example.test");
+  assert.ok(customer);
+
+  const adjusted = await handleAdjustAdminUserCreditsRequest(
+    customer.id,
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: {
+        amount: 15,
+        reason: "offline_invoice_paid",
+        idempotencyKey: "adjust_customer_invoice_1",
+        metadata: { invoiceId: "INV-1001" },
+      },
+    }),
+    deps,
+  );
+  const auditLogs = await handleListAdminAuditLogsRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession } }),
+    deps,
+  );
+
+  assert.equal(adjusted.status, 200);
+  assert.equal("account" in adjusted.body, true);
+  if (!("account" in adjusted.body)) return;
+  assert.equal(adjusted.body.account.balance, 15);
+  assert.equal(adjusted.body.ledger.entryType, "adjustment");
+  assert.equal(auditLogs.status, 200);
+  assert.equal("auditLogs" in auditLogs.body, true);
+  if (!("auditLogs" in auditLogs.body)) return;
+  assert.deepEqual(
+    auditLogs.body.auditLogs.map((log) => ({
+      action: log.action,
+      actorUserId: log.actorUserId,
+      targetId: log.targetId,
+      metadata: log.metadata,
+    })),
+    [
+      {
+        action: "credits_adjusted",
+        actorUserId: "user_1",
+        targetId: customer.id,
+        metadata: {
+          amount: 15,
+          creditLedgerId: "credit_ledger_1",
+          reason: "offline_invoice_paid",
+          invoiceId: "INV-1001",
+        },
+      },
+    ],
+  );
+});
+
 function makeDeps() {
   const repository = new InMemoryCommercialRepository();
   const ids = new TestIds();
@@ -328,8 +504,29 @@ function makeDeps() {
     createSessionToken: () => `session-token-${ids.next("session_token")}`,
     now,
   });
+  const accessCodeService = new AccessCodeService({
+    repository,
+    accessCodePepper: ACCESS_CODE_PEPPER,
+    createId,
+    generateAccessCode: () => RAW_ADMIN_CODES[ids.next("raw_code") - 1]!,
+    hashAccessCode,
+    now,
+  });
+  const auditService = new AdminAuditService({
+    repository,
+    createId,
+    now,
+  });
+  const adminService = new CommercialAdminService({
+    repository,
+    accessCodeService,
+    creditService,
+    auditService,
+    now,
+  });
 
   return {
+    adminService,
     authService,
     creditService,
     repository,
@@ -337,9 +534,12 @@ function makeDeps() {
   };
 }
 
-async function registerUser(deps: ReturnType<typeof makeDeps>): Promise<void> {
+async function registerUser(
+  deps: ReturnType<typeof makeDeps>,
+  email = "user@example.test",
+): Promise<void> {
   const result = await handleRegisterRequest(
-    { email: "user@example.test", password: "commercial-secret" },
+    { email, password: "commercial-secret" },
     deps,
   );
   assert.equal(result.status, 201);
@@ -349,6 +549,25 @@ async function loginUser(deps: ReturnType<typeof makeDeps>): Promise<string> {
   await registerUser(deps);
   const login = await handleLoginRequest(
     { email: "user@example.test", password: "commercial-secret" },
+    deps,
+  );
+  assert.equal(login.status, 200);
+  assert.ok(login.cookies?.[0]);
+  return login.cookies[0].value;
+}
+
+async function loginAdmin(deps: ReturnType<typeof makeDeps>): Promise<string> {
+  await registerUser(deps, "admin@example.test");
+  const admin = await deps.repository.findUserByEmail("admin@example.test");
+  assert.ok(admin);
+  await deps.repository.saveUser({
+    ...admin,
+    role: "admin",
+    tier: "business",
+    features: ["admin_ops"],
+  });
+  const login = await handleLoginRequest(
+    { email: "admin@example.test", password: "commercial-secret" },
     deps,
   );
   assert.equal(login.status, 200);

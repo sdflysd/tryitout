@@ -1,3 +1,15 @@
+import {
+  AccessCodeServiceError,
+} from "./access-code-service.js";
+import type {
+  CommercialAdminService,
+} from "./admin-service.js";
+import {
+  CommercialAdminServiceError,
+} from "./admin-service.js";
+import {
+  AdminAuditServiceError,
+} from "./audit-service.js";
 import type {
   CommercialAuthService,
   CommercialAuthUser,
@@ -17,6 +29,7 @@ import type {
 import { CreditServiceError } from "./credit-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type {
+  AdminAuditLogRecord,
   CommercialSimulationReportRecord,
   CommercialSimulationTaskRecord,
   JsonObject,
@@ -28,7 +41,14 @@ import type {
   SimulationType,
   UserInput,
 } from "../../types.js";
-import type { ProviderMode } from "../../contracts/commercial.js";
+import {
+  COMMERCIAL_FEATURES,
+  USER_TIERS,
+  isAdminRole,
+  type CommercialFeature,
+  type ProviderMode,
+  type UserTier,
+} from "../../contracts/commercial.js";
 
 export const COMMERCIAL_SESSION_COOKIE_NAME = "tryitout_session";
 
@@ -61,6 +81,7 @@ export interface CommercialApiRequest {
 }
 
 export interface CommercialApiDeps {
+  adminService: CommercialAdminService;
   authService: CommercialAuthService;
   creditService: CreditService;
   repository: CommercialRepository;
@@ -86,6 +107,29 @@ type LoginBody = RegisterBody;
 type AuthResult =
   | { ok: true; user: CommercialAuthUser }
   | { ok: false; result: CommercialApiResult<CommercialApiErrorBody> };
+
+type CreateAdminAccessCodeBatchBody = {
+  name: string;
+  source?: string;
+  codeCount: number;
+  credits: number;
+  tier?: UserTier;
+  features: CommercialFeature[];
+  expiresAt?: string;
+  notes?: string;
+  metadata?: JsonObject;
+};
+
+type DisableAdminAccessCodeBatchBody = {
+  reason: string;
+};
+
+type AdjustAdminUserCreditsBody = {
+  amount: number;
+  reason: string;
+  idempotencyKey: string;
+  metadata?: JsonObject;
+};
 
 export async function handleRegisterRequest(
   body: unknown,
@@ -232,6 +276,142 @@ export async function handleGetCreditsRequest(
     status: 200,
     body: { account },
   };
+}
+
+export async function handleGetAdminOverviewRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ overview: Awaited<ReturnType<CommercialAdminService["getOverview"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { overview: await deps.adminService.getOverview() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleCreateAdminAccessCodeBatchRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    Awaited<ReturnType<CommercialAdminService["createAccessCodeBatch"]>> | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseCreateAdminAccessCodeBatchBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    const result = await deps.adminService.createAccessCodeBatch({
+      actorUserId: auth.user.id,
+      ...parsed.value,
+      requestContext: getAdminRequestContext(request),
+    });
+    return {
+      status: 201,
+      body: result,
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleDisableAdminAccessCodeBatchRequest(
+  batchId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    Awaited<ReturnType<CommercialAdminService["disableAccessCodeBatch"]>> | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseDisableAdminAccessCodeBatchBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    const result = await deps.adminService.disableAccessCodeBatch({
+      actorUserId: auth.user.id,
+      batchId,
+      reason: parsed.value.reason,
+      requestContext: getAdminRequestContext(request),
+    });
+    return {
+      status: 200,
+      body: result,
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleAdjustAdminUserCreditsRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<CreditTransitionResult | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdjustAdminUserCreditsBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    const result = await deps.adminService.adjustUserCredits({
+      actorUserId: auth.user.id,
+      userId,
+      amount: parsed.value.amount,
+      reason: parsed.value.reason,
+      idempotencyKey: parsed.value.idempotencyKey,
+      metadata: parsed.value.metadata,
+    });
+    return {
+      status: 200,
+      body: result,
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminAuditLogsRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ auditLogs: AdminAuditLogRecord[] } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { auditLogs: await deps.adminService.getAuditLogs() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
 }
 
 export async function handleCreateCommercialTaskRequest(
@@ -422,6 +602,21 @@ async function requireUser(
   return { ok: true, user };
 }
 
+async function requireAdmin(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<AuthResult> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth;
+  }
+  if (!isAdminRole(auth.user.role)) {
+    return { ok: false, result: forbidden() };
+  }
+
+  return auth;
+}
+
 function getSessionToken(request: CommercialApiRequest): string | undefined {
   const cookieToken = request.cookies?.[COMMERCIAL_SESSION_COOKIE_NAME]?.trim();
   if (cookieToken) {
@@ -506,6 +701,130 @@ function parseRedeemBody(
     ok: true,
     value: {
       code: body.code,
+      idempotencyKey: body.idempotencyKey,
+      metadata,
+    },
+  };
+}
+
+function parseCreateAdminAccessCodeBatchBody(
+  body: unknown,
+):
+  | { ok: true; value: CreateAdminAccessCodeBatchBody }
+  | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (typeof body.name !== "string" || !body.name.trim()) {
+    return { ok: false, error: "name is required" };
+  }
+  if (
+    typeof body.codeCount !== "number" ||
+    !Number.isInteger(body.codeCount) ||
+    body.codeCount < 1
+  ) {
+    return { ok: false, error: "codeCount must be a positive integer" };
+  }
+  if (
+    typeof body.credits !== "number" ||
+    !Number.isInteger(body.credits) ||
+    body.credits <= 0
+  ) {
+    return { ok: false, error: "credits must be a positive integer" };
+  }
+
+  const features = parseCommercialFeatures(body.features);
+  if (features.ok === false) {
+    return features;
+  }
+  const tier = parseOptionalUserTier(body.tier);
+  if (tier.ok === false) {
+    return tier;
+  }
+  const source = parseOptionalString(body.source, "source");
+  if (source.ok === false) {
+    return source;
+  }
+  const expiresAt = parseOptionalString(body.expiresAt, "expiresAt");
+  if (expiresAt.ok === false) {
+    return expiresAt;
+  }
+  const notes = parseOptionalString(body.notes, "notes");
+  if (notes.ok === false) {
+    return notes;
+  }
+  let metadata: JsonObject | undefined;
+  if (body.metadata !== undefined) {
+    if (!isJsonObject(body.metadata)) {
+      return { ok: false, error: "metadata must be an object" };
+    }
+    metadata = body.metadata;
+  }
+
+  return {
+    ok: true,
+    value: {
+      name: body.name,
+      source: source.value,
+      codeCount: body.codeCount,
+      credits: body.credits,
+      tier: tier.value,
+      features: features.value,
+      expiresAt: expiresAt.value,
+      notes: notes.value,
+      metadata,
+    },
+  };
+}
+
+function parseDisableAdminAccessCodeBatchBody(
+  body: unknown,
+):
+  | { ok: true; value: DisableAdminAccessCodeBatchBody }
+  | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (typeof body.reason !== "string" || !body.reason.trim()) {
+    return { ok: false, error: "reason is required" };
+  }
+
+  return {
+    ok: true,
+    value: { reason: body.reason },
+  };
+}
+
+function parseAdjustAdminUserCreditsBody(
+  body: unknown,
+):
+  | { ok: true; value: AdjustAdminUserCreditsBody }
+  | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (typeof body.amount !== "number" || !Number.isInteger(body.amount)) {
+    return { ok: false, error: "amount must be an integer" };
+  }
+  if (typeof body.reason !== "string" || !body.reason.trim()) {
+    return { ok: false, error: "reason is required" };
+  }
+  if (typeof body.idempotencyKey !== "string" || !body.idempotencyKey.trim()) {
+    return { ok: false, error: "idempotencyKey is required" };
+  }
+  let metadata: JsonObject | undefined;
+  if (body.metadata !== undefined) {
+    if (!isJsonObject(body.metadata)) {
+      return { ok: false, error: "metadata must be an object" };
+    }
+    metadata = body.metadata;
+  }
+
+  return {
+    ok: true,
+    value: {
+      amount: body.amount,
+      reason: body.reason,
       idempotencyKey: body.idempotencyKey,
       metadata,
     },
@@ -715,6 +1034,46 @@ function mapTaskError(
   throw error;
 }
 
+function mapAdminError(
+  error: unknown,
+): CommercialApiResult<CommercialApiErrorBody> {
+  if (error instanceof CommercialAdminServiceError) {
+    const status =
+      error.code === "user_not_found" ||
+      error.code === "task_not_found" ||
+      error.code === "report_not_found"
+        ? 404
+        : 400;
+    return {
+      status,
+      body: { error: error.message, code: error.code },
+    };
+  }
+  if (error instanceof AccessCodeServiceError) {
+    const status =
+      error.code === "access_code_not_found" ||
+      error.code === "access_code_batch_not_found"
+        ? 404
+        : error.code === "access_code_not_redeemable"
+          ? 409
+          : 400;
+    return {
+      status,
+      body: { error: error.message, code: error.code },
+    };
+  }
+  if (error instanceof CreditServiceError) {
+    return mapCreditError(error);
+  }
+  if (error instanceof AdminAuditServiceError) {
+    return {
+      status: 400,
+      body: { error: error.message, code: error.code },
+    };
+  }
+  throw error;
+}
+
 function badRequest(
   error: string,
   code: string,
@@ -731,6 +1090,16 @@ function unauthorized(): CommercialApiResult<CommercialApiErrorBody> {
     body: {
       error: "Authentication required",
       code: "authentication_required",
+    },
+  };
+}
+
+function forbidden(): CommercialApiResult<CommercialApiErrorBody> {
+  return {
+    status: 403,
+    body: {
+      error: "Admin privileges required",
+      code: "admin_required",
     },
   };
 }
@@ -753,10 +1122,85 @@ function isJsonObject(value: unknown): value is JsonObject {
   return isObject(value);
 }
 
+function parseCommercialFeatures(
+  value: unknown,
+):
+  | { ok: true; value: CommercialFeature[] }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: [] };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: "features must be an array" };
+  }
+  const features: CommercialFeature[] = [];
+  for (const item of value) {
+    if (!isCommercialFeature(item)) {
+      return { ok: false, error: "features contains an unknown feature" };
+    }
+    features.push(item);
+  }
+  return { ok: true, value: features };
+}
+
+function parseOptionalUserTier(
+  value: unknown,
+):
+  | { ok: true; value?: UserTier }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  if (!isUserTier(value)) {
+    return { ok: false, error: "invalid tier" };
+  }
+  return { ok: true, value };
+}
+
+function parseOptionalString(
+  value: unknown,
+  label: string,
+):
+  | { ok: true; value?: string }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  if (typeof value !== "string") {
+    return { ok: false, error: `${label} must be a string` };
+  }
+  return { ok: true, value };
+}
+
+function getAdminRequestContext(
+  request: CommercialApiRequest,
+): { ipHash?: string; userAgent?: string } {
+  const ipHash =
+    request.headers?.["x-ip-hash"] ?? request.headers?.["X-IP-Hash"];
+  const userAgent =
+    request.headers?.["user-agent"] ?? request.headers?.["User-Agent"];
+  return {
+    ...(typeof ipHash === "string" && ipHash.trim()
+      ? { ipHash: ipHash.trim() }
+      : {}),
+    ...(typeof userAgent === "string" && userAgent.trim()
+      ? { userAgent: userAgent.trim() }
+      : {}),
+  };
+}
+
 function isInteractionMode(value: unknown): value is InteractionMode {
   return value === "legacy" || value === "enabled";
 }
 
 function isProviderMode(value: unknown): value is ProviderMode {
   return value === "platform" || value === "byok";
+}
+
+function isCommercialFeature(value: unknown): value is CommercialFeature {
+  return COMMERCIAL_FEATURES.includes(value as CommercialFeature);
+}
+
+function isUserTier(value: unknown): value is UserTier {
+  return USER_TIERS.includes(value as UserTier);
 }
