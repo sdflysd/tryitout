@@ -872,6 +872,256 @@ test("postgres repository maps access code redemptions inserts and reads", async
   );
 });
 
+test("postgres repository creates access code batch and codes in one CTE query", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await repo.createAccessCodeBatchWithCodes(
+    {
+      id: "batch_1",
+      createdByUserId: "admin_1",
+      name: "Launch",
+      source: "campaign",
+      codeCount: 2,
+      credits: 10,
+      tier: "pro",
+      features: ["deep_mode"],
+      expiresAt: "expires",
+      notes: "notes",
+      metadata: { channel: "email" },
+      createdAt: "created",
+    },
+    [
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "active",
+        credits: 10,
+        tier: "pro",
+        features: ["deep_mode"],
+        expiresAt: "expires",
+        createdAt: "created",
+      },
+      {
+        id: "code_2",
+        batchId: "batch_1",
+        codeHash: "hash_2",
+        codeMask: "TEST-****-002",
+        status: "active",
+        credits: 10,
+        tier: "pro",
+        features: ["deep_mode"],
+        expiresAt: "expires",
+        createdAt: "created",
+      },
+    ],
+  );
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with inserted_batch as/i);
+  assert.match(queries[0].sql, /insert into access_code_batches/i);
+  assert.match(queries[0].sql, /insert into access_codes/i);
+  assert.match(queries[0].sql, /jsonb_to_recordset/i);
+  assert.doesNotMatch(queries[0].sql, /on conflict/i);
+  assert.equal(queries[0].params?.[0], "batch_1");
+  assert.deepEqual(parsedJsonParam(queries[0].params, 13), [
+    {
+      id: "code_1",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****-001",
+      status: "active",
+      credits: 10,
+      tier: "pro",
+      features: ["deep_mode"],
+      expiresAt: "expires",
+      redeemedByUserId: null,
+      redeemedAt: null,
+      disabledAt: null,
+      createdAt: "created",
+    },
+    {
+      id: "code_2",
+      batchId: "batch_1",
+      codeHash: "hash_2",
+      codeMask: "TEST-****-002",
+      status: "active",
+      credits: 10,
+      tier: "pro",
+      features: ["deep_mode"],
+      expiresAt: "expires",
+      redeemedByUserId: null,
+      redeemedAt: null,
+      disabledAt: null,
+      createdAt: "created",
+    },
+  ]);
+});
+
+test("postgres repository redeems access code with conditional update and redemption insert", async () => {
+  const { repo, queries } = createRowRepository([{ redeemed: true }]);
+
+  const redeemed = await repo.redeemAccessCode(
+    {
+      id: "code_1",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****-001",
+      status: "redeemed",
+      credits: 10,
+      tier: "pro",
+      features: ["deep_mode"],
+      redeemedByUserId: "user_1",
+      redeemedAt: "redeemed",
+      createdAt: "created",
+    },
+    {
+      id: "redemption_1",
+      accessCodeId: "code_1",
+      userId: "user_1",
+      credits: 10,
+      tierGranted: "pro",
+      featuresGranted: ["deep_mode"],
+      redeemedAt: "redeemed",
+      metadata: { source: "code" },
+    },
+  );
+
+  assert.equal(redeemed, true);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_code as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /set\s+status = 'redeemed'/i);
+  assert.match(queries[0].sql, /where id = \$1/i);
+  assert.match(queries[0].sql, /status = 'active'/i);
+  assert.match(queries[0].sql, /redeemed_at is null/i);
+  assert.match(queries[0].sql, /disabled_at is null/i);
+  assert.match(queries[0].sql, /insert into access_code_redemptions/i);
+  assert.match(queries[0].sql, /from updated_code/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "code_1",
+    "user_1",
+    "redeemed",
+    "redemption_1",
+  ]);
+});
+
+test("postgres repository reports redemption false when conditional update matches nothing", async () => {
+  const { repo } = createRowRepository([]);
+
+  assert.equal(
+    await repo.redeemAccessCode(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_1",
+        redeemedAt: "redeemed",
+        createdAt: "created",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_1",
+        userId: "user_1",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "redeemed",
+        metadata: {},
+      },
+    ),
+    false,
+  );
+});
+
+test("postgres repository disables single access code with audit in one CTE query", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TEST-****-001",
+      status: "disabled",
+      credits: 10,
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: "disabled",
+      created_at: "created",
+    },
+  ]);
+
+  const result = await repo.disableAccessCodeWithAudit("code_1", "disabled", {
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_disabled",
+    targetType: "access_code",
+    targetId: "code_1",
+    metadata: { reason: "fraud" },
+    createdAt: "disabled",
+  });
+
+  assert.equal(result?.status, "disabled");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_code as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /set status = 'disabled'/i);
+  assert.match(queries[0].sql, /status = 'active'/i);
+  assert.match(queries[0].sql, /redeemed_at is null/i);
+  assert.match(queries[0].sql, /disabled_at is null/i);
+  assert.match(queries[0].sql, /insert into admin_audit_logs/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "code_1",
+    "disabled",
+    "audit_1",
+    "admin_1",
+  ]);
+});
+
+test("postgres repository disables access code batch with audit and actual disabled count", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "batch_1",
+      name: "Launch",
+      code_count: 2,
+      credits: 10,
+      features: [],
+      metadata: {},
+      disabled_at: "disabled",
+      created_at: "created",
+      disabled_code_count: "1",
+    },
+  ]);
+
+  const result = await repo.disableAccessCodeBatchWithAudit("batch_1", "disabled", {
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_batch_disabled",
+    targetType: "access_code_batch",
+    targetId: "batch_1",
+    metadata: { reason: "ended" },
+    createdAt: "disabled",
+  });
+
+  assert.equal(result?.disabledCodeCount, 1);
+  assert.equal(result?.batch.disabledAt, "disabled");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_batch as/i);
+  assert.match(queries[0].sql, /updated_codes as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /status = 'active'/i);
+  assert.match(queries[0].sql, /redeemed_at is null/i);
+  assert.match(queries[0].sql, /disabled_at is null/i);
+  assert.match(queries[0].sql, /insert into admin_audit_logs/i);
+  assert.match(queries[0].sql, /disabledCodeCount/i);
+});
+
 test("postgres repository maps report writes and nullable JSONB reads", async () => {
   const publicReport = {
     id: "simulation_1",

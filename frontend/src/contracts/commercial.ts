@@ -28,6 +28,7 @@ export const COMMERCIAL_TASK_STATUSES = [
 ] as const;
 export const ADMIN_AUDIT_ACTIONS = [
   "access_code_batch_created",
+  "access_code_batch_disabled",
   "access_code_disabled",
   "credits_adjusted",
   "task_refunded",

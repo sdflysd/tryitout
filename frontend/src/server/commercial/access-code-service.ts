@@ -14,6 +14,7 @@ import type {
   AccessCodeBatchRecord,
   AccessCodeRecord,
   AccessCodeRedemptionRecord,
+  AdminAuditLogRecord,
   JsonObject,
 } from "./types.js";
 
@@ -73,6 +74,8 @@ export interface CreatedAccessCode {
   record: AccessCodeRecord;
 }
 
+const ACCESS_CODE_GENERATION_MAX_ATTEMPTS_PER_CODE = 20;
+
 export class AccessCodeService {
   private readonly repository: CommercialRepository;
   private readonly accessCodePepper: string;
@@ -115,13 +118,40 @@ export class AccessCodeService {
       createdAt: nowIso,
     };
 
+    const codes = this.generateUniqueCodes(input, batch.id, nowIso);
+
+    await this.repository.createAccessCodeBatchWithCodes(
+      batch,
+      codes.map((code) => code.record),
+    );
+
+    return { batch, codes };
+  }
+
+  private generateUniqueCodes(
+    input: CreateAccessCodeBatchInput,
+    batchId: string,
+    nowIso: string,
+  ): CreatedAccessCode[] {
     const codes: CreatedAccessCode[] = [];
-    for (let index = 0; index < input.codeCount; index += 1) {
+    const generatedHashes = new Set<string>();
+    const maxAttempts =
+      input.codeCount * ACCESS_CODE_GENERATION_MAX_ATTEMPTS_PER_CODE;
+    let attempts = 0;
+
+    while (codes.length < input.codeCount && attempts < maxAttempts) {
+      attempts += 1;
       const rawCode = this.generateAccessCode();
+      const codeHash = this.safeHashAccessCode(rawCode);
+      if (generatedHashes.has(codeHash)) {
+        continue;
+      }
+
+      generatedHashes.add(codeHash);
       const record: AccessCodeRecord = {
         id: this.createId("access_code"),
-        batchId: batch.id,
-        codeHash: this.safeHashAccessCode(rawCode),
+        batchId,
+        codeHash,
         codeMask: this.maskAccessCode(rawCode),
         status: "active",
         credits: input.credits,
@@ -133,12 +163,14 @@ export class AccessCodeService {
       codes.push({ rawCode, record });
     }
 
-    await this.repository.saveAccessCodeBatch(batch);
-    for (const code of codes) {
-      await this.repository.saveAccessCode(code.record);
+    if (codes.length !== input.codeCount) {
+      throw new AccessCodeServiceError(
+        "invalid_access_code_input",
+        "Unable to generate enough unique access codes",
+      );
     }
 
-    return { batch, codes };
+    return codes;
   }
 
   async createSingleAccessCode(
@@ -162,7 +194,7 @@ export class AccessCodeService {
       return undefined;
     }
 
-    this.assertRedeemable(code);
+    this.assertRedeemable(code, this.currentDate());
     return code;
   }
 
@@ -186,9 +218,10 @@ export class AccessCodeService {
         "Access code not found",
       );
     }
-    this.assertRedeemable(code);
+    const nowDate = this.currentDate();
+    this.assertRedeemable(code, nowDate);
 
-    const nowIso = this.currentDate().toISOString();
+    const nowIso = nowDate.toISOString();
     const redemption: AccessCodeRedemptionRecord = {
       id: this.createId("access_code_redemption"),
       accessCodeId,
@@ -201,13 +234,21 @@ export class AccessCodeService {
       metadata: metadata ?? {},
     };
 
-    await this.repository.saveAccessCode({
-      ...code,
-      status: "redeemed",
-      redeemedByUserId: userId,
-      redeemedAt: nowIso,
-    });
-    await this.repository.saveAccessCodeRedemption(redemption);
+    const redeemed = await this.repository.redeemAccessCode(
+      {
+        ...code,
+        status: "redeemed",
+        redeemedByUserId: userId,
+        redeemedAt: nowIso,
+      },
+      redemption,
+    );
+    if (!redeemed) {
+      throw new AccessCodeServiceError(
+        "access_code_not_redeemable",
+        "Access code cannot be redeemed",
+      );
+    }
 
     return redemption;
   }
@@ -217,10 +258,10 @@ export class AccessCodeService {
     actorUserId: string,
     metadata?: JsonObject,
   ): Promise<AccessCodeRecord> {
-    if (!accessCodeId.trim()) {
+    if (!accessCodeId.trim() || !actorUserId.trim()) {
       throw new AccessCodeServiceError(
         "invalid_access_code_input",
-        "Access code id is required",
+        "Access code id and actor user id are required",
       );
     }
 
@@ -232,19 +273,7 @@ export class AccessCodeService {
       );
     }
     const nowIso = this.currentDate().toISOString();
-    const disabledCode =
-      code.status === "active"
-        ? {
-            ...code,
-            status: "disabled" as const,
-            disabledAt: nowIso,
-          }
-        : code;
-
-    if (disabledCode !== code) {
-      await this.repository.saveAccessCode(disabledCode);
-    }
-    await this.repository.appendAdminAuditLog({
+    const auditLog: AdminAuditLogRecord = {
       id: this.createId("admin_audit_log"),
       actorUserId,
       action: "access_code_disabled",
@@ -252,7 +281,19 @@ export class AccessCodeService {
       targetId: accessCodeId,
       metadata: metadata ?? {},
       createdAt: nowIso,
-    });
+    };
+    const disabledCode = await this.repository.disableAccessCodeWithAudit(
+      accessCodeId,
+      nowIso,
+      auditLog,
+    );
+
+    if (!disabledCode) {
+      throw new AccessCodeServiceError(
+        "access_code_not_found",
+        "Access code not found",
+      );
+    }
 
     return disabledCode;
   }
@@ -262,10 +303,10 @@ export class AccessCodeService {
     actorUserId: string,
     metadata?: JsonObject,
   ): Promise<{ batch: AccessCodeBatchRecord; disabledCodeCount: number }> {
-    if (!batchId.trim()) {
+    if (!batchId.trim() || !actorUserId.trim()) {
       throw new AccessCodeServiceError(
         "invalid_access_code_input",
-        "Access code batch id is required",
+        "Access code batch id and actor user id are required",
       );
     }
 
@@ -278,48 +319,37 @@ export class AccessCodeService {
     }
 
     const nowIso = this.currentDate().toISOString();
-    const disabledBatch = {
-      ...batch,
-      disabledAt: batch.disabledAt ?? nowIso,
-    };
-    const codes = await this.repository.listAccessCodesByBatch(batchId);
-    let disabledCodeCount = 0;
-
-    await this.repository.saveAccessCodeBatch(disabledBatch);
-    for (const code of codes) {
-      if (code.status !== "active") {
-        continue;
-      }
-
-      disabledCodeCount += 1;
-      await this.repository.saveAccessCode({
-        ...code,
-        status: "disabled",
-        disabledAt: nowIso,
-      });
-    }
-    await this.repository.appendAdminAuditLog({
+    const auditLog: AdminAuditLogRecord = {
       id: this.createId("admin_audit_log"),
       actorUserId,
       action: "access_code_batch_disabled",
       targetType: "access_code_batch",
       targetId: batchId,
-      metadata: {
-        ...(metadata ?? {}),
-        disabledCodeCount,
-      },
+      metadata: metadata ?? {},
       createdAt: nowIso,
-    });
+    };
+    const disabled = await this.repository.disableAccessCodeBatchWithAudit(
+      batchId,
+      nowIso,
+      auditLog,
+    );
 
-    return { batch: disabledBatch, disabledCodeCount };
+    if (!disabled) {
+      throw new AccessCodeServiceError(
+        "access_code_batch_not_found",
+        "Access code batch not found",
+      );
+    }
+
+    return disabled;
   }
 
-  private assertRedeemable(code: AccessCodeRecord): void {
+  private assertRedeemable(code: AccessCodeRecord, now: Date): void {
     if (
       code.status !== "active" ||
       code.redeemedAt !== undefined ||
       code.disabledAt !== undefined ||
-      isExpired(code.expiresAt, this.currentDate())
+      isExpiredOrInvalid(code.expiresAt, now)
     ) {
       throw new AccessCodeServiceError(
         "access_code_not_redeemable",
@@ -369,7 +399,13 @@ function validateBatchInput(input: CreateAccessCodeBatchInput): void {
   if (!Number.isFinite(input.credits) || input.credits < 0) {
     throw new AccessCodeServiceError(
       "invalid_access_code_input",
-      "Credits must be a non-negative number",
+      "Credits must be a positive number",
+    );
+  }
+  if (input.credits <= 0) {
+    throw new AccessCodeServiceError(
+      "invalid_access_code_input",
+      "Credits must be a positive number",
     );
   }
   if (!Array.isArray(input.features)) {
@@ -378,13 +414,24 @@ function validateBatchInput(input: CreateAccessCodeBatchInput): void {
       "Features are required",
     );
   }
+  if (input.expiresAt !== undefined && !isValidDateString(input.expiresAt)) {
+    throw new AccessCodeServiceError(
+      "invalid_access_code_input",
+      "Expiration must be a valid date string",
+    );
+  }
 }
 
-function isExpired(expiresAt: string | undefined, now: Date): boolean {
+function isExpiredOrInvalid(expiresAt: string | undefined, now: Date): boolean {
   if (expiresAt === undefined) {
     return false;
   }
 
   const expiresAtMs = Date.parse(expiresAt);
-  return Number.isFinite(expiresAtMs) && expiresAtMs <= now.getTime();
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= now.getTime();
+}
+
+function isValidDateString(value: string): boolean {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime());
 }

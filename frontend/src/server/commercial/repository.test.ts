@@ -215,6 +215,148 @@ test("repository rejects duplicate access code hashes", async () => {
   );
 });
 
+test("repository atomically creates access code batches with codes", async () => {
+  const repo = new InMemoryCommercialRepository();
+
+  await repo.createAccessCodeBatchWithCodes(
+    {
+      id: "batch_1",
+      name: "Batch",
+      codeCount: 2,
+      credits: 10,
+      features: [],
+      metadata: {},
+      createdAt: "now",
+    },
+    [
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "active",
+        credits: 10,
+        features: [],
+        createdAt: "now",
+      },
+      {
+        id: "code_2",
+        batchId: "batch_1",
+        codeHash: "hash_2",
+        codeMask: "TEST-****-002",
+        status: "active",
+        credits: 10,
+        features: [],
+        createdAt: "now",
+      },
+    ],
+  );
+
+  assert.equal((await repo.getAccessCodeBatch("batch_1"))?.name, "Batch");
+  assert.deepEqual(
+    (await repo.listAccessCodesByBatch("batch_1")).map((code) => code.id),
+    ["code_1", "code_2"],
+  );
+});
+
+test("repository createAccessCodeBatchWithCodes rejects duplicate existing hash before mutating", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_existing",
+    batchId: "batch_existing",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-000",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+
+  await assert.rejects(
+    repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Batch",
+        codeCount: 2,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "now",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "now",
+        },
+        {
+          id: "code_2",
+          batchId: "batch_1",
+          codeHash: "hash_2",
+          codeMask: "TEST-****-002",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "now",
+        },
+      ],
+    ),
+    /access_codes\.codeHash/,
+  );
+
+  assert.equal(await repo.getAccessCodeBatch("batch_1"), undefined);
+  assert.deepEqual(await repo.listAccessCodesByBatch("batch_1"), []);
+});
+
+test("repository createAccessCodeBatchWithCodes rejects duplicate incoming hash before mutating", async () => {
+  const repo = new InMemoryCommercialRepository();
+
+  await assert.rejects(
+    repo.createAccessCodeBatchWithCodes(
+      {
+        id: "batch_1",
+        name: "Batch",
+        codeCount: 2,
+        credits: 10,
+        features: [],
+        metadata: {},
+        createdAt: "now",
+      },
+      [
+        {
+          id: "code_1",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-001",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "now",
+        },
+        {
+          id: "code_2",
+          batchId: "batch_1",
+          codeHash: "hash_1",
+          codeMask: "TEST-****-002",
+          status: "active",
+          credits: 10,
+          features: [],
+          createdAt: "now",
+        },
+      ],
+    ),
+    /access_codes\.codeHash/,
+  );
+
+  assert.equal(await repo.getAccessCodeBatch("batch_1"), undefined);
+  assert.deepEqual(await repo.listAccessCodesByBatch("batch_1"), []);
+});
+
 test("repository gets access codes by id and lists them by batch", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveAccessCode({
@@ -279,6 +421,202 @@ test("repository rejects duplicate access code redemptions", async () => {
     }),
     /access_code_redemptions\.accessCodeId/,
   );
+});
+
+test("repository redeemAccessCode does not mutate code if redemption insert would fail", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "other_code",
+    userId: "user_1",
+    credits: 10,
+    featuresGranted: [],
+    redeemedAt: "earlier",
+    metadata: {},
+  });
+
+  await assert.rejects(
+    repo.redeemAccessCode(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_2",
+        redeemedAt: "now",
+        createdAt: "now",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_1",
+        userId: "user_2",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "now",
+        metadata: {},
+      },
+    ),
+    /access_code_redemptions\.id/,
+  );
+
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "active");
+  assert.equal(
+    await repo.findAccessCodeRedemptionByCodeId("code_1"),
+    undefined,
+  );
+});
+
+test("repository redeemAccessCode returns false without overwriting redeemed codes", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "redeemed",
+    credits: 10,
+    features: [],
+    redeemedByUserId: "user_1",
+    redeemedAt: "earlier",
+    createdAt: "now",
+  });
+
+  assert.equal(
+    await repo.redeemAccessCode(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_2",
+        redeemedAt: "now",
+        createdAt: "now",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_1",
+        userId: "user_2",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "now",
+        metadata: {},
+      },
+    ),
+    false,
+  );
+
+  assert.equal((await repo.getAccessCode("code_1"))?.redeemedByUserId, "user_1");
+  assert.equal(
+    await repo.findAccessCodeRedemptionByCodeId("code_1"),
+    undefined,
+  );
+});
+
+test("repository disableAccessCodeWithAudit rejects duplicate audit id before mutating", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+  await repo.appendAdminAuditLog({
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_disabled",
+    targetType: "access_code",
+    targetId: "other_code",
+    metadata: {},
+    createdAt: "earlier",
+  });
+
+  await assert.rejects(
+    repo.disableAccessCodeWithAudit("code_1", "disabled", {
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "access_code_disabled",
+      targetType: "access_code",
+      targetId: "code_1",
+      metadata: {},
+      createdAt: "disabled",
+    }),
+    /admin_audit_logs\.id/,
+  );
+
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "active");
+});
+
+test("repository disableAccessCodeBatchWithAudit counts actual active transitions", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCodeBatch({
+    id: "batch_1",
+    name: "Batch",
+    codeCount: 3,
+    credits: 10,
+    features: [],
+    metadata: {},
+    createdAt: "now",
+  });
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+  await repo.saveAccessCode({
+    id: "code_2",
+    batchId: "batch_1",
+    codeHash: "hash_2",
+    codeMask: "TEST-****-002",
+    status: "redeemed",
+    credits: 10,
+    features: [],
+    redeemedByUserId: "user_1",
+    redeemedAt: "earlier",
+    createdAt: "now",
+  });
+
+  const result = await repo.disableAccessCodeBatchWithAudit("batch_1", "disabled", {
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_batch_disabled",
+    targetType: "access_code_batch",
+    targetId: "batch_1",
+    metadata: {},
+    createdAt: "disabled",
+  });
+
+  assert.equal(result.disabledCodeCount, 1);
+  assert.equal((await repo.getAccessCodeBatch("batch_1"))?.disabledAt, "disabled");
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "disabled");
+  assert.equal((await repo.getAccessCode("code_2"))?.status, "redeemed");
+  assert.deepEqual((await repo.listAdminAuditLogs())[0]?.metadata, {
+    disabledCodeCount: 1,
+  });
 });
 
 test("repository rejects duplicate session token hashes", async () => {

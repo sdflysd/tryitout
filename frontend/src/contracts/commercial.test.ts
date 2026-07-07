@@ -38,6 +38,7 @@ test("commercial constants expose platform account, credit, task, and audit stat
     "refunded",
   ]);
   assert.ok(ADMIN_AUDIT_ACTIONS.includes("access_code_batch_created"));
+  assert.ok(ADMIN_AUDIT_ACTIONS.includes("access_code_batch_disabled"));
 });
 
 test("simulation credit costs distinguish platform and BYOK deep mode", () => {

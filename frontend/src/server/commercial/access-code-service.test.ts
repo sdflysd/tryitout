@@ -19,6 +19,51 @@ const RAW_CODES = [
   "TIO-ABCD-EFGH-JK25",
 ];
 
+test("batch creation retries duplicate generated hashes and persists unique codes", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const generatedCodes = [
+    RAW_CODES[0],
+    RAW_CODES[0],
+    RAW_CODES[1],
+    RAW_CODES[2],
+  ];
+  const service = createService(repo, { generatedCodes });
+
+  const result = await service.createAccessCodeBatch({
+    name: "Unique batch",
+    codeCount: 3,
+    credits: 10,
+    features: [],
+  });
+
+  assert.deepEqual(
+    result.codes.map((code) => code.rawCode),
+    [RAW_CODES[0], RAW_CODES[1], RAW_CODES[2]],
+  );
+  assert.equal(new Set(result.codes.map((code) => code.record.codeHash)).size, 3);
+  assert.equal((await repo.listAccessCodesByBatch(result.batch.id)).length, 3);
+});
+
+test("batch creation fails without partial writes when generator cannot produce unique codes", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const service = createService(repo, {
+    generatedCodes: Array.from({ length: 100 }, () => RAW_CODES[0]),
+  });
+
+  await assert.rejects(
+    service.createAccessCodeBatch({
+      name: "Duplicate batch",
+      codeCount: 2,
+      credits: 10,
+      features: [],
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+
+  assert.equal(await repo.getAccessCodeBatch("batch_1"), undefined);
+  assert.deepEqual(await repo.listAccessCodesByBatch("batch_1"), []);
+});
+
 test("admin can create a batch and receive raw codes without storing raw values", async () => {
   const repo = new InMemoryCommercialRepository();
   const service = createService(repo);
@@ -134,6 +179,28 @@ test("disabled, expired, and redeemed codes cannot be redeemed", async () => {
   );
 });
 
+test("invalid stored expiration is not redeemable", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const service = createService(repo);
+  const created = await service.createSingleAccessCode({
+    credits: 10,
+    features: [],
+  });
+  await repo.saveAccessCode({
+    ...created.record,
+    expiresAt: "not-a-date",
+  });
+
+  await assert.rejects(
+    service.findRedeemableCode(created.rawCode),
+    (error) => hasServiceCode(error, "access_code_not_redeemable"),
+  );
+  await assert.rejects(
+    service.markRedeemed(created.record.id, "user_1"),
+    (error) => hasServiceCode(error, "access_code_not_redeemable"),
+  );
+});
+
 test("markRedeemed records redemption metadata without mutating credit balances", async () => {
   const repo = new InMemoryCommercialRepository();
   const service = createService(repo, {
@@ -172,6 +239,31 @@ test("markRedeemed records redemption metadata without mutating credit balances"
   });
   assert.deepEqual(storedRedemption, redemption);
   assert.equal(await repo.getCreditAccount("user_1"), undefined);
+});
+
+test("second redemption attempt is rejected without overwriting original redeemer", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const service = createService(repo, {
+    nowValues: [CREATED_AT, REDEEMED_AT, "2026-07-07T00:20:00.000Z"],
+  });
+  const created = await service.createSingleAccessCode({
+    credits: 13,
+    features: [],
+  });
+
+  await service.markRedeemed(created.record.id, "user_1");
+  await assert.rejects(
+    service.markRedeemed(created.record.id, "user_2"),
+    (error) => hasServiceCode(error, "access_code_not_redeemable"),
+  );
+
+  const storedCode = await repo.getAccessCode(created.record.id);
+  const redemption = await repo.findAccessCodeRedemptionByCodeId(
+    created.record.id,
+  );
+  assert.equal(storedCode?.redeemedByUserId, "user_1");
+  assert.equal(storedCode?.redeemedAt, REDEEMED_AT);
+  assert.equal(redemption?.userId, "user_1");
 });
 
 test("batch disabling disables active codes and writes audit metadata", async () => {
@@ -215,6 +307,33 @@ test("batch disabling disables active codes and writes audit metadata", async ()
   });
 });
 
+test("blank disable actors are rejected before mutations", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const service = createService(repo);
+  const created = await service.createAccessCodeBatch({
+    name: "Actors",
+    codeCount: 1,
+    credits: 5,
+    features: [],
+  });
+
+  await assert.rejects(
+    service.disableAccessCode(created.codes[0]!.record.id, "   "),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
+    service.disableAccessCodeBatch(created.batch.id, ""),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+
+  assert.equal(
+    (await repo.getAccessCode(created.codes[0]!.record.id))?.status,
+    "active",
+  );
+  assert.equal((await repo.getAccessCodeBatch(created.batch.id))?.disabledAt, undefined);
+  assert.deepEqual(await repo.listAdminAuditLogs(), []);
+});
+
 test("service reports invalid input and missing records with domain errors", async () => {
   const repo = new InMemoryCommercialRepository();
   const service = createService(repo);
@@ -224,6 +343,33 @@ test("service reports invalid input and missing records with domain errors", asy
       name: "Bad",
       codeCount: 0,
       credits: 1,
+      features: [],
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
+    service.createAccessCodeBatch({
+      name: "Bad expiration",
+      codeCount: 1,
+      credits: 1,
+      features: [],
+      expiresAt: "not-a-date",
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
+    service.createSingleAccessCode({
+      credits: 1,
+      features: [],
+      expiresAt: "not-a-date",
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
+    service.createAccessCodeBatch({
+      name: "Zero credits",
+      codeCount: 1,
+      credits: 0,
       features: [],
     }),
     (error) => hasServiceCode(error, "invalid_access_code_input"),
@@ -242,12 +388,14 @@ function createService(
   repository: CommercialRepository,
   options: {
     nowValues?: string[];
+    generatedCodes?: string[];
   } = {},
 ): AccessCodeService {
   const idCounters = new Map<string, number>();
   let codeIndex = 0;
   let nowIndex = 0;
   const nowValues = options.nowValues ?? [CREATED_AT];
+  const generatedCodes = options.generatedCodes ?? RAW_CODES;
   return new AccessCodeService({
     repository,
     accessCodePepper: ACCESS_CODE_PEPPER,
@@ -257,7 +405,7 @@ function createService(
       return `${prefix}_${nextId}`;
     },
     generateAccessCode: () => {
-      const code = RAW_CODES[codeIndex];
+      const code = generatedCodes[codeIndex];
       codeIndex += 1;
       return code;
     },

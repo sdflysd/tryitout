@@ -337,6 +337,77 @@ export class PostgresCommercialRepository implements CommercialRepository {
     );
   }
 
+  async createAccessCodeBatchWithCodes(
+    batch: AccessCodeBatchRecord,
+    codes: AccessCodeRecord[],
+  ): Promise<void> {
+    await this.client.query(
+      `
+        with inserted_batch as (
+          insert into access_code_batches (
+            id, created_by_user_id, name, source, code_count, credits, tier,
+            features, expires_at, disabled_at, notes, metadata, created_at
+          )
+          values (
+            $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb,
+            $13
+          )
+          returning id
+        )
+        insert into access_codes (
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+        )
+        select
+          code.id,
+          inserted_batch.id,
+          code."codeHash",
+          code."codeMask",
+          code.status,
+          code.credits,
+          code.tier,
+          code.features,
+          code."expiresAt",
+          code."redeemedByUserId",
+          code."redeemedAt",
+          code."disabledAt",
+          code."createdAt"
+        from inserted_batch
+        join jsonb_to_recordset($14::jsonb) as code(
+          id text,
+          "batchId" text,
+          "codeHash" text,
+          "codeMask" text,
+          status text,
+          credits integer,
+          tier text,
+          features jsonb,
+          "expiresAt" timestamptz,
+          "redeemedByUserId" text,
+          "redeemedAt" timestamptz,
+          "disabledAt" timestamptz,
+          "createdAt" timestamptz
+        ) on code."batchId" = inserted_batch.id
+      `,
+      [
+        batch.id,
+        batch.createdByUserId ?? null,
+        batch.name,
+        batch.source ?? null,
+        batch.codeCount,
+        batch.credits,
+        batch.tier ?? null,
+        toJsonb(batch.features),
+        batch.expiresAt ?? null,
+        batch.disabledAt ?? null,
+        batch.notes ?? null,
+        toJsonb(batch.metadata),
+        batch.createdAt,
+        toJsonb(codes.map(toAccessCodeJson)),
+      ],
+    );
+  }
+
   async getAccessCodeBatch(
     batchId: string,
   ): Promise<AccessCodeBatchRecord | undefined> {
@@ -467,6 +538,55 @@ export class PostgresCommercialRepository implements CommercialRepository {
     );
   }
 
+  async redeemAccessCode(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+  ): Promise<boolean> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_code as (
+          update access_codes
+          set
+            status = 'redeemed',
+            redeemed_by_user_id = $2,
+            redeemed_at = $3
+          where id = $1
+            and status = 'active'
+            and redeemed_at is null
+            and disabled_at is null
+          returning id
+        ),
+        inserted_redemption as (
+          insert into access_code_redemptions (
+            id, access_code_id, user_id, credit_ledger_id, credits,
+            tier_granted, features_granted, redeemed_at, metadata
+          )
+          select
+            $4, updated_code.id, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb
+          from updated_code
+          returning id
+        )
+        select true as redeemed
+        from inserted_redemption
+      `,
+      [
+        code.id,
+        code.redeemedByUserId ?? redemption.userId,
+        code.redeemedAt ?? redemption.redeemedAt,
+        redemption.id,
+        redemption.userId,
+        redemption.creditLedgerId ?? null,
+        redemption.credits,
+        redemption.tierGranted ?? null,
+        toJsonb(redemption.featuresGranted),
+        redemption.redeemedAt,
+        toJsonb(redemption.metadata),
+      ],
+    );
+
+    return rows.length > 0;
+  }
+
   async findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
   ): Promise<AccessCodeRedemptionRecord | undefined> {
@@ -481,6 +601,165 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [accessCodeId],
     );
     return mapOptional(rows[0], mapAccessCodeRedemption);
+  }
+
+  async disableAccessCodeWithAudit(
+    codeId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_code as (
+          update access_codes
+          set status = 'disabled', disabled_at = $2
+          where id = $1
+            and status = 'active'
+            and redeemed_at is null
+            and disabled_at is null
+          returning
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, redeemed_by_user_id, redeemed_at,
+            disabled_at, created_at
+        ),
+        target_code as (
+          select
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, redeemed_by_user_id, redeemed_at,
+            disabled_at, created_at
+          from access_codes
+          where id = $1
+        ),
+        inserted_audit as (
+          insert into admin_audit_logs (
+            id, actor_user_id, action, target_type, target_id, metadata,
+            ip_hash, user_agent, created_at
+          )
+          select $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11
+          from target_code
+          returning id
+        )
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+        from updated_code
+        where exists (select 1 from inserted_audit)
+        union all
+        select
+          target_code.id, target_code.batch_id, target_code.code_hash,
+          target_code.code_mask, target_code.status, target_code.credits,
+          target_code.tier, target_code.features, target_code.expires_at,
+          target_code.redeemed_by_user_id, target_code.redeemed_at,
+          target_code.disabled_at, target_code.created_at
+        from target_code
+        where not exists (select 1 from updated_code)
+          and exists (select 1 from inserted_audit)
+      `,
+      [
+        codeId,
+        disabledAt,
+        auditLog.id,
+        auditLog.actorUserId ?? null,
+        auditLog.action,
+        auditLog.targetType,
+        auditLog.targetId ?? null,
+        toJsonb(auditLog.metadata),
+        auditLog.ipHash ?? null,
+        auditLog.userAgent ?? null,
+        auditLog.createdAt,
+      ],
+    );
+
+    return mapOptional(rows[0], mapAccessCode);
+  }
+
+  async disableAccessCodeBatchWithAudit(
+    batchId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<
+    | { batch: AccessCodeBatchRecord; disabledCodeCount: number }
+    | undefined
+  > {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_batch as (
+          update access_code_batches
+          set disabled_at = coalesce(disabled_at, $2)
+          where id = $1
+          returning
+            id, created_by_user_id, name, source, code_count, credits, tier,
+            features, expires_at, disabled_at, notes, metadata, created_at
+        ),
+        updated_codes as (
+          update access_codes
+          set status = 'disabled', disabled_at = $2
+          where batch_id = $1
+            and exists (select 1 from updated_batch)
+            and status = 'active'
+            and redeemed_at is null
+            and disabled_at is null
+          returning id
+        ),
+        disabled_count as (
+          select count(*)::integer as "disabledCodeCount"
+          from updated_codes
+        ),
+        inserted_audit as (
+          insert into admin_audit_logs (
+            id, actor_user_id, action, target_type, target_id, metadata,
+            ip_hash, user_agent, created_at
+          )
+          select
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            ($8::jsonb || jsonb_build_object(
+              'disabledCodeCount',
+              disabled_count."disabledCodeCount"
+            )),
+            $9,
+            $10,
+            $11
+          from updated_batch, disabled_count
+          returning id
+        )
+        select
+          updated_batch.id,
+          updated_batch.created_by_user_id,
+          updated_batch.name,
+          updated_batch.source,
+          updated_batch.code_count,
+          updated_batch.credits,
+          updated_batch.tier,
+          updated_batch.features,
+          updated_batch.expires_at,
+          updated_batch.disabled_at,
+          updated_batch.notes,
+          updated_batch.metadata,
+          updated_batch.created_at,
+          disabled_count."disabledCodeCount"
+        from updated_batch, disabled_count
+        where exists (select 1 from inserted_audit)
+      `,
+      [
+        batchId,
+        disabledAt,
+        auditLog.id,
+        auditLog.actorUserId ?? null,
+        auditLog.action,
+        auditLog.targetType,
+        auditLog.targetId ?? null,
+        toJsonb(auditLog.metadata),
+        auditLog.ipHash ?? null,
+        auditLog.userAgent ?? null,
+        auditLog.createdAt,
+      ],
+    );
+
+    return mapOptional(rows[0], mapDisabledAccessCodeBatchResult);
   }
 
   async saveCommercialTask(
@@ -952,6 +1231,24 @@ function nullableJsonb(value: unknown | undefined): string | null {
   return value === undefined ? null : toJsonb(value);
 }
 
+function toAccessCodeJson(code: AccessCodeRecord): JsonObject {
+  return {
+    id: code.id,
+    batchId: code.batchId,
+    codeHash: code.codeHash,
+    codeMask: code.codeMask,
+    status: code.status,
+    credits: code.credits,
+    tier: code.tier ?? null,
+    features: code.features,
+    expiresAt: code.expiresAt ?? null,
+    redeemedByUserId: code.redeemedByUserId ?? null,
+    redeemedAt: code.redeemedAt ?? null,
+    disabledAt: code.disabledAt ?? null,
+    createdAt: code.createdAt,
+  };
+}
+
 function mapOptional<T>(row: DbRow | undefined, mapper: (row: DbRow) => T): T | undefined {
   return row === undefined ? undefined : mapper(row);
 }
@@ -1241,6 +1538,22 @@ function mapAccessCodeRedemption(row: DbRow): AccessCodeRedemptionRecord {
   assignIfDefined(record, "creditLedgerId", optionalStringField(row, "credit_ledger_id", table));
   assignIfDefined(record, "tierGranted", optionalStringField(row, "tier_granted", table) as AccessCodeRedemptionRecord["tierGranted"]);
   return record;
+}
+
+function mapDisabledAccessCodeBatchResult(row: DbRow): {
+  batch: AccessCodeBatchRecord;
+  disabledCodeCount: number;
+} {
+  return {
+    batch: mapAccessCodeBatch(row),
+    disabledCodeCount: numberField(
+      row,
+      Object.hasOwn(row, "disabledCodeCount")
+        ? "disabledCodeCount"
+        : "disabled_code_count",
+      "access_code_batches",
+    ),
+  };
 }
 
 function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {

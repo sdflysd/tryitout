@@ -42,6 +42,10 @@ export interface CommercialRepository {
   ): Promise<CreditLedgerEntryRecord | undefined>;
 
   saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void>;
+  createAccessCodeBatchWithCodes(
+    batch: AccessCodeBatchRecord,
+    codes: AccessCodeRecord[],
+  ): Promise<void>;
   getAccessCodeBatch(
     batchId: string,
   ): Promise<AccessCodeBatchRecord | undefined>;
@@ -52,9 +56,26 @@ export interface CommercialRepository {
   saveAccessCodeRedemption(
     redemption: AccessCodeRedemptionRecord,
   ): Promise<void>;
+  redeemAccessCode(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+  ): Promise<boolean>;
   findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
   ): Promise<AccessCodeRedemptionRecord | undefined>;
+  disableAccessCodeWithAudit(
+    codeId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined>;
+  disableAccessCodeBatchWithAudit(
+    batchId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<
+    | { batch: AccessCodeBatchRecord; disabledCodeCount: number }
+    | undefined
+  >;
 
   saveCommercialTask(task: CommercialSimulationTaskRecord): Promise<void>;
   getCommercialTask(
@@ -214,6 +235,48 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     this.accessCodeBatches.set(batch.id, batch);
   }
 
+  async createAccessCodeBatchWithCodes(
+    batch: AccessCodeBatchRecord,
+    codes: AccessCodeRecord[],
+  ): Promise<void> {
+    if (this.accessCodeBatches.has(batch.id)) {
+      throw new Error("access_code_batches.id must be unique");
+    }
+    if (batch.codeCount !== codes.length) {
+      throw new Error("access_code_batches.codeCount must match access_codes");
+    }
+
+    const incomingCodeIds = new Set<string>();
+    const incomingCodeHashes = new Set<string>();
+    for (const code of codes) {
+      if (code.batchId !== batch.id) {
+        throw new Error("access_codes.batchId must match access_code_batches.id");
+      }
+      if (incomingCodeIds.has(code.id) || this.accessCodes.has(code.id)) {
+        throw new Error("access_codes.id must be unique");
+      }
+      if (incomingCodeHashes.has(code.codeHash)) {
+        throw new Error("access_codes.codeHash must be unique");
+      }
+      incomingCodeIds.add(code.id);
+      incomingCodeHashes.add(code.codeHash);
+    }
+
+    for (const code of codes) {
+      assertUniqueById(
+        this.accessCodes.values(),
+        code.id,
+        (existing) => existing.codeHash === code.codeHash,
+        "access_codes.codeHash",
+      );
+    }
+
+    this.accessCodeBatches.set(batch.id, batch);
+    for (const code of codes) {
+      this.accessCodes.set(code.id, code);
+    }
+  }
+
   async getAccessCodeBatch(
     batchId: string,
   ): Promise<AccessCodeBatchRecord | undefined> {
@@ -266,12 +329,127 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     );
   }
 
+  async redeemAccessCode(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+  ): Promise<boolean> {
+    const existing = this.accessCodes.get(code.id);
+    if (
+      !existing ||
+      existing.status !== "active" ||
+      existing.redeemedAt !== undefined ||
+      existing.disabledAt !== undefined
+    ) {
+      return false;
+    }
+
+    assertUniqueById(
+      this.accessCodeRedemptions,
+      redemption.id,
+      (item) => item.accessCodeId === redemption.accessCodeId,
+      "access_code_redemptions.accessCodeId",
+    );
+    appendById(
+      this.accessCodeRedemptions,
+      redemption,
+      "access_code_redemptions.id",
+    );
+    this.accessCodes.set(code.id, {
+      ...existing,
+      status: "redeemed",
+      redeemedByUserId: code.redeemedByUserId ?? redemption.userId,
+      redeemedAt: code.redeemedAt ?? redemption.redeemedAt,
+    });
+    return true;
+  }
+
   async findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
   ): Promise<AccessCodeRedemptionRecord | undefined> {
     return this.accessCodeRedemptions.find(
       (redemption) => redemption.accessCodeId === accessCodeId,
     );
+  }
+
+  async disableAccessCodeWithAudit(
+    codeId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+
+    const code = this.accessCodes.get(codeId);
+    if (!code) {
+      return undefined;
+    }
+
+    const updatedCode =
+      code.status === "active" &&
+      code.redeemedAt === undefined &&
+      code.disabledAt === undefined
+        ? { ...code, status: "disabled" as const, disabledAt }
+        : code;
+
+    if (updatedCode !== code) {
+      this.accessCodes.set(codeId, updatedCode);
+    }
+    appendById(this.auditLogs, auditLog, "admin_audit_logs.id");
+    return updatedCode;
+  }
+
+  async disableAccessCodeBatchWithAudit(
+    batchId: string,
+    disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<
+    | { batch: AccessCodeBatchRecord; disabledCodeCount: number }
+    | undefined
+  > {
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+
+    const batch = this.accessCodeBatches.get(batchId);
+    if (!batch) {
+      return undefined;
+    }
+
+    const disabledBatch = {
+      ...batch,
+      disabledAt: batch.disabledAt ?? disabledAt,
+    };
+    const activeCodes = [...this.accessCodes.values()].filter(
+      (code) =>
+        code.batchId === batchId &&
+        code.status === "active" &&
+        code.redeemedAt === undefined &&
+        code.disabledAt === undefined,
+    );
+    const disabledCodeCount = activeCodes.length;
+
+    this.accessCodeBatches.set(batchId, disabledBatch);
+    for (const code of activeCodes) {
+      this.accessCodes.set(code.id, {
+        ...code,
+        status: "disabled",
+        disabledAt,
+      });
+    }
+    appendById(
+      this.auditLogs,
+      {
+        ...auditLog,
+        metadata: {
+          ...auditLog.metadata,
+          disabledCodeCount,
+        },
+      },
+      "admin_audit_logs.id",
+    );
+
+    return { batch: disabledBatch, disabledCodeCount };
   }
 
   async saveCommercialTask(
