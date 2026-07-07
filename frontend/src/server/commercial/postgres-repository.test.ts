@@ -585,6 +585,41 @@ test("postgres repository holds credits transactionally after locking task", asy
   assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
 });
 
+test("postgres repository returns undefined when hold account update matches no rows", async () => {
+  const { repo, queries } = createSequentialRowRepository([
+    [],
+    [{ id: "task_1", user_id: "user_1" }],
+    [],
+    [],
+  ]);
+
+  const result = await repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "hold_1",
+      reason: "task_queued",
+      metadata: {},
+      createdAt: "held",
+    },
+    amount: 3,
+    taskUpdatedAt: "held",
+  });
+
+  assert.equal(result, undefined);
+  assert.equal(queries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(queries[1].sql, /from simulation_tasks/i);
+  assert.match(queries[2].sql, /update user_credit_accounts/i);
+  assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+  assert.equal(queries.some((query) => /insert into credit_ledger/i.test(query.sql)), false);
+  assert.equal(queries.some((query) => /update simulation_tasks/i.test(query.sql)), false);
+});
+
 test("postgres repository binds transaction queries to an acquired pool client", async () => {
   const txRepo = createPoolTransactionRepository([
     [],

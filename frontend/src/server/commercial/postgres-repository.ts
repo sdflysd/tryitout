@@ -413,7 +413,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       );
       const account = mapOptional(accountRows.rows[0], mapJoinedUserCreditAccount);
       if (!account) {
-        throw new Error("user_credit_accounts.user_id must exist");
+        return undefined;
       }
 
       const ledgerRows = await this.query<DbRow>(
