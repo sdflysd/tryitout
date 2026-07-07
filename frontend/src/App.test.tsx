@@ -27,6 +27,26 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
+test("admin path renders the commercial admin shell", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/admin" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App />);
+    assert.match(html, /admin-app-shell/);
+    assert.match(html, /Platform Control Center/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
 test("view changes can reset scroll before showing a new workflow", async () => {
   const { scrollToTopForViewChange } = await import("./App.js");
   const calls: ScrollToOptions[] = [];

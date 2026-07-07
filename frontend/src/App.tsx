@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Flame, Sparkles } from "lucide-react";
+import AdminApp from "./admin/AdminApp";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import HomeView from "./components/HomeView";
@@ -97,6 +98,10 @@ export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidat
 }
 
 export default function App() {
+  if (globalThis.location?.pathname.startsWith("/admin")) {
+    return <AdminApp />;
+  }
+
   const [view, setView] = useState<ViewState>("home");
   const [historyList, setHistoryList] = useState<Simulation[]>([]);
   const [currentSimulation, setCurrentSimulation] = useState<Simulation | null>(null);
