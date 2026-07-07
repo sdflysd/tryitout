@@ -77,3 +77,189 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   assert.equal((await repo.getCommercialTask("task_1"))?.status, "queued");
   assert.equal((await repo.listAdminAuditLogs()).length, 1);
 });
+
+test("repository rejects duplicate credit ledger idempotency keys", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_1",
+    userId: "user_1",
+    entryType: "redeem",
+    amount: 10,
+    balanceAfter: 10,
+    idempotencyKey: "redeem_1",
+    createdAt: "now",
+  });
+
+  await assert.rejects(
+    repo.appendCreditLedgerEntry({
+      id: "ledger_2",
+      userId: "user_1",
+      entryType: "redeem",
+      amount: 10,
+      balanceAfter: 20,
+      idempotencyKey: "redeem_1",
+      createdAt: "later",
+    }),
+    /credit_ledger\.idempotencyKey/,
+  );
+});
+
+test("repository rejects duplicate access code hashes", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+
+  await assert.rejects(
+    repo.saveAccessCode({
+      id: "code_2",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****",
+      status: "active",
+      credits: 10,
+      features: [],
+      createdAt: "later",
+    }),
+    /access_codes\.codeHash/,
+  );
+});
+
+test("repository rejects duplicate access code redemptions", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    featuresGranted: [],
+    redeemedAt: "now",
+    metadata: {},
+  });
+
+  await assert.rejects(
+    repo.saveAccessCodeRedemption({
+      id: "redemption_2",
+      accessCodeId: "code_1",
+      userId: "user_2",
+      credits: 10,
+      featuresGranted: [],
+      redeemedAt: "later",
+      metadata: {},
+    }),
+    /access_code_redemptions\.accessCodeId/,
+  );
+});
+
+test("repository rejects duplicate session token hashes", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveSession({
+    id: "sess_1",
+    userId: "user_1",
+    tokenHash: "token_hash",
+    expiresAt: "later",
+    createdAt: "now",
+  });
+
+  await assert.rejects(
+    repo.saveSession({
+      id: "sess_2",
+      userId: "user_2",
+      tokenHash: "token_hash",
+      expiresAt: "later",
+      createdAt: "later",
+    }),
+    /user_sessions\.tokenHash/,
+  );
+});
+
+test("repository rejects duplicate report task ids", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCommercialReport({
+    id: "report_1",
+    taskId: "task_1",
+    userId: "user_1",
+    unlocked: false,
+    createdAt: "now",
+    updatedAt: "now",
+  });
+
+  await assert.rejects(
+    repo.saveCommercialReport({
+      id: "report_2",
+      taskId: "task_1",
+      userId: "user_1",
+      unlocked: false,
+      createdAt: "later",
+      updatedAt: "later",
+    }),
+    /simulation_reports\.taskId/,
+  );
+});
+
+test("repository rejects duplicate model providers for the same user", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveUserModelProvider({
+    id: "provider_1",
+    userId: "user_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.example.test",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: "now",
+    updatedAt: "now",
+  });
+
+  await assert.rejects(
+    repo.saveUserModelProvider({
+      id: "provider_2",
+      userId: "user_1",
+      provider: "openai",
+      displayName: "OpenAI",
+      baseUrl: "https://api.example.test",
+      encryptedApiKey: "encrypted",
+      apiKeyMask: "sk-****",
+      status: "active",
+      createdAt: "later",
+      updatedAt: "later",
+    }),
+    /user_model_providers\.userId_provider/,
+  );
+});
+
+test("repository allows updating the same id with a unique value", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+
+  await assert.doesNotReject(
+    repo.saveAccessCode({
+      id: "code_1",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****",
+      status: "disabled",
+      credits: 10,
+      features: [],
+      createdAt: "now",
+      disabledAt: "later",
+    }),
+  );
+});

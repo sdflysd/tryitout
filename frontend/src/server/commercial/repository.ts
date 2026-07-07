@@ -98,6 +98,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   private readonly auditLogs: AdminAuditLogRecord[] = [];
 
   async saveUser(user: CommercialUserRecord): Promise<void> {
+    assertUniqueById(
+      this.users.values(),
+      user.id,
+      (existing) => existing.emailNormalized === user.emailNormalized,
+      "users.emailNormalized",
+    );
     this.users.set(user.id, user);
   }
 
@@ -115,6 +121,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async saveSession(session: CommercialSessionRecord): Promise<void> {
+    assertUniqueById(
+      this.sessions.values(),
+      session.id,
+      (existing) => existing.tokenHash === session.tokenHash,
+      "user_sessions.tokenHash",
+    );
     this.sessions.set(session.id, session);
   }
 
@@ -139,6 +151,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async appendCreditLedgerEntry(
     entry: CreditLedgerEntryRecord,
   ): Promise<void> {
+    assertUniqueById(
+      this.creditLedger,
+      entry.id,
+      (existing) => existing.idempotencyKey === entry.idempotencyKey,
+      "credit_ledger.idempotencyKey",
+    );
     upsertById(this.creditLedger, entry);
   }
 
@@ -161,6 +179,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async saveAccessCode(code: AccessCodeRecord): Promise<void> {
+    assertUniqueById(
+      this.accessCodes.values(),
+      code.id,
+      (existing) => existing.codeHash === code.codeHash,
+      "access_codes.codeHash",
+    );
     this.accessCodes.set(code.id, code);
   }
 
@@ -175,6 +199,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async saveAccessCodeRedemption(
     redemption: AccessCodeRedemptionRecord,
   ): Promise<void> {
+    assertUniqueById(
+      this.accessCodeRedemptions,
+      redemption.id,
+      (existing) => existing.accessCodeId === redemption.accessCodeId,
+      "access_code_redemptions.accessCodeId",
+    );
     upsertById(this.accessCodeRedemptions, redemption);
   }
 
@@ -189,6 +219,14 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async saveCommercialTask(
     task: CommercialSimulationTaskRecord,
   ): Promise<void> {
+    if (task.idempotencyKey !== undefined) {
+      assertUniqueById(
+        this.commercialTasks.values(),
+        task.id,
+        (existing) => existing.idempotencyKey === task.idempotencyKey,
+        "simulation_tasks.idempotencyKey",
+      );
+    }
     this.commercialTasks.set(task.id, task);
   }
 
@@ -223,6 +261,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async saveCommercialReport(
     report: CommercialSimulationReportRecord,
   ): Promise<void> {
+    assertUniqueById(
+      this.reports.values(),
+      report.id,
+      (existing) => existing.taskId === report.taskId,
+      "simulation_reports.taskId",
+    );
     this.reports.set(report.id, report);
   }
 
@@ -253,6 +297,14 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async saveUserModelProvider(
     provider: UserModelProviderRecord,
   ): Promise<void> {
+    assertUniqueById(
+      this.modelProviders.values(),
+      provider.id,
+      (existing) =>
+        existing.userId === provider.userId &&
+        existing.provider === provider.provider,
+      "user_model_providers.userId_provider",
+    );
     this.modelProviders.set(provider.id, provider);
   }
 
@@ -295,4 +347,17 @@ function upsertById<T extends { id: string }>(items: T[], item: T): void {
   }
 
   items[index] = item;
+}
+
+function assertUniqueById<T extends { id: string }>(
+  items: Iterable<T>,
+  recordId: string,
+  isUniqueMatch: (item: T) => boolean,
+  constraintName: string,
+): void {
+  for (const item of items) {
+    if (item.id !== recordId && isUniqueMatch(item)) {
+      throw new Error(`${constraintName} must be unique`);
+    }
+  }
 }
