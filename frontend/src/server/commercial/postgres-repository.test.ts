@@ -1119,7 +1119,7 @@ test("postgres repository redeems access code with conditional update and redemp
       tier: "pro",
       features: ["deep_mode"],
       redeemedByUserId: "user_1",
-      redeemedAt: "redeemed",
+      redeemedAt: "stale-code-redeemed-at",
       createdAt: "created",
     },
     {
@@ -1156,6 +1156,41 @@ test("postgres repository redeems access code with conditional update and redemp
     "redeemed",
     "redemption_1",
   ]);
+  assert.equal(queries[0].params?.[2], "redeemed");
+  assert.notEqual(queries[0].params?.[2], "stale-code-redeemed-at");
+});
+
+test("postgres repository rejects mismatched redemption code id before querying", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await assert.rejects(
+    repo.redeemAccessCode(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_1",
+        redeemedAt: "redeemed",
+        createdAt: "created",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_2",
+        userId: "user_1",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "redeemed",
+        metadata: {},
+      },
+    ),
+    /access_code_redemptions\.accessCodeId must match access_codes\.id/,
+  );
+
+  assert.equal(queries.length, 0);
 });
 
 test("postgres repository reports redemption false when conditional update matches nothing", async () => {

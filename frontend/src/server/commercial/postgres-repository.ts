@@ -545,6 +545,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
     code: AccessCodeRecord,
     redemption: AccessCodeRedemptionRecord,
   ): Promise<boolean> {
+    if (redemption.accessCodeId !== code.id) {
+      throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
+    }
+
     const { rows } = await this.client.query<DbRow>(
       `
         with updated_code as (
@@ -584,7 +588,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [
         code.id,
         code.redeemedByUserId ?? redemption.userId,
-        code.redeemedAt ?? redemption.redeemedAt,
+        redemption.redeemedAt,
         redemption.id,
         redemption.userId,
         redemption.creditLedgerId ?? null,
