@@ -4,6 +4,10 @@ const ACCESS_CODE_PREFIX = "TIO";
 const ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ACCESS_CODE_RANDOM_LENGTH = 12;
 const ACCESS_CODE_HASH_ALGORITHM = "hmac-sha256";
+const ACCESS_CODE_PATTERN = new RegExp(
+  `^${ACCESS_CODE_PREFIX}[${ACCESS_CODE_ALPHABET}]{${ACCESS_CODE_RANDOM_LENGTH}}$`,
+);
+const INVALID_ACCESS_CODE_MASK = "TIO-****-****-****";
 
 export function generateAccessCode(): string {
   let randomPart = "";
@@ -30,6 +34,10 @@ export function formatAccessCode(normalized: string): string {
 
 export function hashAccessCode(code: string, pepper: string): string {
   const normalizedCode = normalizeAccessCode(code);
+  if (!isCanonicalAccessCode(normalizedCode)) {
+    throw new Error("Invalid access code");
+  }
+
   const digest = createHmac("sha256", pepper).update(normalizedCode).digest("hex");
   return `${ACCESS_CODE_HASH_ALGORITHM}$${digest}`;
 }
@@ -39,15 +47,27 @@ export function verifyAccessCode(
   hash: string,
   pepper: string,
 ): boolean {
+  if (!isCanonicalAccessCode(normalizeAccessCode(code))) {
+    return false;
+  }
+
   const expectedHash = hashAccessCode(code, pepper);
   return timingSafeStringEqual(expectedHash, hash);
 }
 
 export function maskAccessCode(code: string): string {
   const normalizedCode = normalizeAccessCode(code);
+  if (!isCanonicalAccessCode(normalizedCode)) {
+    return INVALID_ACCESS_CODE_MASK;
+  }
+
   const suffix = normalizedCode.slice(-4);
 
   return `${ACCESS_CODE_PREFIX}-****-****-${suffix}`;
+}
+
+function isCanonicalAccessCode(normalizedCode: string): boolean {
+  return ACCESS_CODE_PATTERN.test(normalizedCode);
 }
 
 function timingSafeStringEqual(expected: string, actual: string): boolean {

@@ -13,6 +13,7 @@ const SCRYPT_P = 1;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const PASSWORD_SALT_BYTES = 16;
 const PASSWORD_HASH_BYTES = 64;
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const scrypt = promisify(scryptCallback) as (
   password: string,
@@ -77,11 +78,30 @@ function parsePasswordHash(
     return undefined;
   }
 
-  const salt = Buffer.from(saltEncoded, "base64url");
-  const hash = Buffer.from(hashEncoded, "base64url");
-  if (salt.length !== PASSWORD_SALT_BYTES || hash.length !== PASSWORD_HASH_BYTES) {
+  const salt = decodeCanonicalBase64Url(saltEncoded, PASSWORD_SALT_BYTES);
+  const hash = decodeCanonicalBase64Url(hashEncoded, PASSWORD_HASH_BYTES);
+  if (!salt || !hash) {
     return undefined;
   }
 
   return { salt, hash };
+}
+
+function decodeCanonicalBase64Url(
+  value: string,
+  expectedByteLength: number,
+): Buffer | undefined {
+  if (!BASE64URL_PATTERN.test(value)) {
+    return undefined;
+  }
+
+  const decoded = Buffer.from(value, "base64url");
+  if (
+    decoded.length !== expectedByteLength ||
+    decoded.toString("base64url") !== value
+  ) {
+    return undefined;
+  }
+
+  return decoded;
 }
