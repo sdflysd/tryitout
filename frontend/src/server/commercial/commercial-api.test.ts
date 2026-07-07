@@ -14,7 +14,7 @@ import { FeedbackService } from "./feedback-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
-import type { Report } from "../../types.js";
+import type { Report, SimulationApiResponse } from "../../types.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
 const pepper = "pepper";
@@ -41,6 +41,16 @@ const sampleReport: Report = {
   shouldDo: "test_small",
 };
 
+const sampleSimulationResponse: SimulationApiResponse = {
+  id: "task_1",
+  status: "completed",
+  agents: [],
+  stages: [],
+  report: sampleReport,
+  createdAt: now.toISOString(),
+  interactionModeUsed: "legacy",
+};
+
 interface BalanceBody {
   balance: number;
 }
@@ -51,7 +61,7 @@ interface TaskBody {
 }
 
 interface ReportBody {
-  report: Report;
+  report: SimulationApiResponse;
 }
 
 interface CreatedAccessCodeBody {
@@ -277,6 +287,35 @@ test("task creation rejects insufficient credits and returns queued status when 
   assert.equal((created.body as TaskBody).status, "queued");
 });
 
+test("task creation preserves structured frontend user input as JSON", async () => {
+  const { repository, handlers } = createHarness();
+  await seedAccessCode(repository);
+  const token = await registerAndLogin(handlers);
+  await handlers.redeemAccessCode({ sessionToken: token, body: { code: "TIO-ABCD-1234-WXYZ" } });
+
+  const created = await handlers.createTask({
+    sessionToken: token,
+    body: {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "AI resume optimizer",
+        targetUser: "job seekers",
+      },
+      interactionMode: "legacy",
+      providerMode: "platform",
+    },
+  });
+  const task = await repository.getCommercialTask((created.body as TaskBody).taskId);
+
+  assert.equal(created.status, 202);
+  assert.equal(task?.scenario, "side_hustle");
+  assert.deepEqual(JSON.parse(task?.userInput ?? ""), {
+    type: "side_hustle",
+    projectIdea: "AI resume optimizer",
+    targetUser: "job seekers",
+  });
+});
+
 test("task status, report, and cancel handlers use session user", async () => {
   const { repository, handlers, taskService } = createHarness();
   await seedAccessCode(repository);
@@ -297,10 +336,11 @@ test("task status, report, and cancel handlers use session user", async () => {
   assert.equal(status.status, 200);
   assert.equal(Object.hasOwn(status.body as object, "userInput"), false);
 
-  await taskService.markCompleted({ taskId, report: sampleReport });
+  await taskService.markCompleted({ taskId, report: { ...sampleSimulationResponse, id: taskId } });
   const report = await handlers.getTaskReport({ sessionToken: token, params: { taskId } });
   assert.equal(report.status, 200);
-  assert.equal((report.body as ReportBody).report.projectName, "Launch");
+  assert.equal((report.body as ReportBody).report.id, taskId);
+  assert.equal((report.body as ReportBody).report.report.projectName, "Launch");
 
   const cancelled = await handlers.cancelTask({ sessionToken: token, params: { taskId } });
   assert.equal(cancelled.status, 200);

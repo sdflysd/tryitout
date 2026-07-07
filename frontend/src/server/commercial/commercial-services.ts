@@ -120,6 +120,7 @@ function createRuntimeServices(input: {
     input.repository,
     creditService,
     input.queue,
+    { modelProviderService },
   );
   const apiServices: CommercialApiServices = {
     repository: input.repository,

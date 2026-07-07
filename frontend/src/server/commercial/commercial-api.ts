@@ -12,7 +12,7 @@ import { FeedbackServiceError, type FeedbackService } from "./feedback-service.j
 import type { ModelProviderService } from "./model-provider-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type { CommercialFeature, CommercialProviderMode, UserTier } from "../../contracts/commercial.js";
-import type { InteractionMode, SimulationType } from "../../types.js";
+import type { InteractionMode, SimulationType, UserInput } from "../../types.js";
 
 export interface CommercialApiServices {
   repository: CommercialRepository;
@@ -175,11 +175,12 @@ export function createCommercialApiHandlers(
         interactionMode?: InteractionMode;
         providerMode?: CommercialProviderMode;
       };
+      const normalizedInput = normalizeCommercialTaskInput(body?.userInput, body?.scenario);
       try {
         const result = await services.taskService.createTask({
           userId: user.id,
-          scenario: body?.scenario ?? "side_hustle",
-          userInput: String(body?.userInput ?? ""),
+          scenario: normalizedInput.scenario,
+          userInput: normalizedInput.userInput,
           interactionMode: body?.interactionMode ?? "legacy",
           providerMode: body?.providerMode ?? "platform",
         });
@@ -404,6 +405,36 @@ function requireParam(request: CommercialApiRequest, key: string): string {
     throw new CommercialSimulationTaskServiceError("missing_param", `Missing ${key}.`);
   }
   return value;
+}
+
+function normalizeCommercialTaskInput(
+  rawUserInput: unknown,
+  fallbackScenario: SimulationType | undefined,
+): { scenario: SimulationType; userInput: string } {
+  if (isUserInputLike(rawUserInput)) {
+    return {
+      scenario: rawUserInput.type,
+      userInput: JSON.stringify(rawUserInput),
+    };
+  }
+
+  return {
+    scenario: fallbackScenario ?? "side_hustle",
+    userInput: typeof rawUserInput === "string" ? rawUserInput : "",
+  };
+}
+
+function isUserInputLike(value: unknown): value is UserInput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (
+      (value as { type?: unknown }).type === "side_hustle" ||
+      (value as { type?: unknown }).type === "dating" ||
+      (value as { type?: unknown }).type === "life_choice"
+    )
+  );
 }
 
 function mapError(error: unknown): CommercialApiResponse<{ error: string }> {

@@ -10,7 +10,7 @@ import { ModelProviderService } from "./model-provider-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue, type EnqueueSimulationJobInput, type SimulationQueueJob } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
-import type { Report } from "../../types.js";
+import type { Report, SimulationApiResponse } from "../../types.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
 const masterKey = Buffer.alloc(32, 3).toString("base64");
@@ -35,6 +35,16 @@ const sampleReport: Report = {
   pivotSuggestions: [],
   actionPlan7Days: [{ day: 1, title: "Interview", action: "Talk to users" }],
   shouldDo: "test_small",
+};
+
+const sampleSimulationResponse: SimulationApiResponse = {
+  id: "task_1",
+  status: "completed",
+  agents: [],
+  stages: [],
+  report: sampleReport,
+  createdAt: now.toISOString(),
+  interactionModeUsed: "legacy",
 };
 
 class FailingQueue extends InMemorySimulationQueue {
@@ -223,6 +233,30 @@ test("completing and failing tasks settle held credits once without exposing use
 
   assert.equal((await repository.getCommercialTask(failedTask.taskId))?.errorCode, "provider_timeout");
   assert.equal((await repository.listLedgerEntriesForUser("user_1")).filter((entry) => entry.type === "release").length, 1);
+});
+
+test("completing a task can persist the full simulation response for report rendering", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await seedUser(repository);
+  const service = createService(repository);
+
+  const created = await service.createTask({
+    userId: "user_1",
+    scenario: "side_hustle",
+    userInput: "private launch details",
+    interactionMode: "legacy",
+    providerMode: "platform",
+  });
+
+  await service.markCompleted({
+    taskId: created.taskId,
+    report: { ...sampleSimulationResponse, id: created.taskId },
+  });
+
+  assert.deepEqual(await service.getReport(created.taskId, "user_1"), {
+    ...sampleSimulationResponse,
+    id: created.taskId,
+  });
 });
 
 test("retrying a failed task creates a new hold and queue job", async () => {

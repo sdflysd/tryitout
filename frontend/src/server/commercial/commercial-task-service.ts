@@ -5,7 +5,7 @@ import {
   hasCommercialFeature,
   type CommercialProviderMode,
 } from "../../contracts/commercial.js";
-import type { InteractionMode, Report, SimulationType } from "../../types.js";
+import type { Agent, InteractionMode, Report, SimulationApiResponse, SimulationStage, SimulationType } from "../../types.js";
 import type { CreditService } from "./credit-service.js";
 import { ModelProviderServiceError, type ModelProviderService } from "./model-provider-service.js";
 import type { CommercialRepository } from "./repository.js";
@@ -179,7 +179,7 @@ export class CommercialSimulationTaskService {
     return toStatusDto(updated);
   }
 
-  async markCompleted(input: { taskId: string; report: Report }): Promise<CommercialTaskStatusDto> {
+  async markCompleted(input: { taskId: string; report: Report | SimulationApiResponse }): Promise<CommercialTaskStatusDto> {
     const task = await this.requireTask(input.taskId);
     if (task.status === "completed") {
       return toStatusDto(task);
@@ -195,11 +195,12 @@ export class CommercialSimulationTaskService {
       idempotencyKey: `${task.id}:capture`,
     });
     const reportId = task.reportId ?? createId("report");
+    const publicReport = toSimulationApiResponse(task, input.report);
     await this.repository.saveSimulationReport({
       id: reportId,
       taskId: task.id,
       userId: task.userId,
-      report: input.report,
+      report: publicReport,
       createdAt: this.now(),
     });
 
@@ -283,7 +284,7 @@ export class CommercialSimulationTaskService {
     return toStatusDto(await this.requireTaskForUser(taskId, userId));
   }
 
-  async getReport(taskId: string, userId: string): Promise<Report | undefined> {
+  async getReport(taskId: string, userId: string): Promise<SimulationApiResponse | undefined> {
     await this.requireTaskForUser(taskId, userId);
     return (await this.repository.getSimulationReportForTask(taskId))?.report;
   }
@@ -328,6 +329,37 @@ export class CommercialSimulationTaskService {
     }
     return task;
   }
+}
+
+function toSimulationApiResponse(
+  task: CommercialSimulationTaskRecord,
+  report: Report | SimulationApiResponse,
+): SimulationApiResponse {
+  if (isSimulationApiResponse(report)) {
+    return report;
+  }
+
+  return {
+    id: task.id,
+    status: "completed",
+    agents: [],
+    stages: [],
+    report,
+    createdAt: task.createdAt.toISOString(),
+    interactionModeUsed: task.interactionMode,
+  };
+}
+
+function isSimulationApiResponse(value: Report | SimulationApiResponse): value is SimulationApiResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    (value as { status?: unknown }).status === "completed" &&
+    Array.isArray((value as { agents?: Agent[] }).agents) &&
+    Array.isArray((value as { stages?: SimulationStage[] }).stages) &&
+    typeof (value as { report?: unknown }).report === "object"
+  );
 }
 
 function toStatusDto(task: CommercialSimulationTaskRecord): CommercialTaskStatusDto {

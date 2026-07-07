@@ -4,7 +4,7 @@ import test from "node:test";
 import { runCommercialSimulationQueueJob } from "./simulation-worker.js";
 import { WeightedConcurrencyLimiter, type SimulationQueueJob } from "./simulation-queue.js";
 import type { CommercialTaskProviderRuntime, CommercialTaskStatusDto } from "./commercial-task-service.js";
-import type { Report } from "../../types.js";
+import type { Report, SimulationApiResponse } from "../../types.js";
 
 const sampleReport: Report = {
   projectName: "Launch",
@@ -28,6 +28,16 @@ const sampleReport: Report = {
   shouldDo: "test_small",
 };
 
+const sampleSimulationResponse: SimulationApiResponse = {
+  id: "task_1",
+  status: "completed",
+  agents: [],
+  stages: [],
+  report: sampleReport,
+  createdAt: "2026-07-06T12:00:00.000Z",
+  interactionModeUsed: "legacy",
+};
+
 class FakeTaskService {
   calls: string[] = [];
   completedCount = 0;
@@ -38,8 +48,8 @@ class FakeTaskService {
     return status(taskId, "running");
   }
 
-  async markCompleted(input: { taskId: string; report: Report }): Promise<CommercialTaskStatusDto> {
-    this.calls.push(`completed:${input.taskId}:${input.report.projectName}`);
+  async markCompleted(input: { taskId: string; report: SimulationApiResponse }): Promise<CommercialTaskStatusDto> {
+    this.calls.push(`completed:${input.taskId}:${input.report.report.projectName}`);
     this.completedCount += 1;
     return status(input.taskId, "completed");
   }
@@ -87,7 +97,7 @@ test("worker claims a job only when weighted limiter has capacity", async () => 
     job: job(1),
     taskService,
     limiter,
-    runSimulation: async () => sampleReport,
+    runSimulation: async () => sampleSimulationResponse,
   });
 
   assert.equal(result.status, "deferred");
@@ -105,7 +115,7 @@ test("worker marks task running before calling simulation and completes on succe
     limiter,
     runSimulation: async () => {
       calls.push("simulation");
-      return sampleReport;
+      return sampleSimulationResponse;
     },
   });
 
@@ -132,7 +142,7 @@ test("worker passes BYOK provider runtime to simulation execution", async () => 
     limiter,
     runSimulation: async (_job, providerRuntime) => {
       seenProviders.push(providerRuntime);
-      return sampleReport;
+      return sampleSimulationResponse;
     },
   });
 
@@ -151,7 +161,7 @@ test("worker marks failed when BYOK provider resolution fails", async () => {
     job: job(1),
     taskService,
     limiter,
-    runSimulation: async () => sampleReport,
+    runSimulation: async () => sampleSimulationResponse,
   });
 
   assert.equal(result.status, "failed");
@@ -201,13 +211,13 @@ test("worker retry of same completed task does not double-capture credits", asyn
     job: job(1),
     taskService,
     limiter,
-    runSimulation: async () => sampleReport,
+    runSimulation: async () => sampleSimulationResponse,
   });
   await runCommercialSimulationQueueJob({
     job: job(1),
     taskService,
     limiter,
-    runSimulation: async () => sampleReport,
+    runSimulation: async () => sampleSimulationResponse,
   });
 
   assert.equal(taskService.completedCount, 2);

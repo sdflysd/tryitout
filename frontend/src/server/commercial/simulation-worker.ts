@@ -1,10 +1,10 @@
-import type { Report } from "../../types.js";
+import type { SimulationApiResponse } from "../../types.js";
 import type { CommercialTaskProviderRuntime, CommercialTaskStatusDto } from "./commercial-task-service.js";
 import type { SimulationQueueJob, WeightedConcurrencyLimiter } from "./simulation-queue.js";
 
 export interface CommercialSimulationWorkerTaskService {
   markRunning(taskId: string): Promise<CommercialTaskStatusDto>;
-  markCompleted(input: { taskId: string; report: Report }): Promise<CommercialTaskStatusDto>;
+  markCompleted(input: { taskId: string; report: SimulationApiResponse }): Promise<CommercialTaskStatusDto>;
   markFailed(input: { taskId: string; errorCode: string }): Promise<CommercialTaskStatusDto>;
   resolveProviderForTask(taskId: string): Promise<CommercialTaskProviderRuntime>;
 }
@@ -16,12 +16,12 @@ export interface RunCommercialSimulationQueueJobInput {
   runSimulation: (
     job: SimulationQueueJob,
     providerRuntime: CommercialTaskProviderRuntime,
-  ) => Promise<Report>;
+  ) => Promise<SimulationApiResponse>;
 }
 
 export type CommercialSimulationWorkerResult =
   | { status: "deferred"; taskId: string }
-  | { status: "completed"; taskId: string; report: Report }
+  | { status: "completed"; taskId: string; report: SimulationApiResponse }
   | { status: "failed"; taskId: string; errorCode: string };
 
 export async function runCommercialSimulationQueueJob(

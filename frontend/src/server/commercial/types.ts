@@ -6,7 +6,7 @@ import type {
   CreditLedgerEntryType,
   UserTier,
 } from "../../contracts/commercial.js";
-import type { InteractionMode, Report, SimulationType } from "../../types.js";
+import type { InteractionMode, SimulationApiResponse, SimulationType } from "../../types.js";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -99,7 +99,7 @@ export interface SimulationReportRecord {
   id: string;
   taskId: string;
   userId: string;
-  report: Report;
+  report: SimulationApiResponse;
   createdAt: Date;
 }
 

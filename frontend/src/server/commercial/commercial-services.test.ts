@@ -14,6 +14,7 @@ import { CreditService } from "./credit-service.js";
 import { FeedbackService } from "./feedback-service.js";
 import { ModelProviderService } from "./model-provider-service.js";
 import { PostgresCommercialRepository, type QueryClient } from "./postgres-repository.js";
+import { encryptSecret } from "./secrets.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 
 const completeEnv = {
@@ -72,6 +73,70 @@ test("commercial service factory builds Postgres, BullMQ, auth, credit, and task
   assert.ok(services.analyticsService instanceof AnalyticsService);
   assert.ok(services.feedbackService instanceof FeedbackService);
   assert.ok(services.modelProviderService instanceof ModelProviderService);
+});
+
+test("commercial task service receives the model provider resolver from the factory", async () => {
+  const resolvedProvider = {
+    provider: "openai_compatible" as const,
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    apiKey: "sk-user-secret",
+  };
+  const services = createCommercialServices({
+    env: completeEnv,
+    createQueryClient: () =>
+      ({
+        async query<T = unknown>(sql: string): Promise<{ rows: T[] }> {
+          if (sql.includes("FROM simulation_tasks")) {
+            return {
+              rows: [
+                {
+                  id: "task_1",
+                  user_id: "user_1",
+                  status: "queued",
+                  scenario: "side_hustle",
+                  user_input: "launch",
+                  interaction_mode: "legacy",
+                  provider_mode: "byok",
+                  credit_cost: 1,
+                  credit_hold_ledger_entry_id: "ledger_hold",
+                  credit_captured_ledger_entry_id: null,
+                  credit_released_ledger_entry_id: null,
+                  queue_job_id: "task_1",
+                  report_id: null,
+                  error_code: null,
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              ] as T[],
+            };
+          }
+          if (sql.includes("FROM user_model_providers")) {
+            return {
+              rows: [
+                {
+                  id: "provider_1",
+                  user_id: "user_1",
+                  provider_type: resolvedProvider.provider,
+                  base_url: resolvedProvider.baseUrl,
+                  encrypted_api_key: encryptSecret(resolvedProvider.apiKey, completeEnv.USER_SECRET_ENCRYPTION_KEY),
+                  model_name: resolvedProvider.model,
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              ] as T[],
+            };
+          }
+          return { rows: [] };
+        },
+      }) as QueryClient,
+    createRedisConnection: (redisUrl) => ({ url: redisUrl }),
+    QueueCtor: InMemoryQueueLike,
+  });
+
+  const provider = await services?.taskService.resolveProviderForTask("task_1");
+
+  assert.deepEqual(provider, { providerMode: "byok", ...resolvedProvider });
 });
 
 class InMemoryQueueLike {

@@ -7,7 +7,7 @@ import {
 } from "./feedback-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import type { UserFeedbackRecord } from "./types.js";
-import type { Report } from "../../types.js";
+import type { Report, SimulationApiResponse } from "../../types.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
 const sampleReport: Report = {
@@ -30,6 +30,16 @@ const sampleReport: Report = {
   pivotSuggestions: [],
   actionPlan7Days: [{ day: 1, title: "Interview", action: "Talk to users" }],
   shouldDo: "test_small",
+};
+
+const sampleSimulationResponse: SimulationApiResponse = {
+  id: "task_1",
+  status: "completed",
+  agents: [],
+  stages: [],
+  report: sampleReport,
+  createdAt: now.toISOString(),
+  interactionModeUsed: "legacy",
 };
 
 class CapturingRepository extends InMemoryCommercialRepository {
@@ -81,7 +91,7 @@ async function seedCompletedTask(
     id: reportId,
     taskId,
     userId,
-    report: sampleReport,
+    report: { ...sampleSimulationResponse, id: taskId },
     createdAt: now,
   });
 }
