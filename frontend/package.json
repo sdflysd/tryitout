@@ -11,7 +11,9 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\""
+    "test": "tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\" \"scripts/**/*.test.ts\"",
+    "seed:admin": "tsx scripts/seed-admin.ts",
+    "export:access-codes": "tsx scripts/export-access-code-batch.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
