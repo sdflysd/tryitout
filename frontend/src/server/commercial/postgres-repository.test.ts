@@ -1108,6 +1108,87 @@ test("postgres repository maps getCommercialTask row to record", async () => {
   });
 });
 
+test("postgres repository finds active commercial task by user id", async () => {
+  const queries: QueryLog[] = [];
+  const repo = new PostgresCommercialRepository({
+    query: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return {
+        rows: [
+          {
+            id: "task_1",
+            user_id: "user_1",
+            scenario_type: "life_choice",
+            interaction_mode: "enabled",
+            provider_mode: "platform",
+            status: "running",
+            credit_cost: "3",
+            credit_hold_ledger_id: null,
+            priority: "5",
+            queue_weight: "3",
+            idempotency_key: "task_key_1",
+            input_summary: { brief: "summary" },
+            error_code: null,
+            queued_at: "queued",
+            started_at: "started",
+            completed_at: null,
+            created_at: "created",
+            updated_at: "updated",
+          } as T,
+        ],
+      };
+    },
+  });
+
+  const result = await repo.findActiveCommercialTaskByUserId("user_1");
+
+  assert.equal(result?.id, "task_1");
+  assert.match(queries[0].sql, /from simulation_tasks/i);
+  assert.match(queries[0].sql, /status in \('queued', 'running'\)/i);
+  assert.match(queries[0].sql, /order by queued_at asc, created_at asc/i);
+  assert.deepEqual(queries[0].params, ["user_1"]);
+});
+
+test("postgres repository finds commercial task by idempotency key", async () => {
+  const queries: QueryLog[] = [];
+  const repo = new PostgresCommercialRepository({
+    query: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return {
+        rows: [
+          {
+            id: "task_1",
+            user_id: "user_1",
+            scenario_type: "life_choice",
+            interaction_mode: "enabled",
+            provider_mode: "platform",
+            status: "queued",
+            credit_cost: "3",
+            credit_hold_ledger_id: null,
+            priority: "0",
+            queue_weight: "3",
+            idempotency_key: "task-key-1",
+            input_summary: {},
+            error_code: null,
+            queued_at: "queued",
+            started_at: null,
+            completed_at: null,
+            created_at: "created",
+            updated_at: "updated",
+          } as T,
+        ],
+      };
+    },
+  });
+
+  const result = await repo.findCommercialTaskByIdempotencyKey("task-key-1");
+
+  assert.equal(result?.id, "task_1");
+  assert.match(queries[0].sql, /from simulation_tasks/i);
+  assert.match(queries[0].sql, /where idempotency_key = \$1/i);
+  assert.deepEqual(queries[0].params, ["task-key-1"]);
+});
+
 test("postgres repository maps appendAdminAuditLog actorUserId to actor_user_id", async () => {
   const queries: Array<{ sql: string; params?: unknown[] }> = [];
   const repo = new PostgresCommercialRepository({

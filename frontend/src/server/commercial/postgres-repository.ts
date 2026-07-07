@@ -1397,6 +1397,45 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCommercialTask);
   }
 
+  async findCommercialTaskByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, user_id, scenario_type, interaction_mode, provider_mode, status,
+          credit_cost, credit_hold_ledger_id, priority, queue_weight,
+          idempotency_key, input_summary, error_code, queued_at, started_at,
+          completed_at, created_at, updated_at
+        from simulation_tasks
+        where idempotency_key = $1
+      `,
+      [idempotencyKey],
+    );
+    return mapOptional(rows[0], mapCommercialTask);
+  }
+
+  async findActiveCommercialTaskByUserId(
+    userId: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, user_id, scenario_type, interaction_mode, provider_mode, status,
+          credit_cost, credit_hold_ledger_id, priority, queue_weight,
+          idempotency_key, input_summary, error_code, queued_at, started_at,
+          completed_at, created_at, updated_at
+        from simulation_tasks
+        where user_id = $1
+          and status in ('queued', 'running')
+        order by queued_at asc, created_at asc
+        limit 1
+      `,
+      [userId],
+    );
+    return mapOptional(rows[0], mapCommercialTask);
+  }
+
   async appendSimulationTaskRun(
     run: SimulationTaskRunRecord,
   ): Promise<void> {

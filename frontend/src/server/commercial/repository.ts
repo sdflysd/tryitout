@@ -134,6 +134,12 @@ export interface CommercialRepository {
   getCommercialTask(
     taskId: string,
   ): Promise<CommercialSimulationTaskRecord | undefined>;
+  findCommercialTaskByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined>;
+  findActiveCommercialTaskByUserId(
+    userId: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined>;
   appendSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void>;
   listSimulationTaskRuns(taskId: string): Promise<SimulationTaskRunRecord[]>;
   appendSimulationStepRunCost(run: SimulationStepRunCostRecord): Promise<void>;
@@ -793,6 +799,33 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     taskId: string,
   ): Promise<CommercialSimulationTaskRecord | undefined> {
     return this.commercialTasks.get(taskId);
+  }
+
+  async findCommercialTaskByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined> {
+    return [...this.commercialTasks.values()].find(
+      (task) => task.idempotencyKey === idempotencyKey,
+    );
+  }
+
+  async findActiveCommercialTaskByUserId(
+    userId: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined> {
+    return [...this.commercialTasks.values()]
+      .filter(
+        (task) =>
+          task.userId === userId &&
+          (task.status === "queued" || task.status === "running"),
+      )
+      .sort((left, right) => {
+        const leftQueuedAt = left.queuedAt ?? left.createdAt;
+        const rightQueuedAt = right.queuedAt ?? right.createdAt;
+        if (leftQueuedAt !== rightQueuedAt) {
+          return leftQueuedAt.localeCompare(rightQueuedAt);
+        }
+        return left.createdAt.localeCompare(right.createdAt);
+      })[0];
   }
 
   async appendSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void> {

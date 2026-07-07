@@ -162,6 +162,37 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   assert.equal((await repo.listAdminAuditLogs()).length, 1);
 });
 
+test("repository finds a user's active queued or running commercial task", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCommercialTask(makeTask({ id: "completed", status: "completed" }));
+  await repo.saveCommercialTask(makeTask({ id: "queued", status: "queued" }));
+  await repo.saveCommercialTask(makeTask({ id: "running", status: "running" }));
+  await repo.saveCommercialTask(makeTask({ id: "other_user", userId: "user_2", status: "queued" }));
+
+  assert.equal(
+    (await repo.findActiveCommercialTaskByUserId("user_1"))?.id,
+    "queued",
+  );
+  assert.equal(
+    await repo.findActiveCommercialTaskByUserId("missing_user"),
+    undefined,
+  );
+});
+
+test("repository finds commercial tasks by idempotency key", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCommercialTask(makeTask({ id: "task_1", idempotencyKey: "task-key-1" }));
+
+  assert.equal(
+    (await repo.findCommercialTaskByIdempotencyKey("task-key-1"))?.id,
+    "task_1",
+  );
+  assert.equal(
+    await repo.findCommercialTaskByIdempotencyKey("missing-key"),
+    undefined,
+  );
+});
+
 test("repository rejects unknown admin audit actions before storing", async () => {
   const repo = new InMemoryCommercialRepository();
 
