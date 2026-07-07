@@ -1,6 +1,6 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent, type ReactElement } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, KeyRound, LogIn, LogOut, ShieldCheck, Sparkles, UserPlus, WalletCards } from "lucide-react";
+import { Flame, KeyRound, LogIn, LogOut, Sparkles, UserPlus, WalletCards } from "lucide-react";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import HomeView from "./components/HomeView";
@@ -142,6 +142,7 @@ export default function App({
   const [accessCode, setAccessCode] = useState("");
   const [commercialMessage, setCommercialMessage] = useState("");
   const [commercialAuthMode, setCommercialAuthMode] = useState<"login" | "register">("login");
+  const [showCommercialAuth, setShowCommercialAuth] = useState(false);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
     deepModeRequested: boolean;
@@ -434,6 +435,12 @@ export default function App({
   };
 
   const handleSubmitSimulation = (input: UserInput) => {
+    if (commercialMode && !commercialUser) {
+      setCommercialMessage(getCommercialLoginRequiredMessage());
+      setCommercialAuthMode("login");
+      setShowCommercialAuth(true);
+      return;
+    }
     if (commercialMode && creditBalance < requiredCredits) {
       setErrorMsg("insufficient_credits");
       return;
@@ -459,6 +466,7 @@ export default function App({
       const credits = await getCommercialCredits();
       setCreditBalance(credits.balance);
       setCommercialPassword("");
+      setShowCommercialAuth(false);
       setCommercialMessage(mode === "login" ? "登录成功。" : "注册成功。");
     } catch (error) {
       setCommercialMessage(formatCommercialAuthMessage(error instanceof Error ? error.message : "auth_failed"));
@@ -482,6 +490,7 @@ export default function App({
     await logoutCommercialUser();
     setCommercialUser(undefined);
     setCreditBalance(0);
+    setShowCommercialAuth(false);
   };
 
   const requiredCredits = getSimulationCreditCost({
@@ -541,7 +550,7 @@ export default function App({
         </div>
       </header>
 
-      {commercialMode && !commercialUser && (
+      {commercialMode && !commercialUser && showCommercialAuth && (
         <CommercialAuthScreen
           email={commercialEmail}
           password={commercialPassword}
@@ -555,6 +564,29 @@ export default function App({
           }}
           onSubmit={(mode) => void handleCommercialAuth(mode)}
         />
+      )}
+
+      {commercialMode && !commercialUser && !showCommercialAuth && (
+        <section className="border-b border-white/10 bg-[#0a0f1f] px-4 py-3 text-white" aria-label="访客商用入口">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs font-semibold text-white/62">
+              可先浏览示例与页面；开始使用沙盘时需要登录。
+            </div>
+            <button
+              id="commercial-login-entry"
+              type="button"
+              onClick={() => {
+                setCommercialAuthMode("login");
+                setCommercialMessage("");
+                setShowCommercialAuth(true);
+              }}
+              className="inline-flex min-h-9 w-fit items-center gap-2 rounded-md border border-amber-300/30 bg-amber-300 px-3 text-xs font-black text-slate-950 transition-colors hover:bg-amber-200"
+            >
+              <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>登录</span>
+            </button>
+          </div>
+        </section>
       )}
 
       {commercialMode && commercialUser && (
@@ -613,7 +645,7 @@ export default function App({
       )}
 
       {/* Main Container */}
-      {(!commercialMode || commercialUser) && (
+      {(!commercialMode || commercialUser || !showCommercialAuth) && (
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
         <AnimatePresence mode="wait">
           {view === "home" && (
@@ -779,18 +811,6 @@ function CommercialAuthScreen({
       aria-label="TryItOut 商用版认证"
     >
       <section className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-amber-200/20 bg-white/8 text-amber-300">
-            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <h1 className="mt-4 text-2xl font-black leading-tight text-white md:text-3xl">
-            欢迎使用 TryItOut 商用版
-          </h1>
-          <p className="mt-2 text-sm font-semibold leading-6 text-white/58">
-            登录后进入积分沙盘、任务队列和管理员工作台。
-          </p>
-        </div>
-
         <form
           className="rounded-md border border-white/12 bg-[#111622] p-6 shadow-2xl shadow-black/24"
           onSubmit={(event) => {
@@ -825,9 +845,6 @@ function CommercialAuthScreen({
 
           <div className="mt-5">
             <h2 className="text-lg font-black text-white">{isLogin ? "账号登录" : "注册新账号"}</h2>
-            <p className="mt-1 text-xs font-semibold leading-5 text-white/54">
-              {isLogin ? "使用已开通的商用账号进入工作台。" : "创建账号后可通过兑换码激活积分。"}
-            </p>
           </div>
 
           <label className="mt-5 block text-xs font-bold text-white/70" htmlFor="commercial-email">
@@ -859,24 +876,13 @@ function CommercialAuthScreen({
             className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-amber-300 px-4 text-sm font-black text-slate-950 transition-colors hover:bg-amber-200"
           >
             {isLogin ? <LogIn className="h-4 w-4" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
-            <span>{isLogin ? "进入工作台" : "创建并进入"}</span>
+            <span>{isLogin ? "登录" : "注册"}</span>
           </button>
           {message && (
             <div className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold leading-5 text-amber-100" aria-live="polite">
               {message}
             </div>
           )}
-
-          <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-xs font-semibold text-white/54 sm:grid-cols-2">
-            <div>
-              <div className="font-black text-white/78">账号安全</div>
-              <div className="mt-1">会话 Cookie 仅服务端可读。</div>
-            </div>
-            <div>
-              <div className="font-black text-white/78">服务状态</div>
-              <div className="mt-1">积分、任务和审计记录实时同步。</div>
-            </div>
-          </div>
         </form>
       </section>
     </main>
@@ -893,6 +899,25 @@ export function formatCommercialAuthMessage(message: string): string {
     invalid_email: "请输入有效邮箱地址。",
   };
   return labels[message] ?? message;
+}
+
+export function getCommercialLoginRequiredMessage(): string {
+  return "请先登录后再开始使用。";
+}
+
+export function renderCommercialAuthForTest(): ReactElement {
+  return (
+    <CommercialAuthScreen
+      email=""
+      password=""
+      message=""
+      mode="login"
+      onEmailChange={() => undefined}
+      onPasswordChange={() => undefined}
+      onModeChange={() => undefined}
+      onSubmit={() => undefined}
+    />
+  );
 }
 
 function isCommercialClientModeEnabled(): boolean {

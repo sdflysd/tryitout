@@ -27,28 +27,43 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
-test("commercial mode renders a dedicated Chinese auth screen when signed out", async () => {
+test("commercial mode lets signed-out visitors browse with a login entry", async () => {
   const { default: App } = await import("./App.js");
   const html = renderToStaticMarkup(<App commercialMode />);
 
+  assert.match(html, /id="app-main-content"/);
+  assert.match(html, /id="commercial-login-entry"/);
+  assert.match(html, /登录/);
+  assert.doesNotMatch(html, /id="commercial-account-bar"/);
+  assert.doesNotMatch(html, /id="commercial-auth-screen"/);
+  assert.doesNotMatch(html, /欢迎使用 TryItOut 商用版/);
+  assert.doesNotMatch(html, /账号安全/);
+  assert.doesNotMatch(html, /服务状态/);
+  assert.doesNotMatch(html, /进入工作台/);
+});
+
+test("commercial auth screen uses concise login copy without extra red-box text", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    renderCommercialAuthForTest?: () => React.ReactElement;
+  };
+  assert.ok(appModule.renderCommercialAuthForTest);
+
+  const html = renderToStaticMarkup(appModule.renderCommercialAuthForTest());
+
   assert.match(html, /id="commercial-auth-screen"/);
-  assert.match(html, /欢迎使用 TryItOut 商用版/);
   assert.match(html, /安全登录/);
   assert.match(html, /创建账号/);
-  assert.match(html, /账号安全/);
-  assert.match(html, /服务状态/);
-  assert.match(html, /邮箱/);
-  assert.match(html, /密码/);
-  assert.match(html, /进入工作台/);
-  assert.doesNotMatch(html, /id="commercial-account-bar"/);
-  assert.doesNotMatch(html, /Commercial account/);
-  assert.doesNotMatch(html, /本机商用测试模式/);
-  assert.doesNotMatch(html, /Postgres 与 Redis/);
+  assert.match(html, />登录</);
+  assert.doesNotMatch(html, /进入工作台/);
+  assert.doesNotMatch(html, /账号安全/);
+  assert.doesNotMatch(html, /服务状态/);
+  assert.doesNotMatch(html, /登录后进入/);
 });
 
 test("commercial auth errors are shown as product-grade Chinese copy", async () => {
   const appModule = await import("./App.js") as typeof import("./App.js") & {
     formatCommercialAuthMessage?: (message: string) => string;
+    getCommercialLoginRequiredMessage?: () => string;
   };
 
   assert.equal(
@@ -62,6 +77,10 @@ test("commercial auth errors are shown as product-grade Chinese copy", async () 
   assert.equal(
     appModule.formatCommercialAuthMessage?.("auth_failed"),
     "认证失败，请稍后重试。",
+  );
+  assert.equal(
+    appModule.getCommercialLoginRequiredMessage?.(),
+    "请先登录后再开始使用。",
   );
 });
 
