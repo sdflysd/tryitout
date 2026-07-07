@@ -162,6 +162,36 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   assert.equal((await repo.listAdminAuditLogs()).length, 1);
 });
 
+test("repository saves simulation task runs by id", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveSimulationTaskRun({
+    id: "run_1",
+    taskId: "task_1",
+    attempt: 1,
+    status: "running",
+    startedAt: "started",
+  });
+  await repo.saveSimulationTaskRun({
+    id: "run_1",
+    taskId: "task_1",
+    attempt: 1,
+    status: "completed",
+    startedAt: "started",
+    completedAt: "completed",
+  });
+
+  assert.deepEqual(await repo.listSimulationTaskRuns("task_1"), [
+    {
+      id: "run_1",
+      taskId: "task_1",
+      attempt: 1,
+      status: "completed",
+      startedAt: "started",
+      completedAt: "completed",
+    },
+  ]);
+});
+
 test("repository finds a user's active queued or running commercial task", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCommercialTask(makeTask({ id: "completed", status: "completed" }));

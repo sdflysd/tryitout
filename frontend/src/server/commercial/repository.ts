@@ -140,6 +140,7 @@ export interface CommercialRepository {
   findActiveCommercialTaskByUserId(
     userId: string,
   ): Promise<CommercialSimulationTaskRecord | undefined>;
+  saveSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void>;
   appendSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void>;
   listSimulationTaskRuns(taskId: string): Promise<SimulationTaskRunRecord[]>;
   appendSimulationStepRunCost(run: SimulationStepRunCostRecord): Promise<void>;
@@ -830,6 +831,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async appendSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void> {
     appendById(this.taskRuns, run, "simulation_task_runs.id");
+  }
+
+  async saveSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void> {
+    upsertById(this.taskRuns, run);
   }
 
   async listSimulationTaskRuns(

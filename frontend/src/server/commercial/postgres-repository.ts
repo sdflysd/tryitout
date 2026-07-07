@@ -1461,6 +1461,40 @@ export class PostgresCommercialRepository implements CommercialRepository {
     );
   }
 
+  async saveSimulationTaskRun(
+    run: SimulationTaskRunRecord,
+  ): Promise<void> {
+    await this.query(
+      `
+        insert into simulation_task_runs (
+          id, task_id, worker_id, attempt, status, error_code, started_at,
+          completed_at, metadata
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        on conflict (id) do update set
+          task_id = excluded.task_id,
+          worker_id = excluded.worker_id,
+          attempt = excluded.attempt,
+          status = excluded.status,
+          error_code = excluded.error_code,
+          started_at = excluded.started_at,
+          completed_at = excluded.completed_at,
+          metadata = excluded.metadata
+      `,
+      [
+        run.id,
+        run.taskId,
+        run.workerId ?? null,
+        run.attempt ?? 1,
+        run.status,
+        run.errorCode ?? null,
+        run.startedAt,
+        run.completedAt ?? null,
+        toJsonb(run.metadata ?? {}),
+      ],
+    );
+  }
+
   async listSimulationTaskRuns(
     taskId: string,
   ): Promise<SimulationTaskRunRecord[]> {

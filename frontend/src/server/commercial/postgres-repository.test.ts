@@ -1295,6 +1295,36 @@ test("postgres repository supplies defaults for not-null optional fields", async
   assert.equal(queries[3].params?.[16], 0);
 });
 
+test("postgres repository saves simulation task runs by id", async () => {
+  const { repo, queries } = createCapturingRepository();
+
+  await repo.saveSimulationTaskRun({
+    id: "run_1",
+    taskId: "task_1",
+    workerId: "worker_1",
+    attempt: 1,
+    status: "completed",
+    errorCode: "none",
+    startedAt: "started",
+    completedAt: "completed",
+    metadata: { source: "worker" },
+  });
+
+  assert.match(queries[0].sql, /insert into simulation_task_runs/i);
+  assert.match(queries[0].sql, /on conflict \(id\) do update/i);
+  assert.deepEqual(queries[0].params, [
+    "run_1",
+    "task_1",
+    "worker_1",
+    1,
+    "completed",
+    "none",
+    "started",
+    "completed",
+    JSON.stringify({ source: "worker" }),
+  ]);
+});
+
 test("postgres repository rejects rows missing required columns", async () => {
   const { repo } = createRowRepository([
     {
