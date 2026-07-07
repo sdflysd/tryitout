@@ -37,8 +37,24 @@ test("commercial constants expose platform account, credit, task, and audit stat
     "cancelled",
     "refunded",
   ]);
-  assert.ok(ADMIN_AUDIT_ACTIONS.includes("access_code_batch_created"));
-  assert.ok(ADMIN_AUDIT_ACTIONS.includes("access_code_batch_disabled"));
+  assert.deepEqual(ADMIN_AUDIT_ACTIONS, [
+    "access_code_batch_created",
+    "access_code_batch_disabled",
+    "access_code_batch_exported",
+    "access_code_disabled",
+    "user_credit_adjusted",
+    "credits_adjusted",
+    "task_refunded",
+    "task_retried",
+    "task_cancelled",
+    "user_disabled",
+    "user_restored",
+    "user_tier_changed",
+    "sensitive_report_viewed",
+    "system_setting_updated",
+    "queue_paused",
+    "queue_resumed",
+  ]);
 });
 
 test("simulation credit costs distinguish platform and BYOK deep mode", () => {

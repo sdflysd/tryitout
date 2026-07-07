@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PostgresCommercialRepository } from "./postgres-repository.js";
-import type { CommercialSimulationReportRecord } from "./types.js";
+import type {
+  AdminAuditLogRecord,
+  CommercialSimulationReportRecord,
+} from "./types.js";
 
 type QueryLog = { sql: string; params?: unknown[] };
 
@@ -1134,6 +1137,30 @@ test("postgres repository maps appendAdminAuditLog actorUserId to actor_user_id"
     "admin_1",
     "credits_adjusted",
   ]);
+});
+
+test("postgres repository rejects unknown admin audit actions before querying", async () => {
+  const queries: QueryLog[] = [];
+  const repo = new PostgresCommercialRepository({
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [] };
+    },
+  });
+
+  await assert.rejects(
+    repo.appendAdminAuditLog({
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "billing_plan_deleted",
+      targetType: "billing_plan",
+      targetId: "plan_1",
+      metadata: {},
+      createdAt: "now",
+    } as unknown as AdminAuditLogRecord),
+    /admin_audit_logs\.action/,
+  );
+  assert.deepEqual(queries, []);
 });
 
 test("postgres repository supplies defaults for not-null optional fields", async () => {

@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import {
+  ADMIN_AUDIT_ACTIONS,
+  type AdminAuditAction,
+} from "../../contracts/commercial.js";
 import type {
   AccessCodeBatchRecord,
   AccessCodeRecord,
@@ -1739,6 +1743,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async appendAdminAuditLog(log: AdminAuditLogRecord): Promise<void> {
+    assertAdminAuditAction(log.action);
     await this.query(
       `
         insert into admin_audit_logs (
@@ -1903,6 +1908,12 @@ function linkMetadata(
     ...(metadata ?? {}),
     ...linkage,
   };
+}
+
+function assertAdminAuditAction(action: string): asserts action is AdminAuditAction {
+  if (!ADMIN_AUDIT_ACTIONS.includes(action as AdminAuditAction)) {
+    throw new Error("admin_audit_logs.action must be known");
+  }
 }
 
 function toAccessCodeJson(code: AccessCodeRecord): JsonObject {
@@ -2520,9 +2531,11 @@ function mapSystemSetting(row: DbRow): SystemSettingRecord {
 
 function mapAdminAuditLog(row: DbRow): AdminAuditLogRecord {
   const table = "admin_audit_logs";
+  const action = stringField(row, "action", table);
+  assertAdminAuditAction(action);
   const record: AdminAuditLogRecord = {
     id: stringField(row, "id", table),
-    action: stringField(row, "action", table),
+    action,
     targetType: stringField(row, "target_type", table),
     metadata: jsonObjectField(row, "metadata", table),
     createdAt: timestampField(row, "created_at", table),

@@ -44,10 +44,20 @@ export interface AppendAdminAuditInput {
 const AUDIT_TARGET_TYPES: Record<AdminAuditAction, string> = {
   access_code_batch_created: "access_code_batch",
   access_code_batch_disabled: "access_code_batch",
+  access_code_batch_exported: "access_code_batch",
   access_code_disabled: "access_code",
+  user_credit_adjusted: "user",
   credits_adjusted: "user",
   task_refunded: "task",
+  task_retried: "task",
+  task_cancelled: "task",
+  user_disabled: "user",
+  user_restored: "user",
   user_tier_changed: "user",
+  sensitive_report_viewed: "report",
+  system_setting_updated: "system_setting",
+  queue_paused: "queue",
+  queue_resumed: "queue",
 };
 
 export class AdminAuditService {
@@ -66,7 +76,7 @@ export class AdminAuditService {
     const action = assertAuditAction(input.action);
     const actorUserId = requireTrimmed(input.actorUserId, "Actor user id");
     const targetType = requireTrimmed(input.targetType, "Target type");
-    const targetId = optionalTrimmed(input.targetId);
+    const targetId = requireTrimmed(input.targetId ?? "", "Target id");
     const ipHash = optionalTrimmed(input.ipHash);
     const userAgent = optionalTrimmed(input.userAgent);
 
@@ -82,8 +92,8 @@ export class AdminAuditService {
       actorUserId,
       action,
       targetType,
-      ...(targetId !== undefined ? { targetId } : {}),
-      metadata: { ...(input.metadata ?? {}) },
+      targetId,
+      metadata: cloneJsonObject(input.metadata ?? {}),
       ...(ipHash !== undefined ? { ipHash } : {}),
       ...(userAgent !== undefined ? { userAgent } : {}),
       createdAt: this.currentDate().toISOString(),
@@ -126,4 +136,8 @@ function optionalTrimmed(value: string | undefined): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function cloneJsonObject(metadata: JsonObject): JsonObject {
+  return JSON.parse(JSON.stringify(metadata)) as JsonObject;
 }

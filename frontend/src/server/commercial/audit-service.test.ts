@@ -87,7 +87,12 @@ test("appends audit log for credit adjustment", async () => {
 
 test("captures actor, target, request context, and copies metadata", async () => {
   const { repo, service } = createScenario();
-  const metadata = { reason: "support_refund", amount: 4 };
+  const metadata = {
+    reason: "support_refund",
+    amount: 4,
+    steps: ["capture", "refund"],
+    nested: { source: "support" },
+  };
 
   const log = await service.append({
     actorUserId: " owner_1 ",
@@ -99,6 +104,8 @@ test("captures actor, target, request context, and copies metadata", async () =>
     userAgent: " SupportDesk/2.0 ",
   });
   metadata.reason = "mutated_after_append";
+  metadata.steps.push("mutated");
+  metadata.nested.source = "mutated";
 
   assert.deepEqual(log, {
     id: "admin_audit_log_1",
@@ -109,12 +116,30 @@ test("captures actor, target, request context, and copies metadata", async () =>
     metadata: {
       reason: "support_refund",
       amount: 4,
+      steps: ["capture", "refund"],
+      nested: { source: "support" },
     },
     ipHash: "ip_hash_3",
     userAgent: "SupportDesk/2.0",
     createdAt: CREATED_AT,
   });
   assert.deepEqual((await repo.listAdminAuditLogs())[0], log);
+});
+
+test("supports all database-backed audit actions", async () => {
+  const { service } = createScenario();
+
+  const log = await service.append({
+    actorUserId: "owner_1",
+    action: "system_setting_updated",
+    targetType: "system_setting",
+    targetId: "commercial.queue.paused",
+    metadata: { previousValue: false, nextValue: true },
+  });
+
+  assert.equal(log.action, "system_setting_updated");
+  assert.equal(assertAuditAction("access_code_batch_exported"), "access_code_batch_exported");
+  assert.equal(assertAuditAction("queue_paused"), "queue_paused");
 });
 
 test("rejects unknown audit actions", () => {
@@ -136,6 +161,20 @@ test("rejects target types that do not match the action contract", async () => {
       metadata: {},
     }),
     (error) => hasAuditCode(error, "invalid_audit_target"),
+  );
+});
+
+test("rejects missing audit target ids", async () => {
+  const { service } = createScenario();
+
+  await assert.rejects(
+    service.append({
+      actorUserId: "admin_1",
+      action: "credits_adjusted",
+      targetType: "user",
+      metadata: {},
+    }),
+    (error) => hasAuditCode(error, "invalid_audit_input"),
   );
 });
 

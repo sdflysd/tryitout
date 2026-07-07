@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { InMemoryCommercialRepository } from "./repository.js";
+import type { AdminAuditLogRecord } from "./types.js";
 
 test("repository finds users case-insensitively by email", async () => {
   const repo = new InMemoryCommercialRepository();
@@ -159,6 +160,24 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   assert.equal((await repo.findSessionByTokenHash("hash"))?.id, "sess_1");
   assert.equal((await repo.getCommercialTask("task_1"))?.status, "queued");
   assert.equal((await repo.listAdminAuditLogs()).length, 1);
+});
+
+test("repository rejects unknown admin audit actions before storing", async () => {
+  const repo = new InMemoryCommercialRepository();
+
+  await assert.rejects(
+    repo.appendAdminAuditLog({
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "billing_plan_deleted",
+      targetType: "billing_plan",
+      targetId: "plan_1",
+      metadata: {},
+      createdAt: "now",
+    } as unknown as AdminAuditLogRecord),
+    /admin_audit_logs\.action/,
+  );
+  assert.deepEqual(await repo.listAdminAuditLogs(), []);
 });
 
 test("repository rejects duplicate credit ledger idempotency keys", async () => {

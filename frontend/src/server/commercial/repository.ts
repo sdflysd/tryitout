@@ -1,3 +1,7 @@
+import {
+  ADMIN_AUDIT_ACTIONS,
+  type AdminAuditAction,
+} from "../../contracts/commercial.js";
 import type {
   AccessCodeBatchRecord,
   AccessCodeRecord,
@@ -882,6 +886,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async appendAdminAuditLog(log: AdminAuditLogRecord): Promise<void> {
+    assertAdminAuditAction(log.action);
     appendById(this.auditLogs, log, "admin_audit_logs.id");
   }
 
@@ -986,6 +991,12 @@ function linkMetadata(
     ...(metadata ?? {}),
     ...linkage,
   };
+}
+
+function assertAdminAuditAction(action: string): asserts action is AdminAuditAction {
+  if (!ADMIN_AUDIT_ACTIONS.includes(action as AdminAuditAction)) {
+    throw new Error("admin_audit_logs.action must be known");
+  }
 }
 
 function assertUniqueById<T extends { id: string }>(

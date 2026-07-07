@@ -29,10 +29,20 @@ export const COMMERCIAL_TASK_STATUSES = [
 export const ADMIN_AUDIT_ACTIONS = [
   "access_code_batch_created",
   "access_code_batch_disabled",
+  "access_code_batch_exported",
   "access_code_disabled",
+  "user_credit_adjusted",
   "credits_adjusted",
   "task_refunded",
+  "task_retried",
+  "task_cancelled",
+  "user_disabled",
+  "user_restored",
   "user_tier_changed",
+  "sensitive_report_viewed",
+  "system_setting_updated",
+  "queue_paused",
+  "queue_resumed",
 ] as const;
 export const SIMULATION_CREDIT_COSTS = {
   platform: { legacy: 1, enabled: 3 },

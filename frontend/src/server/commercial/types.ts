@@ -243,7 +243,7 @@ export interface SystemSettingRecord {
 export interface AdminAuditLogRecord {
   id: string;
   actorUserId?: string;
-  action: AdminAuditAction | string;
+  action: AdminAuditAction;
   targetType: string;
   targetId?: string;
   metadata: JsonObject;
