@@ -16,10 +16,13 @@ test("commercial mode requires production backing services and secrets", () => {
 });
 
 test("commercial mode resolves required URLs and numeric budgets", () => {
+  const databaseUrl = "postgres://tryitout:test@localhost:5432/tryitout";
+  const redisUrl = "redis://localhost:6379";
+
   const config = resolveCommercialConfig({
     COMMERCIAL_MODE_ENABLED: "true",
-    DATABASE_URL: "postgres://tryitout:test@localhost:5432/tryitout",
-    REDIS_URL: "redis://localhost:6379",
+    DATABASE_URL: databaseUrl,
+    REDIS_URL: redisUrl,
     SESSION_SECRET: "session-secret-with-at-least-32-characters",
     ACCESS_CODE_PEPPER: "pepper-with-at-least-32-characters",
     USER_SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
@@ -27,6 +30,8 @@ test("commercial mode resolves required URLs and numeric budgets", () => {
   });
 
   assert.equal(config.enabled, true);
+  assert.equal(config.databaseUrl, databaseUrl);
+  assert.equal(config.redisUrl, redisUrl);
   assert.equal(config.maxWeightedConcurrency, 12);
 });
 
