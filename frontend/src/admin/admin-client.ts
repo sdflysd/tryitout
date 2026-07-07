@@ -40,6 +40,81 @@ export interface AdminOverviewDto {
   };
 }
 
+export type AdminUserTierDto = "basic" | "pro" | "business";
+export type AdminCommercialFeatureDto =
+  | "deep_mode"
+  | "priority_queue"
+  | "custom_model_provider"
+  | "admin_ops";
+
+export interface AdminAccessCodeBatchDto {
+  id: string;
+  name: string;
+  source?: string;
+  codeCount: number;
+  credits: number;
+  tier?: AdminUserTierDto;
+  features: AdminCommercialFeatureDto[];
+  expiresAt?: string;
+  disabledAt?: string;
+  notes?: string;
+  createdAt: string;
+  status: "active" | "disabled" | "expired";
+  redeemedCount: number;
+  activeCount: number;
+  disabledCount: number;
+  expiredCount: number;
+  redemptionRate: number;
+}
+
+export interface AdminCreatedAccessCodeDto {
+  id: string;
+  rawCode: string;
+  codeMask: string;
+  status: "active" | "redeemed" | "disabled" | "expired";
+  credits: number;
+  tier?: AdminUserTierDto;
+  features: AdminCommercialFeatureDto[];
+  expiresAt?: string;
+  createdAt: string;
+}
+
+export interface AdminCreateAccessCodeBatchInputDto {
+  name: string;
+  source?: string;
+  codeCount: number;
+  credits: number;
+  tier?: AdminUserTierDto;
+  features: AdminCommercialFeatureDto[];
+  expiresAt?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AdminCreateAccessCodeBatchResultDto {
+  batch: {
+    id: string;
+    createdByUserId?: string;
+    name: string;
+    source?: string;
+    codeCount: number;
+    credits: number;
+    tier?: AdminUserTierDto;
+    features: AdminCommercialFeatureDto[];
+    expiresAt?: string;
+    disabledAt?: string;
+    notes?: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  };
+  codes: AdminCreatedAccessCodeDto[];
+}
+
+export interface AdminDisableAccessCodeBatchResultDto {
+  batch: AdminCreateAccessCodeBatchResultDto["batch"];
+  disabledCodeCount: number;
+}
+
 export class AdminClientError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -55,7 +130,58 @@ export class AdminClientError extends Error {
 export async function fetchAdminOverview(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<AdminOverviewDto> {
-  const response = await fetchImpl("/api/admin/overview", {
+  const body = await requestAdminJson("/api/admin/overview", {}, fetchImpl);
+  assertObjectWithProperty(body, "overview", "Invalid admin overview response");
+
+  return body.overview as unknown as AdminOverviewDto;
+}
+
+export async function createAdminAccessCodeBatch(
+  input: AdminCreateAccessCodeBatchInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminCreateAccessCodeBatchResultDto> {
+  const body = await requestAdminJson(
+    "/api/admin/access-codes/batches",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "batch", "Invalid access-code batch response");
+  assertObjectWithProperty(body, "codes", "Invalid access-code batch response");
+
+  return body as unknown as AdminCreateAccessCodeBatchResultDto;
+}
+
+export async function disableAdminAccessCodeBatch(
+  batchId: string,
+  reason: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminDisableAccessCodeBatchResultDto> {
+  const body = await requestAdminJson(
+    `/api/admin/access-codes/batches/${encodeURIComponent(batchId)}/disable`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "batch", "Invalid access-code disable response");
+  assertObjectWithProperty(body, "disabledCodeCount", "Invalid access-code disable response");
+
+  return body as unknown as AdminDisableAccessCodeBatchResultDto;
+}
+
+async function requestAdminJson(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  fetchImpl: typeof fetch,
+): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(input, {
+    ...init,
     credentials: "include",
   });
   const body = await readJson(response);
@@ -67,11 +193,21 @@ export async function fetchAdminOverview(
       typeof errorBody.code === "string" ? errorBody.code : undefined,
     );
   }
-  if (!isObject(body) || !isObject(body.overview)) {
-    throw new AdminClientError(response.status, "Invalid admin overview response");
+  if (!isObject(body)) {
+    throw new AdminClientError(response.status, "Invalid admin response");
   }
 
-  return body.overview as unknown as AdminOverviewDto;
+  return body;
+}
+
+function assertObjectWithProperty(
+  value: Record<string, unknown>,
+  property: string,
+  message: string,
+): void {
+  if (!(property in value)) {
+    throw new AdminClientError(200, message);
+  }
 }
 
 async function readJson(response: Response): Promise<unknown> {

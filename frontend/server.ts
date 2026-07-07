@@ -21,6 +21,7 @@ import {
   resolveSimulationTaskRouteMode,
   shouldBlockLegacySimulationRoute,
 } from "./src/server/commercial/commercial-routing.js";
+import { registerCommercialAdminRoutes } from "./src/server/commercial/admin-routes.js";
 import {
   handleCancelCommercialTaskRequest,
   handleCreateCommercialTaskRequest,
@@ -310,6 +311,8 @@ app.get("/api/credits", async (req, res) => {
   );
   sendCommercialApiResult(res, result);
 });
+
+registerCommercialAdminRoutes(app, commercialServices);
 
 app.post("/api/life-choice/structure", async (req, res) => {
   const result = await handleLifeChoiceStructureRequest(req.body, {

@@ -1,0 +1,323 @@
+import { useMemo, useState } from "react";
+import type {
+  FormEvent,
+  ReactNode,
+} from "react";
+import {
+  ClipboardCopy,
+  KeyRound,
+  PackagePlus,
+  ShieldOff,
+} from "lucide-react";
+
+import {
+  createAdminAccessCodeBatch,
+  disableAdminAccessCodeBatch,
+  type AdminAccessCodeBatchDto,
+  type AdminCommercialFeatureDto,
+  type AdminCreateAccessCodeBatchInputDto,
+  type AdminCreateAccessCodeBatchResultDto,
+  type AdminUserTierDto,
+} from "./admin-client.js";
+
+interface AccessCodesPageProps {
+  initialBatches?: AdminAccessCodeBatchDto[];
+  initialCreationResult?: AdminCreateAccessCodeBatchResultDto;
+  copyText?: (value: string) => Promise<void> | void;
+}
+
+const FEATURE_OPTIONS: Array<{ value: AdminCommercialFeatureDto; label: string }> = [
+  { value: "deep_mode", label: "deep_mode" },
+  { value: "priority_queue", label: "priority_queue" },
+  { value: "custom_model_provider", label: "custom_model_provider" },
+];
+
+export default function AccessCodesPage({
+  initialBatches = [],
+  initialCreationResult,
+  copyText = defaultCopyText,
+}: AccessCodesPageProps) {
+  const [batches, setBatches] = useState(initialBatches);
+  const [creationResult, setCreationResult] = useState(initialCreationResult);
+  const [form, setForm] = useState<AdminCreateAccessCodeBatchInputDto>({
+    name: "",
+    source: "sales-led",
+    codeCount: 10,
+    credits: 25,
+    tier: "pro",
+    features: ["priority_queue"],
+    expiresAt: "",
+    notes: "",
+  });
+  const [statusMessage, setStatusMessage] = useState("");
+  const rawCodeText = useMemo(
+    () => creationResult?.codes.map((code) => code.rawCode).join("\n") ?? "",
+    [creationResult],
+  );
+
+  const handleFeatureToggle = (feature: AdminCommercialFeatureDto) => {
+    setForm((current) => ({
+      ...current,
+      features: current.features.includes(feature)
+        ? current.features.filter((item) => item !== feature)
+        : [...current.features, feature],
+    }));
+  };
+
+  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setStatusMessage("Creating access-code batch...");
+    const result = await createAdminAccessCodeBatch({
+      ...form,
+      expiresAt: form.expiresAt?.trim() || undefined,
+      notes: form.notes?.trim() || undefined,
+      source: form.source?.trim() || undefined,
+    });
+    setCreationResult(result);
+    setBatches((current) => [toBatchDto(result), ...current]);
+    setStatusMessage(`${result.codes.length} raw codes generated. Copy them now.`);
+  };
+
+  const handleCopyAll = async () => {
+    await copyText(rawCodeText);
+    setStatusMessage("Raw codes copied. They will not be reconstructable from storage.");
+  };
+
+  const handleDisable = async (batchId: string) => {
+    const result = await disableAdminAccessCodeBatch(batchId, "disabled from admin console");
+    setBatches((current) =>
+      current.map((batch) =>
+        batch.id === batchId
+          ? {
+              ...batch,
+              status: "disabled",
+              disabledAt: result.batch.disabledAt,
+              disabledCount: batch.activeCount + batch.disabledCount,
+              activeCount: 0,
+            }
+          : batch,
+      ),
+    );
+    setStatusMessage(`${result.disabledCodeCount} active codes disabled.`);
+  };
+
+  return (
+    <div className="space-y-5">
+      <section className="border border-slate-200 bg-white">
+        <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-slate-500" aria-hidden="true" />
+            <div>
+              <h2 className="text-sm font-black text-slate-950">Access Code Operations</h2>
+              <p className="text-xs font-semibold text-slate-500">Campaign batches, credit grants, tier unlocks, and masked storage controls.</p>
+            </div>
+          </div>
+          <div className="text-xs font-bold text-slate-500">{batches.length} batches tracked</div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left text-xs">
+            <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
+              <tr>
+                <th className="px-4 py-2 font-black">Batch Name</th>
+                <th className="px-4 py-2 font-black">Source</th>
+                <th className="px-4 py-2 font-black">Credits</th>
+                <th className="px-4 py-2 font-black">Features</th>
+                <th className="px-4 py-2 font-black">Created</th>
+                <th className="px-4 py-2 font-black">Redeemed</th>
+                <th className="px-4 py-2 font-black">Redemption Rate</th>
+                <th className="px-4 py-2 font-black">Status</th>
+                <th className="px-4 py-2 font-black">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {batches.map((batch) => (
+                <tr key={batch.id}>
+                  <td className="px-4 py-3">
+                    <div className="font-black text-slate-950">{batch.name}</div>
+                    <div className="mt-1 font-mono text-[10px] text-slate-400">{batch.id}</div>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-slate-700">{batch.source ?? "manual"}</td>
+                  <td className="px-4 py-3 font-mono font-black text-slate-950">{batch.credits}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex max-w-64 flex-wrap gap-1">
+                      {batch.features.length === 0 ? (
+                        <span className="text-slate-400">standard</span>
+                      ) : (
+                        batch.features.map((feature) => (
+                          <span key={feature} className="rounded-sm bg-cyan-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-700">
+                            {feature}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{formatDate(batch.createdAt)}</td>
+                  <td className="px-4 py-3 font-mono text-slate-700">{batch.redeemedCount}/{batch.codeCount}</td>
+                  <td className="px-4 py-3 font-mono font-black text-slate-950">{formatPercent(batch.redemptionRate)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-sm px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] ${batch.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                      {batch.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleDisable(batch.id)}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[10px] font-black text-rose-700"
+                    >
+                      <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+                      Disable
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]">
+        <form onSubmit={(event) => void handleCreate(event)} className="border border-slate-200 bg-white p-4">
+          <div className="mb-4 flex items-center gap-2">
+            <PackagePlus className="h-4 w-4 text-slate-500" aria-hidden="true" />
+            <h2 className="text-sm font-black text-slate-950">Create Campaign Batch</h2>
+          </div>
+
+          <div className="grid gap-3">
+            <Field label="Campaign name">
+              <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="admin-input" placeholder="Founding Customers" />
+            </Field>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Code count">
+                <input type="number" value={form.codeCount} onChange={(event) => setForm({ ...form, codeCount: Number(event.target.value) })} className="admin-input" min={1} />
+              </Field>
+              <Field label="Credits per code">
+                <input type="number" value={form.credits} onChange={(event) => setForm({ ...form, credits: Number(event.target.value) })} className="admin-input" min={1} />
+              </Field>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Tier grant">
+                <select value={form.tier ?? ""} onChange={(event) => setForm({ ...form, tier: event.target.value as AdminUserTierDto })} className="admin-input">
+                  <option value="">none</option>
+                  <option value="basic">basic</option>
+                  <option value="pro">pro</option>
+                  <option value="business">business</option>
+                </select>
+              </Field>
+              <Field label="Source">
+                <input value={form.source ?? ""} onChange={(event) => setForm({ ...form, source: event.target.value })} className="admin-input" placeholder="sales-led" />
+              </Field>
+            </div>
+            <Field label="Features">
+              <div className="flex flex-wrap gap-2">
+                {FEATURE_OPTIONS.map((feature) => (
+                  <label key={feature.value} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-xs font-bold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={form.features.includes(feature.value)}
+                      onChange={() => handleFeatureToggle(feature.value)}
+                    />
+                    <span>{feature.label}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label="Expiration">
+              <input value={form.expiresAt ?? ""} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} className="admin-input" placeholder="2026-08-01T00:00:00.000Z" />
+            </Field>
+            <Field label="Operator notes">
+              <textarea value={form.notes ?? ""} onChange={(event) => setForm({ ...form, notes: event.target.value })} className="admin-input min-h-20" placeholder="CRM campaign, contract id, support ticket..." />
+            </Field>
+          </div>
+
+          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
+            Generate copyable raw codes
+          </button>
+          {statusMessage && <p className="mt-3 text-xs font-bold text-slate-500">{statusMessage}</p>}
+        </form>
+
+        <section className="border border-slate-200 bg-white">
+          <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
+            <h2 className="text-sm font-black text-slate-950">Creation Result</h2>
+            <button
+              type="button"
+              onClick={() => void handleCopyAll()}
+              disabled={!rawCodeText}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 text-xs font-black text-slate-700 disabled:opacity-40"
+            >
+              <ClipboardCopy className="h-4 w-4" aria-hidden="true" />
+              Copy All
+            </button>
+          </div>
+          <div className="grid gap-3 p-4 md:grid-cols-2">
+            {creationResult?.codes.map((code) => (
+              <div key={code.id} className="border border-slate-200 bg-slate-50 p-3">
+                <div className="font-mono text-sm font-black text-slate-950">{code.rawCode}</div>
+                <div className="mt-2 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                  <span>{code.codeMask}</span>
+                  <span>{code.credits} credits</span>
+                </div>
+              </div>
+            )) ?? (
+              <div className="col-span-full border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs font-bold text-slate-500">
+                Raw codes appear here only after creation. Stored batch data remains masked.
+              </div>
+            )}
+          </div>
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="grid gap-1.5 text-xs font-black text-slate-700">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function toBatchDto(
+  result: AdminCreateAccessCodeBatchResultDto,
+): AdminAccessCodeBatchDto {
+  return {
+    id: result.batch.id,
+    name: result.batch.name,
+    source: result.batch.source,
+    codeCount: result.batch.codeCount,
+    credits: result.batch.credits,
+    tier: result.batch.tier,
+    features: result.batch.features,
+    expiresAt: result.batch.expiresAt,
+    disabledAt: result.batch.disabledAt,
+    notes: result.batch.notes,
+    createdAt: result.batch.createdAt,
+    status: result.batch.disabledAt === undefined ? "active" : "disabled",
+    redeemedCount: 0,
+    activeCount: result.batch.codeCount,
+    disabledCount: 0,
+    expiredCount: 0,
+    redemptionRate: 0,
+  };
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatDate(value: string): string {
+  return value.slice(0, 10);
+}
+
+function defaultCopyText(value: string): Promise<void> | void {
+  return navigator.clipboard?.writeText(value);
+}

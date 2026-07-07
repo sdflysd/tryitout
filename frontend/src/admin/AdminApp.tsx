@@ -14,6 +14,7 @@ import {
   Workflow,
 } from "lucide-react";
 
+import AccessCodesPage from "./AccessCodesPage.js";
 import {
   fetchAdminOverview,
   type AdminOverviewDto,
@@ -22,6 +23,7 @@ import {
 interface AdminAppProps {
   overview?: AdminOverviewDto;
   fetchOverview?: () => Promise<AdminOverviewDto>;
+  initialView?: AdminNavLabel;
 }
 
 const NAV_ITEMS = [
@@ -36,6 +38,8 @@ const NAV_ITEMS = [
   { label: "Settings", icon: Settings },
   { label: "Audit Logs", icon: FileClock },
 ] as const;
+
+type AdminNavLabel = typeof NAV_ITEMS[number]["label"];
 
 const EMPTY_OVERVIEW: AdminOverviewDto = {
   users: {
@@ -81,10 +85,12 @@ const EMPTY_OVERVIEW: AdminOverviewDto = {
 export default function AdminApp({
   overview: initialOverview,
   fetchOverview = fetchAdminOverview,
+  initialView = "Overview",
 }: AdminAppProps = {}) {
   const [overview, setOverview] = useState<AdminOverviewDto | undefined>(
     initialOverview,
   );
+  const [activeView, setActiveView] = useState<AdminNavLabel>(initialView);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
   const resolvedOverview = overview ?? EMPTY_OVERVIEW;
   const isLoading = overview === undefined;
@@ -136,11 +142,12 @@ export default function AdminApp({
           <nav className="space-y-1" aria-label="Admin navigation">
             {NAV_ITEMS.map((item, index) => {
               const Icon = item.icon;
-              const active = index === 0;
+              const active = item.label === activeView;
               return (
                 <button
                   key={item.label}
                   type="button"
+                  onClick={() => setActiveView(item.label)}
                   className={`flex min-h-10 w-full items-center gap-2.5 rounded-md px-3 text-left text-xs font-bold transition-colors ${
                     active
                       ? "bg-slate-950 text-white"
@@ -160,7 +167,7 @@ export default function AdminApp({
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Platform Control Center</div>
-                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Overview</h1>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{activeView}</h1>
               </div>
               <div className="flex flex-wrap gap-2 text-xs font-bold">
                 <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">Commercial mode monitored</span>
@@ -176,75 +183,102 @@ export default function AdminApp({
                 {loadError !== undefined ? loadError : "Loading live metrics"}
               </section>
             )}
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Admin metrics">
-              <Metric title="Total Users" value={resolvedOverview.users.total} detail={`${resolvedOverview.users.active} active / ${resolvedOverview.users.disabled} disabled`} tone="slate" />
-              <Metric title="Redeemed Users" value={resolvedOverview.users.redeemed} detail={`${redemptionRate} code redemption`} tone="emerald" />
-              <Metric title="Task Completion" value={completionRate} detail={`${resolvedOverview.tasks.byStatus.completed} completed`} tone="cyan" />
-              <Metric title="Failure Rate" value={failureRate} detail={`${resolvedOverview.tasks.byStatus.failed} failed tasks`} tone="rose" />
-              <Metric title="Estimated Cost" value={`¥${resolvedOverview.costs.estimatedTotal.toFixed(2)}`} detail={`${resolvedOverview.credits.consumed} credits consumed`} tone="amber" />
-            </section>
-
-            <section className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-              <div className="space-y-5">
-                <div className="border border-slate-200 bg-white">
-                  <PanelHeader title="Recent Failures" icon={Activity} action={`${resolvedOverview.tasks.byStatus.failed} open`} />
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-y border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      <tr>
-                        <th className="px-4 py-2 font-black">Area</th>
-                        <th className="px-4 py-2 font-black">Signal</th>
-                        <th className="px-4 py-2 font-black">Impact</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      <SignalRow area="Tasks" signal={`${failureRate} failed`} impact="Review provider, worker, and prompt safety errors" />
-                      <SignalRow area="Queue" signal={`${resolvedOverview.queue.backlog} backlog`} impact="Watch capacity before paid users stall" />
-                      <SignalRow area="Codes" signal={`${resolvedOverview.accessCodes.disabled} disabled`} impact="Audit campaign shutdowns and partner batches" />
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="border border-slate-200 bg-white">
-                  <PanelHeader title="High Cost Tasks" icon={BadgeDollarSign} action={`¥${resolvedOverview.costs.estimatedTotal.toFixed(2)} total`} />
-                  <div className="grid gap-3 p-4 md:grid-cols-3">
-                    <CostCell label="Credits Redeemed" value={resolvedOverview.credits.totalRedeemed} />
-                    <CostCell label="Credits Frozen" value={resolvedOverview.credits.totalFrozen} />
-                    <CostCell label="Credits Balance" value={resolvedOverview.credits.totalBalance} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className="border border-slate-200 bg-white">
-                  <PanelHeader title="Redemption Watch" icon={KeyRound} action={`${resolvedOverview.accessCodes.total} codes`} />
-                  <div className="space-y-3 p-4">
-                    <ProgressLine label="Active" value={resolvedOverview.accessCodes.active} total={resolvedOverview.accessCodes.total} tone="emerald" />
-                    <ProgressLine label="Redeemed" value={resolvedOverview.accessCodes.redeemed} total={resolvedOverview.accessCodes.total} tone="cyan" />
-                    <ProgressLine label="Disabled" value={resolvedOverview.accessCodes.disabled} total={resolvedOverview.accessCodes.total} tone="rose" />
-                    <ProgressLine label="Expired" value={resolvedOverview.accessCodes.expired} total={resolvedOverview.accessCodes.total} tone="slate" />
-                  </div>
-                </div>
-
-                <div className="border border-slate-200 bg-slate-950 p-4 text-white">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Operator Focus</div>
-                      <div className="mt-1 text-lg font-black">Protect paid execution</div>
-                    </div>
-                    <Workflow className="h-5 w-5 text-cyan-300" aria-hidden="true" />
-                  </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                    <MiniStat label="Queued" value={resolvedOverview.tasks.byStatus.queued} />
-                    <MiniStat label="Running" value={resolvedOverview.tasks.byStatus.running} />
-                    <MiniStat label="Refunded" value={resolvedOverview.tasks.byStatus.refunded} />
-                  </div>
-                </div>
-              </div>
-            </section>
+            {activeView === "Access Codes" ? (
+              <AccessCodesPage />
+            ) : (
+              <OverviewDashboard
+                overview={resolvedOverview}
+                completionRate={completionRate}
+                failureRate={failureRate}
+                redemptionRate={redemptionRate}
+              />
+            )}
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function OverviewDashboard({
+  overview,
+  completionRate,
+  failureRate,
+  redemptionRate,
+}: {
+  overview: AdminOverviewDto;
+  completionRate: string;
+  failureRate: string;
+  redemptionRate: string;
+}) {
+  return (
+    <>
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Admin metrics">
+        <Metric title="Total Users" value={overview.users.total} detail={`${overview.users.active} active / ${overview.users.disabled} disabled`} tone="slate" />
+        <Metric title="Redeemed Users" value={overview.users.redeemed} detail={`${redemptionRate} code redemption`} tone="emerald" />
+        <Metric title="Task Completion" value={completionRate} detail={`${overview.tasks.byStatus.completed} completed`} tone="cyan" />
+        <Metric title="Failure Rate" value={failureRate} detail={`${overview.tasks.byStatus.failed} failed tasks`} tone="rose" />
+        <Metric title="Estimated Cost" value={`¥${overview.costs.estimatedTotal.toFixed(2)}`} detail={`${overview.credits.consumed} credits consumed`} tone="amber" />
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+        <div className="space-y-5">
+          <div className="border border-slate-200 bg-white">
+            <PanelHeader title="Recent Failures" icon={Activity} action={`${overview.tasks.byStatus.failed} open`} />
+            <table className="w-full text-left text-xs">
+              <thead className="border-y border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                <tr>
+                  <th className="px-4 py-2 font-black">Area</th>
+                  <th className="px-4 py-2 font-black">Signal</th>
+                  <th className="px-4 py-2 font-black">Impact</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                <SignalRow area="Tasks" signal={`${failureRate} failed`} impact="Review provider, worker, and prompt safety errors" />
+                <SignalRow area="Queue" signal={`${overview.queue.backlog} backlog`} impact="Watch capacity before paid users stall" />
+                <SignalRow area="Codes" signal={`${overview.accessCodes.disabled} disabled`} impact="Audit campaign shutdowns and partner batches" />
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border border-slate-200 bg-white">
+            <PanelHeader title="High Cost Tasks" icon={BadgeDollarSign} action={`¥${overview.costs.estimatedTotal.toFixed(2)} total`} />
+            <div className="grid gap-3 p-4 md:grid-cols-3">
+              <CostCell label="Credits Redeemed" value={overview.credits.totalRedeemed} />
+              <CostCell label="Credits Frozen" value={overview.credits.totalFrozen} />
+              <CostCell label="Credits Balance" value={overview.credits.totalBalance} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div className="border border-slate-200 bg-white">
+            <PanelHeader title="Redemption Watch" icon={KeyRound} action={`${overview.accessCodes.total} codes`} />
+            <div className="space-y-3 p-4">
+              <ProgressLine label="Active" value={overview.accessCodes.active} total={overview.accessCodes.total} tone="emerald" />
+              <ProgressLine label="Redeemed" value={overview.accessCodes.redeemed} total={overview.accessCodes.total} tone="cyan" />
+              <ProgressLine label="Disabled" value={overview.accessCodes.disabled} total={overview.accessCodes.total} tone="rose" />
+              <ProgressLine label="Expired" value={overview.accessCodes.expired} total={overview.accessCodes.total} tone="slate" />
+            </div>
+          </div>
+
+          <div className="border border-slate-200 bg-slate-950 p-4 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Operator Focus</div>
+                <div className="mt-1 text-lg font-black">Protect paid execution</div>
+              </div>
+              <Workflow className="h-5 w-5 text-cyan-300" aria-hidden="true" />
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+              <MiniStat label="Queued" value={overview.tasks.byStatus.queued} />
+              <MiniStat label="Running" value={overview.tasks.byStatus.running} />
+              <MiniStat label="Refunded" value={overview.tasks.byStatus.refunded} />
+            </div>
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 

@@ -46,6 +46,15 @@ test("AdminApp can render an operations shell before overview data loads", () =>
   assert.match(html, /Loading live metrics/);
 });
 
+test("AdminApp can render the access-code operations view", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialView="Access Codes" />,
+  );
+
+  assert.match(html, /Access Code Operations/);
+  assert.match(html, /Generate copyable raw codes/);
+});
+
 test("admin client fetches overview with credentials included", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
