@@ -21,6 +21,20 @@ import {
   resolveSimulationTaskRouteMode,
   shouldBlockLegacySimulationRoute,
 } from "./src/server/commercial/commercial-routing.js";
+import {
+  handleCancelCommercialTaskRequest,
+  handleCreateCommercialTaskRequest,
+  handleGetCommercialTaskReportRequest,
+  handleGetCommercialTaskStatusRequest,
+  handleGetCreditsRequest,
+  handleGetMeRequest,
+  handleLoginRequest,
+  handleLogoutRequest,
+  handleRedeemAccessCodeRequest,
+  handleRegisterRequest,
+  type CommercialApiResult,
+} from "./src/server/commercial/commercial-api.js";
+import { createCommercialServicesFromEnv } from "./src/server/commercial/commercial-services.js";
 import { runMultiAgentSimulation } from "./src/server/simulations/multi-agent-runner.js";
 import { assessUserInputSafety } from "./src/server/simulations/safety.js";
 import {
@@ -51,6 +65,7 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const commercialServices = createCommercialServicesFromEnv(process.env);
 
 app.use(express.json());
 
@@ -153,6 +168,26 @@ function buildSimulationResponse(
   };
 }
 
+function toCommercialRequest(req: express.Request) {
+  return {
+    body: req.body,
+    headers: {
+      cookie: req.headers.cookie,
+      authorization: req.headers.authorization,
+    },
+  };
+}
+
+function sendCommercialApiResult(
+  res: express.Response,
+  result: CommercialApiResult,
+): void {
+  for (const cookie of result.cookies ?? []) {
+    res.cookie(cookie.name, cookie.value, cookie.options);
+  }
+  res.status(result.status).json(result.body);
+}
+
 // API: Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
@@ -216,6 +251,66 @@ app.post("/api/validation/events", async (req, res) => {
   res.status(result.status).json(result.body);
 });
 
+app.post("/api/auth/register", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleRegisterRequest(req.body, commercialServices);
+  sendCommercialApiResult(res, result);
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleLoginRequest(req.body, commercialServices, {
+    production: process.env.NODE_ENV === "production",
+  });
+  sendCommercialApiResult(res, result);
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleLogoutRequest(
+    toCommercialRequest(req),
+    commercialServices,
+    { production: process.env.NODE_ENV === "production" },
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.get("/api/me", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleGetMeRequest(toCommercialRequest(req), commercialServices);
+  sendCommercialApiResult(res, result);
+});
+
+app.post("/api/credits/redeem", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleRedeemAccessCodeRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.get("/api/credits", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleGetCreditsRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
 app.post("/api/life-choice/structure", async (req, res) => {
   const result = await handleLifeChoiceStructureRequest(req.body, {
     getGateway: getAiGateway,
@@ -225,10 +320,17 @@ app.post("/api/life-choice/structure", async (req, res) => {
 
 app.post("/api/simulation-tasks", async (req, res) => {
   if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
-    return res.status(503).json({
-      error: "Commercial service factory is not wired yet",
-      code: "commercial_services_unavailable",
-    });
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleCreateCommercialTaskRequest(
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
   }
 
   const result = await handleCreateSimulationTaskRequest(req.body, {
@@ -243,6 +345,21 @@ app.post("/api/simulation-tasks", async (req, res) => {
 });
 
 app.get("/api/simulation-tasks/:id/status", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleGetCommercialTaskStatusRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
+  }
+
   const result = await handleGetSimulationTaskStatusRequest(req.params.id, {
     service: taskService,
   });
@@ -262,6 +379,21 @@ app.post("/api/simulation-tasks/:id/resume", async (req, res) => {
 });
 
 app.post("/api/simulation-tasks/:id/cancel", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleCancelCommercialTaskRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
+  }
+
   const result = await handleCancelSimulationTaskRequest(req.params.id, {
     service: taskService,
   });
@@ -269,6 +401,21 @@ app.post("/api/simulation-tasks/:id/cancel", async (req, res) => {
 });
 
 app.get("/api/simulation-tasks/:id/report", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleGetCommercialTaskReportRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
+  }
+
   const result = await handleGetSimulationReportRequest(req.params.id, {
     service: taskService,
   });
