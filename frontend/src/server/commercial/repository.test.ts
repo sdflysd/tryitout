@@ -187,6 +187,312 @@ test("repository rejects duplicate credit ledger idempotency keys", async () => 
   );
 });
 
+test("repository atomically applies a credit ledger entry to an account", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+
+  const entry = await repo.applyCreditLedgerEntry(
+    {
+      userId: "user_1",
+      balance: 7,
+      frozenCredits: 3,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "held",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 7,
+      frozenAfter: 3,
+      idempotencyKey: "hold_1",
+      createdAt: "held",
+    },
+  );
+
+  assert.equal(entry.id, "ledger_1");
+  assert.deepEqual(await repo.getCreditAccount("user_1"), {
+    userId: "user_1",
+    balance: 7,
+    frozenCredits: 3,
+    totalRedeemed: 10,
+    totalCaptured: 0,
+    updatedAt: "held",
+  });
+  assert.equal(
+    (await repo.findCreditLedgerEntryByIdempotencyKey("hold_1"))?.id,
+    "ledger_1",
+  );
+});
+
+test("repository applyCreditLedgerEntry validates uniqueness before mutating account", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_existing",
+    userId: "user_1",
+    entryType: "redeem",
+    amount: 10,
+    balanceAfter: 10,
+    idempotencyKey: "hold_1",
+    createdAt: "earlier",
+  });
+
+  await assert.rejects(
+    repo.applyCreditLedgerEntry(
+      {
+        userId: "user_1",
+        balance: 7,
+        frozenCredits: 3,
+        totalRedeemed: 10,
+        totalCaptured: 0,
+        updatedAt: "held",
+      },
+      {
+        id: "ledger_1",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "hold",
+        amount: -3,
+        balanceAfter: 7,
+        frozenAfter: 3,
+        idempotencyKey: "hold_1",
+        createdAt: "held",
+      },
+    ),
+    /credit_ledger\.idempotencyKey/,
+  );
+
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
+});
+
+test("repository atomically applies a credit ledger entry with audit log", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+
+  const entry = await repo.applyCreditLedgerEntryWithAudit(
+    {
+      userId: "user_1",
+      balance: 7,
+      frozenCredits: 0,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "adjusted",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      entryType: "adjustment",
+      amount: -3,
+      balanceAfter: 7,
+      frozenAfter: 0,
+      idempotencyKey: "adjust_1",
+      reason: "manual_correction",
+      createdAt: "adjusted",
+    },
+    {
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "credits_adjusted",
+      targetType: "user",
+      targetId: "user_1",
+      metadata: { creditLedgerId: "ledger_1" },
+      createdAt: "adjusted",
+    },
+  );
+
+  assert.equal(entry.id, "ledger_1");
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 7);
+  assert.equal((await repo.listAdminAuditLogs())[0]?.id, "audit_1");
+});
+
+test("repository atomically redeems access code with credit ledger and account", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1"));
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    tier: "pro",
+    features: ["priority_queue"],
+    createdAt: "created",
+  });
+
+  const result = await repo.redeemAccessCodeWithCreditLedger(
+    {
+      id: "code_1",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****-001",
+      status: "redeemed",
+      credits: 10,
+      tier: "pro",
+      features: ["priority_queue"],
+      redeemedByUserId: "user_1",
+      redeemedAt: "redeemed",
+      createdAt: "created",
+    },
+    {
+      id: "redemption_1",
+      accessCodeId: "code_1",
+      userId: "user_1",
+      creditLedgerId: "ledger_1",
+      credits: 10,
+      tierGranted: "pro",
+      featuresGranted: ["priority_queue"],
+      redeemedAt: "redeemed",
+      metadata: {},
+    },
+    {
+      userId: "user_1",
+      balance: 10,
+      frozenCredits: 0,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "redeemed",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      accessCodeId: "code_1",
+      entryType: "redeem",
+      amount: 10,
+      balanceAfter: 10,
+      frozenAfter: 0,
+      idempotencyKey: "redeem_1",
+      createdAt: "redeemed",
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "redeemed");
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
+  assert.equal(
+    (await repo.findCreditLedgerEntryByIdempotencyKey("redeem_1"))?.id,
+    "ledger_1",
+  );
+  assert.equal(
+    (await repo.findAccessCodeRedemptionByCodeId("code_1"))?.creditLedgerId,
+    "ledger_1",
+  );
+});
+
+test("repository redeemAccessCodeWithCreditLedger validates ledger uniqueness before mutating", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1"));
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "created",
+  });
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_existing",
+    userId: "user_1",
+    entryType: "adjustment",
+    amount: 1,
+    balanceAfter: 1,
+    idempotencyKey: "redeem_1",
+    createdAt: "earlier",
+  });
+
+  await assert.rejects(
+    repo.redeemAccessCodeWithCreditLedger(
+      {
+        id: "code_1",
+        batchId: "batch_1",
+        codeHash: "hash_1",
+        codeMask: "TEST-****-001",
+        status: "redeemed",
+        credits: 10,
+        features: [],
+        redeemedByUserId: "user_1",
+        redeemedAt: "redeemed",
+        createdAt: "created",
+      },
+      {
+        id: "redemption_1",
+        accessCodeId: "code_1",
+        userId: "user_1",
+        creditLedgerId: "ledger_1",
+        credits: 10,
+        featuresGranted: [],
+        redeemedAt: "redeemed",
+        metadata: {},
+      },
+      {
+        userId: "user_1",
+        balance: 10,
+        frozenCredits: 0,
+        totalRedeemed: 10,
+        totalCaptured: 0,
+        updatedAt: "redeemed",
+      },
+      {
+        id: "ledger_1",
+        userId: "user_1",
+        accessCodeId: "code_1",
+        entryType: "redeem",
+        amount: 10,
+        balanceAfter: 10,
+        frozenAfter: 0,
+        idempotencyKey: "redeem_1",
+        createdAt: "redeemed",
+      },
+    ),
+    /credit_ledger\.idempotencyKey/,
+  );
+
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "active");
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 0);
+  assert.equal(await repo.findAccessCodeRedemptionByCodeId("code_1"), undefined);
+});
+
+test("repository can find credit ledger entries by id and linked ledger metadata", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.appendCreditLedgerEntry({
+    id: "hold_ledger",
+    userId: "user_1",
+    taskId: "task_1",
+    entryType: "hold",
+    amount: -3,
+    balanceAfter: 7,
+    idempotencyKey: "hold_1",
+    createdAt: "held",
+  });
+  await repo.appendCreditLedgerEntry({
+    id: "capture_ledger",
+    userId: "user_1",
+    taskId: "task_1",
+    entryType: "capture",
+    amount: -3,
+    balanceAfter: 7,
+    idempotencyKey: "capture_1",
+    metadata: { holdLedgerId: "hold_ledger" },
+    createdAt: "captured",
+  });
+
+  assert.equal((await repo.getCreditLedgerEntry("hold_ledger"))?.entryType, "hold");
+  assert.equal(
+    (
+      await repo.findCreditLedgerEntryByMetadata("holdLedgerId", "hold_ledger", [
+        "capture",
+      ])
+    )?.id,
+    "capture_ledger",
+  );
+});
+
 test("repository rejects duplicate access code hashes", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveAccessCode({
@@ -928,7 +1234,7 @@ function makeUser(id = "user_1") {
   };
 }
 
-function makeCreditAccount(userId = "user_1") {
+function makeCreditAccount(userId = "user_1", overrides = {}) {
   return {
     userId,
     balance: 0,
@@ -936,5 +1242,6 @@ function makeCreditAccount(userId = "user_1") {
     totalRedeemed: 0,
     totalCaptured: 0,
     updatedAt: "now",
+    ...overrides,
   };
 }

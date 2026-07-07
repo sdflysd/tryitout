@@ -295,6 +295,161 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCreditLedgerEntry);
   }
 
+  async getCreditLedgerEntry(
+    ledgerEntryId: string,
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        select
+          id, user_id, task_id, access_code_id, entry_type, amount,
+          balance_after, frozen_after, idempotency_key, reason, metadata,
+          created_at
+        from credit_ledger
+        where id = $1
+      `,
+      [ledgerEntryId],
+    );
+    return mapOptional(rows[0], mapCreditLedgerEntry);
+  }
+
+  async findCreditLedgerEntryByMetadata(
+    metadataKey: string,
+    metadataValue: string,
+    entryTypes?: CreditLedgerEntryRecord["entryType"][],
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        select
+          id, user_id, task_id, access_code_id, entry_type, amount,
+          balance_after, frozen_after, idempotency_key, reason, metadata,
+          created_at
+        from credit_ledger
+        where metadata ->> $1 = $2
+          and ($3::text[] is null or entry_type = any($3::text[]))
+        order by created_at asc, id asc
+        limit 1
+      `,
+      [metadataKey, metadataValue, entryTypes ?? null],
+    );
+    return mapOptional(rows[0], mapCreditLedgerEntry);
+  }
+
+  async applyCreditLedgerEntry(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+  ): Promise<CreditLedgerEntryRecord> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_account as (
+          update user_credit_accounts
+          set
+            balance = $2,
+            frozen_credits = $3,
+            total_redeemed = $4,
+            total_captured = $5,
+            updated_at = $6
+          where user_id = $1
+          returning user_id
+        ),
+        inserted_ledger as (
+          insert into credit_ledger (
+            id, user_id, task_id, access_code_id, entry_type, amount,
+            balance_after, frozen_after, idempotency_key, reason, metadata,
+            created_at
+          )
+          select
+            $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18
+          from updated_account
+          returning
+            id, user_id, task_id, access_code_id, entry_type, amount,
+            balance_after, frozen_after, idempotency_key, reason, metadata,
+            created_at
+        )
+        select
+          id, user_id, task_id, access_code_id, entry_type, amount,
+          balance_after, frozen_after, idempotency_key, reason, metadata,
+          created_at
+        from inserted_ledger
+      `,
+      creditLedgerApplyParams(account, entry),
+    );
+
+    const inserted = rows[0];
+    if (!inserted) {
+      throw new Error("user_credit_accounts.user_id must exist");
+    }
+    return mapCreditLedgerEntry(inserted);
+  }
+
+  async applyCreditLedgerEntryWithAudit(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<CreditLedgerEntryRecord> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_account as (
+          update user_credit_accounts
+          set
+            balance = $2,
+            frozen_credits = $3,
+            total_redeemed = $4,
+            total_captured = $5,
+            updated_at = $6
+          where user_id = $1
+          returning user_id
+        ),
+        inserted_ledger as (
+          insert into credit_ledger (
+            id, user_id, task_id, access_code_id, entry_type, amount,
+            balance_after, frozen_after, idempotency_key, reason, metadata,
+            created_at
+          )
+          select
+            $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18
+          from updated_account
+          returning
+            id, user_id, task_id, access_code_id, entry_type, amount,
+            balance_after, frozen_after, idempotency_key, reason, metadata,
+            created_at
+        ),
+        inserted_audit as (
+          insert into admin_audit_logs (
+            id, actor_user_id, action, target_type, target_id, metadata,
+            ip_hash, user_agent, created_at
+          )
+          select $19, $20, $21, $22, $23, $24::jsonb, $25, $26, $27
+          from inserted_ledger
+          returning id
+        )
+        select
+          id, user_id, task_id, access_code_id, entry_type, amount,
+          balance_after, frozen_after, idempotency_key, reason, metadata,
+          created_at
+        from inserted_ledger
+        where exists (select 1 from inserted_audit)
+      `,
+      [
+        ...creditLedgerApplyParams(account, entry),
+        auditLog.id,
+        auditLog.actorUserId ?? null,
+        auditLog.action,
+        auditLog.targetType,
+        auditLog.targetId ?? null,
+        toJsonb(auditLog.metadata),
+        auditLog.ipHash ?? null,
+        auditLog.userAgent ?? null,
+        auditLog.createdAt,
+      ],
+    );
+
+    const inserted = rows[0];
+    if (!inserted) {
+      throw new Error("user_credit_accounts.user_id must exist");
+    }
+    return mapCreditLedgerEntry(inserted);
+  }
+
   async saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void> {
     await this.client.query(
       `
@@ -592,6 +747,115 @@ export class PostgresCommercialRepository implements CommercialRepository {
         redemption.id,
         redemption.userId,
         redemption.creditLedgerId ?? null,
+        redemption.redeemedAt,
+        toJsonb(redemption.metadata),
+      ],
+    );
+
+    return rows.length > 0;
+  }
+
+  async redeemAccessCodeWithCreditLedger(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+    account: UserCreditAccountRecord,
+    ledgerEntry: CreditLedgerEntryRecord,
+  ): Promise<boolean> {
+    if (redemption.accessCodeId !== code.id) {
+      throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
+    }
+    if (ledgerEntry.accessCodeId !== code.id) {
+      throw new Error("credit_ledger.accessCodeId must match access_codes.id");
+    }
+    if (redemption.creditLedgerId !== ledgerEntry.id) {
+      throw new Error("access_code_redemptions.creditLedgerId must match credit_ledger.id");
+    }
+
+    const { rows } = await this.client.query<DbRow>(
+      `
+        with updated_code as (
+          update access_codes
+          set
+            status = 'redeemed',
+            redeemed_by_user_id = $2,
+            redeemed_at = $3
+          where id = $1
+            and status = 'active'
+            and redeemed_at is null
+            and disabled_at is null
+            and (expires_at is null or expires_at > $3)
+          returning id, credits, tier, features
+        ),
+        updated_account as (
+          update user_credit_accounts
+          set
+            balance = $5,
+            frozen_credits = $6,
+            total_redeemed = $7,
+            total_captured = $8,
+            updated_at = $9
+          where user_id = $4
+            and exists (select 1 from updated_code)
+          returning user_id
+        ),
+        inserted_ledger as (
+          insert into credit_ledger (
+            id, user_id, task_id, access_code_id, entry_type, amount,
+            balance_after, frozen_after, idempotency_key, reason, metadata,
+            created_at
+          )
+          select
+            $10, $11, $12, updated_code.id, $13, $14, $15, $16, $17, $18,
+            $19::jsonb, $20
+          from updated_code
+          join updated_account on updated_account.user_id = $11
+          returning id
+        ),
+        inserted_redemption as (
+          insert into access_code_redemptions (
+            id, access_code_id, user_id, credit_ledger_id, credits,
+            tier_granted, features_granted, redeemed_at, metadata
+          )
+          select
+            $21,
+            updated_code.id,
+            $22,
+            inserted_ledger.id,
+            updated_code.credits,
+            updated_code.tier,
+            updated_code.features,
+            $23,
+            $24::jsonb
+          from updated_code
+          join inserted_ledger on true
+          returning id
+        )
+        select true as redeemed
+        from inserted_redemption
+      `,
+      [
+        code.id,
+        code.redeemedByUserId ?? redemption.userId,
+        redemption.redeemedAt,
+        account.userId,
+        account.balance,
+        account.frozenCredits,
+        account.totalRedeemed,
+        account.totalCaptured,
+        account.updatedAt,
+        ledgerEntry.id,
+        ledgerEntry.userId,
+        ledgerEntry.taskId ?? null,
+        ledgerEntry.entryType,
+        ledgerEntry.amount,
+        ledgerEntry.balanceAfter,
+        ledgerEntry.frozenAfter ?? 0,
+        ledgerEntry.idempotencyKey,
+        ledgerEntry.reason ?? null,
+        toJsonb(ledgerEntry.metadata ?? {}),
+        ledgerEntry.createdAt,
+        redemption.id,
+        redemption.userId,
         redemption.redeemedAt,
         toJsonb(redemption.metadata),
       ],
@@ -1242,6 +1506,32 @@ function toJsonb(value: unknown): string {
 
 function nullableJsonb(value: unknown | undefined): string | null {
   return value === undefined ? null : toJsonb(value);
+}
+
+function creditLedgerApplyParams(
+  account: UserCreditAccountRecord,
+  entry: CreditLedgerEntryRecord,
+): unknown[] {
+  return [
+    account.userId,
+    account.balance,
+    account.frozenCredits,
+    account.totalRedeemed,
+    account.totalCaptured,
+    account.updatedAt,
+    entry.id,
+    entry.userId,
+    entry.taskId ?? null,
+    entry.accessCodeId ?? null,
+    entry.entryType,
+    entry.amount,
+    entry.balanceAfter,
+    entry.frozenAfter ?? 0,
+    entry.idempotencyKey,
+    entry.reason ?? null,
+    toJsonb(entry.metadata ?? {}),
+    entry.createdAt,
+  ];
 }
 
 function toAccessCodeJson(code: AccessCodeRecord): JsonObject {

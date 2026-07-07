@@ -222,6 +222,197 @@ test("postgres repository maps appendCreditLedgerEntry to credit_ledger insert",
   });
 });
 
+test("postgres repository applies credit ledger entries to accounts in one CTE query", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "ledger_1",
+      user_id: "user_1",
+      task_id: "task_1",
+      access_code_id: null,
+      entry_type: "hold",
+      amount: "-3",
+      balance_after: "7",
+      frozen_after: "3",
+      idempotency_key: "hold_1",
+      reason: "task_queued",
+      metadata: { taskId: "task_1" },
+      created_at: "held",
+    },
+  ]);
+
+  const entry = await repo.applyCreditLedgerEntry(
+    {
+      userId: "user_1",
+      balance: 7,
+      frozenCredits: 3,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "held",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 7,
+      frozenAfter: 3,
+      idempotencyKey: "hold_1",
+      reason: "task_queued",
+      metadata: { taskId: "task_1" },
+      createdAt: "held",
+    },
+  );
+
+  assert.equal(entry.id, "ledger_1");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_account as/i);
+  assert.match(queries[0].sql, /update user_credit_accounts/i);
+  assert.match(queries[0].sql, /insert into credit_ledger/i);
+  assert.match(queries[0].sql, /from updated_account/i);
+  assert.match(queries[0].sql, /returning\s+id, user_id/i);
+  assert.deepEqual(queries[0].params?.slice(0, 7), [
+    "user_1",
+    7,
+    3,
+    10,
+    0,
+    "held",
+    "ledger_1",
+  ]);
+});
+
+test("postgres repository applies credit ledger entries with audit in one CTE query", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "ledger_1",
+      user_id: "user_1",
+      task_id: null,
+      access_code_id: null,
+      entry_type: "adjustment",
+      amount: "-3",
+      balance_after: "7",
+      frozen_after: "0",
+      idempotency_key: "adjust_1",
+      reason: "manual_correction",
+      metadata: { actorUserId: "admin_1" },
+      created_at: "adjusted",
+    },
+  ]);
+
+  const entry = await repo.applyCreditLedgerEntryWithAudit(
+    {
+      userId: "user_1",
+      balance: 7,
+      frozenCredits: 0,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "adjusted",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      entryType: "adjustment",
+      amount: -3,
+      balanceAfter: 7,
+      frozenAfter: 0,
+      idempotencyKey: "adjust_1",
+      reason: "manual_correction",
+      metadata: { actorUserId: "admin_1" },
+      createdAt: "adjusted",
+    },
+    {
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "credits_adjusted",
+      targetType: "user",
+      targetId: "user_1",
+      metadata: { creditLedgerId: "ledger_1" },
+      createdAt: "adjusted",
+    },
+  );
+
+  assert.equal(entry.id, "ledger_1");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_account as/i);
+  assert.match(queries[0].sql, /inserted_ledger as/i);
+  assert.match(queries[0].sql, /inserted_audit as/i);
+  assert.match(queries[0].sql, /insert into admin_audit_logs/i);
+  assert.match(queries[0].sql, /from inserted_ledger/i);
+});
+
+test("postgres repository redeems access code with credit ledger and account in one CTE query", async () => {
+  const { repo, queries } = createRowRepository([{ redeemed: true }]);
+
+  const redeemed = await repo.redeemAccessCodeWithCreditLedger(
+    {
+      id: "code_1",
+      batchId: "batch_1",
+      codeHash: "hash_1",
+      codeMask: "TEST-****-001",
+      status: "redeemed",
+      credits: 10,
+      tier: "pro",
+      features: ["deep_mode"],
+      redeemedByUserId: "user_1",
+      redeemedAt: "stale-code-redeemed-at",
+      createdAt: "created",
+    },
+    {
+      id: "redemption_1",
+      accessCodeId: "code_1",
+      userId: "user_1",
+      creditLedgerId: "ledger_1",
+      credits: 10,
+      tierGranted: "pro",
+      featuresGranted: ["deep_mode"],
+      redeemedAt: "redeemed",
+      metadata: { source: "code" },
+    },
+    {
+      userId: "user_1",
+      balance: 10,
+      frozenCredits: 0,
+      totalRedeemed: 10,
+      totalCaptured: 0,
+      updatedAt: "redeemed",
+    },
+    {
+      id: "ledger_1",
+      userId: "user_1",
+      accessCodeId: "code_1",
+      entryType: "redeem",
+      amount: 10,
+      balanceAfter: 10,
+      frozenAfter: 0,
+      idempotencyKey: "redeem_1",
+      metadata: { source: "code" },
+      createdAt: "redeemed",
+    },
+  );
+
+  assert.equal(redeemed, true);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_code as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /updated_account as/i);
+  assert.match(queries[0].sql, /update user_credit_accounts/i);
+  assert.match(queries[0].sql, /inserted_ledger as/i);
+  assert.match(queries[0].sql, /insert into credit_ledger/i);
+  assert.match(queries[0].sql, /inserted_redemption as/i);
+  assert.match(queries[0].sql, /insert into access_code_redemptions/i);
+  assert.match(queries[0].sql, /from updated_code/i);
+  assert.match(queries[0].sql, /from inserted_redemption/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "code_1",
+    "user_1",
+    "redeemed",
+    "user_1",
+  ]);
+  assert.equal(queries[0].params?.[2], "redeemed");
+  assert.notEqual(queries[0].params?.[2], "stale-code-redeemed-at");
+});
+
 test("postgres repository maps getCommercialTask row to record", async () => {
   const repo = new PostgresCommercialRepository({
     query: async <T = Record<string, unknown>>() => ({

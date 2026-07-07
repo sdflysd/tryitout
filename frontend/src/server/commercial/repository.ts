@@ -40,6 +40,23 @@ export interface CommercialRepository {
   findCreditLedgerEntryByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CreditLedgerEntryRecord | undefined>;
+  getCreditLedgerEntry(
+    ledgerEntryId: string,
+  ): Promise<CreditLedgerEntryRecord | undefined>;
+  findCreditLedgerEntryByMetadata(
+    metadataKey: string,
+    metadataValue: string,
+    entryTypes?: CreditLedgerEntryRecord["entryType"][],
+  ): Promise<CreditLedgerEntryRecord | undefined>;
+  applyCreditLedgerEntry(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+  ): Promise<CreditLedgerEntryRecord>;
+  applyCreditLedgerEntryWithAudit(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<CreditLedgerEntryRecord>;
 
   saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void>;
   createAccessCodeBatchWithCodes(
@@ -59,6 +76,12 @@ export interface CommercialRepository {
   redeemAccessCode(
     code: AccessCodeRecord,
     redemption: AccessCodeRedemptionRecord,
+  ): Promise<boolean>;
+  redeemAccessCodeWithCreditLedger(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+    account: UserCreditAccountRecord,
+    ledgerEntry: CreditLedgerEntryRecord,
   ): Promise<boolean>;
   findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
@@ -231,6 +254,58 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     );
   }
 
+  async getCreditLedgerEntry(
+    ledgerEntryId: string,
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    return this.creditLedger.find((entry) => entry.id === ledgerEntryId);
+  }
+
+  async findCreditLedgerEntryByMetadata(
+    metadataKey: string,
+    metadataValue: string,
+    entryTypes?: CreditLedgerEntryRecord["entryType"][],
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    return this.creditLedger.find((entry) => {
+      if (
+        entryTypes !== undefined &&
+        !entryTypes.includes(entry.entryType)
+      ) {
+        return false;
+      }
+
+      return entry.metadata?.[metadataKey] === metadataValue;
+    });
+  }
+
+  async applyCreditLedgerEntry(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+  ): Promise<CreditLedgerEntryRecord> {
+    this.validateCreditLedgerAccount(account, entry);
+    this.assertCreditLedgerAppendable(entry);
+
+    this.creditAccounts.set(account.userId, account);
+    this.creditLedger.push(entry);
+    return entry;
+  }
+
+  async applyCreditLedgerEntryWithAudit(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<CreditLedgerEntryRecord> {
+    this.validateCreditLedgerAccount(account, entry);
+    this.assertCreditLedgerAppendable(entry);
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+
+    this.creditAccounts.set(account.userId, account);
+    this.creditLedger.push(entry);
+    this.auditLogs.push(auditLog);
+    return entry;
+  }
+
   async saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void> {
     this.accessCodeBatches.set(batch.id, batch);
   }
@@ -349,6 +424,53 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       redeemedByUserId: code.redeemedByUserId ?? redemption.userId,
       redeemedAt: code.redeemedAt ?? redemption.redeemedAt,
     });
+    return true;
+  }
+
+  async redeemAccessCodeWithCreditLedger(
+    code: AccessCodeRecord,
+    redemption: AccessCodeRedemptionRecord,
+    account: UserCreditAccountRecord,
+    ledgerEntry: CreditLedgerEntryRecord,
+  ): Promise<boolean> {
+    if (redemption.accessCodeId !== code.id) {
+      throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
+    }
+    if (ledgerEntry.accessCodeId !== code.id) {
+      throw new Error("credit_ledger.accessCodeId must match access_codes.id");
+    }
+    if (redemption.creditLedgerId !== ledgerEntry.id) {
+      throw new Error("access_code_redemptions.creditLedgerId must match credit_ledger.id");
+    }
+    this.validateCreditLedgerAccount(account, ledgerEntry);
+
+    const existing = this.accessCodes.get(code.id);
+    if (
+      !existing ||
+      existing.status !== "active" ||
+      existing.redeemedAt !== undefined ||
+      existing.disabledAt !== undefined
+    ) {
+      return false;
+    }
+
+    assertUniqueById(
+      this.accessCodeRedemptions,
+      redemption.id,
+      (item) => item.accessCodeId === redemption.accessCodeId,
+      "access_code_redemptions.accessCodeId",
+    );
+    this.assertCreditLedgerAppendable(ledgerEntry);
+
+    this.accessCodes.set(code.id, {
+      ...existing,
+      status: "redeemed",
+      redeemedByUserId: code.redeemedByUserId ?? redemption.userId,
+      redeemedAt: code.redeemedAt ?? redemption.redeemedAt,
+    });
+    this.creditAccounts.set(account.userId, account);
+    this.creditLedger.push(ledgerEntry);
+    this.accessCodeRedemptions.push(redemption);
     return true;
   }
 
@@ -557,6 +679,30 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async listAdminAuditLogs(): Promise<AdminAuditLogRecord[]> {
     return [...this.auditLogs];
+  }
+
+  private validateCreditLedgerAccount(
+    account: UserCreditAccountRecord,
+    entry: CreditLedgerEntryRecord,
+  ): void {
+    if (account.userId !== entry.userId) {
+      throw new Error("credit_ledger.userId must match user_credit_accounts.userId");
+    }
+    if (!this.creditAccounts.has(account.userId)) {
+      throw new Error("user_credit_accounts.userId must exist");
+    }
+  }
+
+  private assertCreditLedgerAppendable(entry: CreditLedgerEntryRecord): void {
+    assertUniqueById(
+      this.creditLedger,
+      entry.id,
+      (existing) => existing.idempotencyKey === entry.idempotencyKey,
+      "credit_ledger.idempotencyKey",
+    );
+    if (this.creditLedger.some((existing) => existing.id === entry.id)) {
+      throw new Error("credit_ledger.id must be unique");
+    }
   }
 }
 
