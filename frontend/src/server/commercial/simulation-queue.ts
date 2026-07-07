@@ -53,7 +53,10 @@ export function toSimulationQueueJob(
 }
 
 export class WeightedConcurrencyLimiter {
-  private readonly claims = new Map<string, SimulationQueueJob>();
+  private readonly claims = new Map<
+    string,
+    { job: SimulationQueueJob; claimedWeight: number }
+  >();
   private sequence = 0;
 
   constructor(readonly maxActiveWeight: number) {
@@ -62,19 +65,22 @@ export class WeightedConcurrencyLimiter {
 
   get activeWeight(): number {
     return Array.from(this.claims.values()).reduce(
-      (total, job) => total + job.weight,
+      (total, claim) => total + claim.claimedWeight,
       0,
     );
   }
 
   tryClaim(job: SimulationQueueJob): SimulationQueueClaim | undefined {
-    validateWeight(job.weight);
-    if (this.activeWeight + job.weight > this.maxActiveWeight) {
+    const claimJob = freezeSimulationQueueJob(validateSimulationQueueJob(job));
+    if (this.activeWeight + claimJob.weight > this.maxActiveWeight) {
       return undefined;
     }
     const claimId = `queue_claim_${++this.sequence}`;
-    this.claims.set(claimId, job);
-    return { claimId, job };
+    this.claims.set(claimId, {
+      job: claimJob,
+      claimedWeight: claimJob.weight,
+    });
+    return { claimId, job: claimJob };
   }
 
   release(claimId: string): boolean {
@@ -88,6 +94,7 @@ export interface InMemorySimulationQueueOptions {
 
 export class InMemorySimulationQueue implements SimulationQueue {
   private readonly queued: SimulationQueueJob[] = [];
+  private readonly activeIdempotencyKeysByClaimId = new Map<string, string>();
   private readonly limiter: WeightedConcurrencyLimiter;
 
   constructor(options: InMemorySimulationQueueOptions) {
@@ -99,12 +106,60 @@ export class InMemorySimulationQueue implements SimulationQueue {
   }
 
   async enqueue(job: SimulationQueueJob): Promise<void> {
-    validateWeight(job.weight);
-    this.queued.push({ ...job });
+    const queueJob = freezeSimulationQueueJob(validateSimulationQueueJob(job));
+    if (queueJob.weight > this.limiter.maxActiveWeight) {
+      throw new Error(
+        "Simulation queue job weight cannot exceed maximum active weight",
+      );
+    }
+    if (this.hasIdempotencyKey(queueJob.idempotencyKey)) {
+      return;
+    }
+    this.queued.push(queueJob);
   }
 
   async claimNext(): Promise<SimulationQueueClaim | undefined> {
-    const sorted = this.queued
+    const candidate = this.nextQueuedCandidate();
+    if (candidate === undefined) {
+      return undefined;
+    }
+
+    const claim = this.limiter.tryClaim(candidate.job);
+    if (claim === undefined) {
+      return undefined;
+    }
+
+    this.queued.splice(candidate.index, 1);
+    this.activeIdempotencyKeysByClaimId.set(
+      claim.claimId,
+      claim.job.idempotencyKey,
+    );
+    return claim;
+  }
+
+  async release(claimId: string): Promise<boolean> {
+    const released = this.limiter.release(claimId);
+    if (released) {
+      this.activeIdempotencyKeysByClaimId.delete(claimId);
+    }
+    return released;
+  }
+
+  private hasIdempotencyKey(idempotencyKey: string): boolean {
+    if (
+      Array.from(this.activeIdempotencyKeysByClaimId.values()).includes(
+        idempotencyKey,
+      )
+    ) {
+      return true;
+    }
+    return this.queued.some((job) => job.idempotencyKey === idempotencyKey);
+  }
+
+  private nextQueuedCandidate():
+    | { job: SimulationQueueJob; index: number }
+    | undefined {
+    return this.queued
       .map((job, index) => ({ job, index }))
       .sort((left, right) => {
         if (right.job.priority !== left.job.priority) {
@@ -114,22 +169,24 @@ export class InMemorySimulationQueue implements SimulationQueue {
           return left.job.queuedAt.localeCompare(right.job.queuedAt);
         }
         return left.index - right.index;
-      });
-
-    for (const candidate of sorted) {
-      const claim = this.limiter.tryClaim(candidate.job);
-      if (claim !== undefined) {
-        this.queued.splice(candidate.index, 1);
-        return claim;
-      }
-    }
-
-    return undefined;
+      })[0];
   }
+}
 
-  async release(claimId: string): Promise<boolean> {
-    return this.limiter.release(claimId);
-  }
+function validateSimulationQueueJob(job: SimulationQueueJob): SimulationQueueJob {
+  const idempotencyKey = validateRequiredString(
+    job.idempotencyKey,
+    "idempotencyKey",
+  );
+  return {
+    ...job,
+    taskId: validateRequiredString(job.taskId, "taskId"),
+    userId: validateRequiredString(job.userId, "userId"),
+    weight: validateWeight(job.weight),
+    priority: validatePriority(job.priority),
+    idempotencyKey,
+    queuedAt: validateQueuedAt(job.queuedAt),
+  };
 }
 
 function validateWeight(weight: number): number {
@@ -137,4 +194,29 @@ function validateWeight(weight: number): number {
     throw new Error("Simulation queue weight must be a positive integer");
   }
   return weight;
+}
+
+function validatePriority(priority: number): number {
+  if (!Number.isInteger(priority)) {
+    throw new Error("Simulation queue priority must be an integer");
+  }
+  return priority;
+}
+
+function validateQueuedAt(queuedAt: string): string {
+  if (typeof queuedAt !== "string" || Number.isNaN(Date.parse(queuedAt))) {
+    throw new Error("Simulation queue queuedAt must be a valid timestamp");
+  }
+  return queuedAt;
+}
+
+function validateRequiredString(value: string, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Simulation queue ${fieldName} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function freezeSimulationQueueJob(job: SimulationQueueJob): SimulationQueueJob {
+  return Object.freeze({ ...job }) as SimulationQueueJob;
 }
