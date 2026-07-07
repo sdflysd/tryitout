@@ -13,6 +13,13 @@ import type { ModelProviderService } from "./model-provider-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type { CommercialFeature, CommercialProviderMode, UserTier } from "../../contracts/commercial.js";
 import type { InteractionMode, SimulationType, UserInput } from "../../types.js";
+import type {
+  AccessCodeRecord,
+  AdminAuditLogRecord,
+  CommercialSimulationTaskRecord,
+  CommercialUserRecord,
+  UserFeedbackRecord,
+} from "./types.js";
 
 export interface CommercialApiServices {
   repository: CommercialRepository;
@@ -365,6 +372,77 @@ export function createCommercialApiHandlers(
       }
     },
 
+    async updateAdminSystemSetting(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+      const key = requireParam(request, "key");
+      const body = request.body as { value?: unknown };
+      if (!isJsonObject(body?.value)) {
+        return { status: 400, body: { error: "invalid_setting_value" } };
+      }
+      try {
+        await services.adminService!.updateSystemSetting({
+          adminUserId: admin.id,
+          key,
+          value: body.value,
+        });
+        return {
+          status: 200,
+          body: {
+            setting: {
+              key,
+              value: body.value,
+            },
+          },
+        };
+      } catch (error) {
+        return mapError(error);
+      }
+    },
+
+    async getAdminDashboardSummary(request: CommercialApiRequest): Promise<CommercialApiResponse> {
+      const admin = await requireAdminUser(request);
+      if (isApiResponse(admin)) {
+        return admin;
+      }
+
+      const [users, accessCodes, tasks, feedback, auditLogs] = await Promise.all([
+        services.repository.listUsers(),
+        services.repository.listAccessCodes(),
+        services.repository.listCommercialTasks(),
+        services.repository.listUserFeedback(),
+        services.repository.listAdminAuditLogs(),
+      ]);
+      const balances = await Promise.all(
+        users.map(async (user) => [user.id, (await services.repository.getCreditAccount(user.id))?.balance ?? 0] as const),
+      );
+      const userById = new Map(users.map((user) => [user.id, user]));
+      const balanceByUserId = new Map(balances);
+      const activeTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
+
+      return {
+        status: 200,
+        body: {
+          overview: {
+            activeUsers: users.filter((user) => !user.disabledAt).length,
+            creditsHeld: activeTasks.reduce((total, task) => total + task.creditCost, 0),
+            openTasks: activeTasks.length,
+            feedbackCount: feedback.length,
+          },
+          users: users.map((user) => mapAdminUser(user, balanceByUserId.get(user.id) ?? 0)),
+          accessCodes: accessCodes.map(mapAdminAccessCode),
+          tasks: tasks.map((task) => mapAdminTask(task, userById)),
+          feedback: feedback.map((entry) => mapAdminFeedback(entry, userById)),
+          auditLogs: auditLogs
+            .slice()
+            .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+            .map((entry) => mapAdminAuditLog(entry, userById)),
+        },
+      };
+    },
+
     async listAdminAuditLogs(request: CommercialApiRequest): Promise<CommercialApiResponse> {
       const admin = await requireAdminUser(request);
       if (isApiResponse(admin)) {
@@ -397,6 +475,10 @@ function clearSessionCookie(secure: boolean): CommercialApiCookie {
 
 function isApiResponse(value: unknown): value is CommercialApiResponse {
   return typeof value === "object" && value !== null && "status" in value && "body" in value;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function requireParam(request: CommercialApiRequest, key: string): string {
@@ -464,4 +546,115 @@ function mapError(error: unknown): CommercialApiResponse<{ error: string }> {
     return { status, body: { error: error.code } };
   }
   return { status: 500, body: { error: `internal_error_${randomUUID().slice(0, 8)}` } };
+}
+
+function mapAdminUser(user: CommercialUserRecord, balance: number) {
+  return {
+    id: user.id,
+    email: user.email,
+    status: user.disabledAt ? "已禁用" : "正常",
+    balance,
+    tier: translateTier(user.tier),
+  };
+}
+
+function mapAdminAccessCode(accessCode: AccessCodeRecord) {
+  return {
+    id: accessCode.id,
+    maskedCode: accessCode.maskedCode,
+    status: translateAccessCodeStatus(accessCode.status),
+    credits: accessCode.creditAmount,
+    tier: translateTier(accessCode.tier),
+  };
+}
+
+function mapAdminTask(
+  task: CommercialSimulationTaskRecord,
+  userById: Map<string, CommercialUserRecord>,
+) {
+  return {
+    id: task.id,
+    userEmail: userById.get(task.userId)?.email ?? task.userId,
+    status: translateTaskStatus(task.status),
+    scenario: translateScenario(task.scenario),
+    creditCost: task.creditCost,
+  };
+}
+
+function mapAdminFeedback(
+  feedback: UserFeedbackRecord,
+  userById: Map<string, CommercialUserRecord>,
+) {
+  return {
+    id: feedback.id,
+    userEmail: userById.get(feedback.userId)?.email ?? feedback.userId,
+    rating: feedback.rating,
+    useful: feedback.useful,
+    text: feedback.text ?? "",
+  };
+}
+
+function mapAdminAuditLog(
+  entry: AdminAuditLogRecord,
+  userById: Map<string, CommercialUserRecord>,
+) {
+  return {
+    id: entry.id,
+    action: translateAuditAction(entry.action),
+    target: entry.targetId,
+    actor: userById.get(entry.adminUserId)?.email ?? entry.adminUserId,
+  };
+}
+
+function translateTier(tier: UserTier): string {
+  if (tier === "business") {
+    return "企业版";
+  }
+  if (tier === "pro") {
+    return "专业版";
+  }
+  return "基础版";
+}
+
+function translateAccessCodeStatus(status: AccessCodeRecord["status"]): string {
+  const labels: Record<AccessCodeRecord["status"], string> = {
+    active: "可用",
+    redeemed: "已兑换",
+    disabled: "已禁用",
+    expired: "已过期",
+  };
+  return labels[status];
+}
+
+function translateTaskStatus(status: CommercialSimulationTaskRecord["status"]): string {
+  const labels: Record<CommercialSimulationTaskRecord["status"], string> = {
+    queued: "排队中",
+    running: "运行中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    refunded: "已退款",
+  };
+  return labels[status];
+}
+
+function translateScenario(scenario: SimulationType): string {
+  const labels: Record<SimulationType, string> = {
+    side_hustle: "副业",
+    dating: "关系",
+    life_choice: "人生选择",
+  };
+  return labels[scenario];
+}
+
+function translateAuditAction(action: string): string {
+  const labels: Record<string, string> = {
+    "access_code.created": "创建兑换码",
+    "access_code.batch_created": "批量创建兑换码",
+    "access_code.disabled": "禁用兑换码",
+    "credits.adjusted": "积分调整",
+    "user.disabled": "禁用用户",
+    "system_setting.updated": "更新系统设置",
+  };
+  return labels[action] ?? action;
 }

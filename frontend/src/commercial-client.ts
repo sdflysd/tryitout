@@ -16,6 +16,55 @@ export interface CommercialCreditsResponse {
   balance: number;
 }
 
+export interface AdminDashboardSummary {
+  overview: {
+    activeUsers: number;
+    creditsHeld: number;
+    openTasks: number;
+    feedbackCount: number;
+  };
+  users: Array<{
+    id: string;
+    email: string;
+    status: string;
+    balance: number;
+    tier: string;
+  }>;
+  accessCodes: Array<{
+    id: string;
+    maskedCode: string;
+    status: string;
+    credits: number;
+    tier: string;
+  }>;
+  tasks: Array<{
+    id: string;
+    userEmail: string;
+    status: string;
+    scenario: string;
+    creditCost: number;
+  }>;
+  feedback: Array<{
+    id: string;
+    userEmail: string;
+    rating: number;
+    useful: boolean;
+    text: string;
+  }>;
+  auditLogs: Array<{
+    id: string;
+    action: string;
+    target: string;
+    actor: string;
+  }>;
+}
+
+export interface CreatedAdminAccessCode {
+  accessCodeId: string;
+  rawCode: string;
+  maskedCode: string;
+}
+
 export async function registerCommercialUser(
   input: { email: string; password: string },
   fetchImpl: typeof fetch = fetch,
@@ -85,6 +134,92 @@ export async function redeemCommercialAccessCode(
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
+    }),
+  );
+}
+
+export async function getAdminDashboardSummary(
+  fetchImpl: typeof fetch = fetch,
+): Promise<AdminDashboardSummary> {
+  return readJsonResponse(
+    await fetchImpl("/api/admin/summary", {
+      credentials: "include",
+    }),
+  );
+}
+
+export async function createAdminAccessCode(
+  input: { creditAmount: number; tier: CommercialEntitlements["tier"]; features: CommercialEntitlements["features"] },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ accessCode: CreatedAdminAccessCode }> {
+  return readJsonResponse(
+    await fetchImpl("/api/admin/access-codes", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function createAdminAccessCodeBatch(
+  input: {
+    count: number;
+    creditAmount: number;
+    tier: CommercialEntitlements["tier"];
+    features: CommercialEntitlements["features"];
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ accessCodes: CreatedAdminAccessCode[] }> {
+  return readJsonResponse(
+    await fetchImpl("/api/admin/access-codes/batch", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function disableAdminAccessCode(
+  accessCodeId: string,
+  reason: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean }> {
+  return readJsonResponse(
+    await fetchImpl(`/api/admin/access-codes/${encodeURIComponent(accessCodeId)}/disable`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }),
+  );
+}
+
+export async function adjustAdminCredits(
+  input: { userId: string; amount: number; reason: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ balance: number; ledgerEntryId: string }> {
+  return readJsonResponse(
+    await fetchImpl("/api/admin/credits/adjust", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateAdminSystemSetting(
+  input: { key: string; value: Record<string, unknown> },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ setting: { key: string; value: Record<string, unknown> } }> {
+  return readJsonResponse(
+    await fetchImpl(`/api/admin/settings/${encodeURIComponent(input.key)}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: input.value }),
     }),
   );
 }

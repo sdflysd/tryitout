@@ -27,16 +27,45 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
-test("app can render compact commercial account and credit controls", async () => {
+test("commercial mode renders a dedicated Chinese auth screen when signed out", async () => {
   const { default: App } = await import("./App.js");
   const html = renderToStaticMarkup(<App commercialMode />);
 
-  assert.match(html, /Commercial account/);
-  assert.match(html, /Access code/);
-  assert.match(html, /Credit balance/);
+  assert.match(html, /id="commercial-auth-screen"/);
+  assert.match(html, /登录 TryItOut 商用版/);
+  assert.match(html, /邮箱/);
+  assert.match(html, /密码/);
+  assert.match(html, /登录/);
+  assert.match(html, /注册/);
+  assert.doesNotMatch(html, /id="commercial-account-bar"/);
+  assert.doesNotMatch(html, /Commercial account/);
 });
 
-test("app renders admin dashboard skeleton for admin commercial users", async () => {
+test("commercial mode renders a compact Chinese account bar after sign in", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(
+    <App
+      commercialMode
+      initialCommercialUser={{
+        id: "user_1",
+        email: "user@tryitout.ai",
+        tier: "basic",
+        features: [],
+        isAdmin: false,
+      }}
+      initialCreditBalance={12}
+    />,
+  );
+
+  assert.match(html, /id="commercial-account-bar"/);
+  assert.match(html, /当前账号/);
+  assert.match(html, /积分余额：12/);
+  assert.match(html, /兑换码/);
+  assert.match(html, /退出/);
+  assert.doesNotMatch(html, /id="commercial-auth-screen"/);
+});
+
+test("app renders Chinese admin dashboard for admin commercial users", async () => {
   const { default: App } = await import("./App.js");
   const html = renderToStaticMarkup(
     <App
@@ -51,8 +80,9 @@ test("app renders admin dashboard skeleton for admin commercial users", async ()
     />,
   );
 
-  assert.match(html, /Commercial Admin/);
+  assert.match(html, /商用后台/);
   assert.match(html, /admin-dashboard-root/);
+  assert.doesNotMatch(html, /Operations data placeholder/);
 });
 
 test("view changes can reset scroll before showing a new workflow", async () => {

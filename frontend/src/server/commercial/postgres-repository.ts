@@ -124,6 +124,17 @@ interface UserModelProviderRow {
   updated_at: Date | string;
 }
 
+interface UserFeedbackRow {
+  id: string;
+  user_id: string;
+  task_id: string;
+  report_id: string;
+  rating: number;
+  useful: boolean;
+  text: string | null;
+  created_at: Date | string;
+}
+
 interface AuditLogRow {
   id: string;
   admin_user_id: string;
@@ -193,6 +204,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
       normalizeEmail(email),
     ]);
     return mapUser(result.rows[0]);
+  }
+
+  async listUsers(): Promise<CommercialUserRecord[]> {
+    const result = await this.client.query<UserRow>("SELECT * FROM users ORDER BY created_at DESC");
+    return result.rows.map((row) => mapUser(row)).filter(isPresent);
   }
 
   async saveSession(session: CommercialSessionRecord): Promise<void> {
@@ -339,6 +355,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapAccessCode(result.rows[0]);
   }
 
+  async listAccessCodes(): Promise<AccessCodeRecord[]> {
+    const result = await this.client.query<AccessCodeRow>("SELECT * FROM access_codes ORDER BY created_at DESC");
+    return result.rows.map((row) => mapAccessCode(row)).filter(isPresent);
+  }
+
   async saveAccessCodeRedemption(redemption: AccessCodeRedemptionRecord): Promise<void> {
     await this.client.query(
       `INSERT INTO access_code_redemptions (
@@ -413,6 +434,13 @@ export class PostgresCommercialRepository implements CommercialRepository {
     const result = await this.client.query<CommercialTaskRow>(
       "SELECT * FROM simulation_tasks WHERE user_id = $1 AND status IN ('queued', 'running')",
       [userId],
+    );
+    return result.rows.map((row) => mapCommercialTask(row)).filter(isPresent);
+  }
+
+  async listCommercialTasks(): Promise<CommercialSimulationTaskRecord[]> {
+    const result = await this.client.query<CommercialTaskRow>(
+      "SELECT * FROM simulation_tasks ORDER BY created_at DESC",
     );
     return result.rows.map((row) => mapCommercialTask(row)).filter(isPresent);
   }
@@ -493,6 +521,13 @@ export class PostgresCommercialRepository implements CommercialRepository {
         feedback.createdAt,
       ],
     );
+  }
+
+  async listUserFeedback(): Promise<UserFeedbackRecord[]> {
+    const result = await this.client.query<UserFeedbackRow>(
+      "SELECT * FROM user_feedback ORDER BY created_at DESC",
+    );
+    return result.rows.map((row) => mapUserFeedback(row)).filter(isPresent);
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {
@@ -714,6 +749,22 @@ function mapUserModelProvider(
     model: row.model_name,
     createdAt: requiredDate(row.created_at),
     updatedAt: requiredDate(row.updated_at),
+  };
+}
+
+function mapUserFeedback(row: UserFeedbackRow | undefined): UserFeedbackRecord | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    id: row.id,
+    userId: row.user_id,
+    taskId: row.task_id,
+    reportId: row.report_id,
+    rating: row.rating,
+    useful: row.useful,
+    text: row.text ?? undefined,
+    createdAt: requiredDate(row.created_at),
   };
 }
 

@@ -139,3 +139,64 @@ test("audit log records can be appended and listed", async () => {
     "access_code.disabled",
   ]);
 });
+
+test("admin list methods expose users, access codes, tasks, and feedback", async () => {
+  const repository = new InMemoryCommercialRepository();
+
+  await repository.saveUser({
+    id: "user_1",
+    email: "user@tryitout.ai",
+    passwordHash: "hash",
+    tier: "pro",
+    features: [],
+    isAdmin: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.saveCreditAccount({
+    userId: "user_1",
+    balance: 10,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.saveAccessCode({
+    id: "code_1",
+    codeHash: "hash",
+    maskedCode: "TIO-ABCD-****-WXYZ",
+    status: "active",
+    creditAmount: 10,
+    tier: "basic",
+    features: [],
+    createdByAdminUserId: "admin_1",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.saveCommercialTask({
+    id: "task_1",
+    userId: "user_1",
+    status: "queued",
+    scenario: "side_hustle",
+    userInput: "launch",
+    interactionMode: "legacy",
+    providerMode: "platform",
+    creditCost: 1,
+    creditHoldLedgerEntryId: "hold_1",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.appendUserFeedback({
+    id: "feedback_1",
+    userId: "user_1",
+    taskId: "task_1",
+    reportId: "report_1",
+    rating: 5,
+    useful: true,
+    text: "useful",
+    createdAt: now,
+  });
+
+  assert.deepEqual((await repository.listUsers()).map((user) => user.email), ["user@tryitout.ai"]);
+  assert.deepEqual((await repository.listAccessCodes()).map((code) => code.maskedCode), ["TIO-ABCD-****-WXYZ"]);
+  assert.deepEqual((await repository.listCommercialTasks()).map((task) => task.id), ["task_1"]);
+  assert.deepEqual((await repository.listUserFeedback()).map((feedback) => feedback.text), ["useful"]);
+});

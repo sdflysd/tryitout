@@ -20,6 +20,7 @@ export interface CommercialRepository {
   saveUser(user: CommercialUserRecord): Promise<void>;
   getUser(userId: string): Promise<CommercialUserRecord | undefined>;
   findUserByEmail(email: string): Promise<CommercialUserRecord | undefined>;
+  listUsers(): Promise<CommercialUserRecord[]>;
 
   saveSession(session: CommercialSessionRecord): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<CommercialSessionRecord | undefined>;
@@ -35,12 +36,14 @@ export interface CommercialRepository {
   saveAccessCode(accessCode: AccessCodeRecord): Promise<void>;
   findAccessCodeByHash(codeHash: string): Promise<AccessCodeRecord | undefined>;
   getAccessCode(accessCodeId: string): Promise<AccessCodeRecord | undefined>;
+  listAccessCodes(): Promise<AccessCodeRecord[]>;
   saveAccessCodeRedemption(redemption: AccessCodeRedemptionRecord): Promise<void>;
   findAccessCodeRedemption(accessCodeId: string): Promise<AccessCodeRedemptionRecord | undefined>;
 
   saveCommercialTask(task: CommercialSimulationTaskRecord): Promise<void>;
   getCommercialTask(taskId: string): Promise<CommercialSimulationTaskRecord | undefined>;
   listActiveCommercialTasksForUser(userId: string): Promise<CommercialSimulationTaskRecord[]>;
+  listCommercialTasks(): Promise<CommercialSimulationTaskRecord[]>;
 
   saveSimulationReport(report: SimulationReportRecord): Promise<void>;
   getSimulationReport(reportId: string): Promise<SimulationReportRecord | undefined>;
@@ -51,6 +54,7 @@ export interface CommercialRepository {
   deleteUserModelProvider(userId: string): Promise<void>;
 
   appendUserFeedback(feedback: UserFeedbackRecord): Promise<void>;
+  listUserFeedback(): Promise<UserFeedbackRecord[]>;
   appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void>;
 
   appendAdminAuditLog(entry: AdminAuditLogRecord): Promise<void>;
@@ -95,6 +99,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       }
     }
     return undefined;
+  }
+
+  async listUsers(): Promise<CommercialUserRecord[]> {
+    return [...this.users.values()]
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((user) => cloneRecord(user));
   }
 
   async saveSession(session: CommercialSessionRecord): Promise<void> {
@@ -168,6 +178,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return cloneRecord(this.accessCodes.get(accessCodeId));
   }
 
+  async listAccessCodes(): Promise<AccessCodeRecord[]> {
+    return [...this.accessCodes.values()]
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((accessCode) => cloneRecord(accessCode));
+  }
+
   async saveAccessCodeRedemption(redemption: AccessCodeRedemptionRecord): Promise<void> {
     this.accessCodeRedemptions.set(redemption.accessCodeId, cloneRecord(redemption));
   }
@@ -189,6 +205,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async listActiveCommercialTasksForUser(userId: string): Promise<CommercialSimulationTaskRecord[]> {
     return [...this.tasks.values()]
       .filter((task) => task.userId === userId && ["queued", "running"].includes(task.status))
+      .map((task) => cloneRecord(task));
+  }
+
+  async listCommercialTasks(): Promise<CommercialSimulationTaskRecord[]> {
+    return [...this.tasks.values()]
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map((task) => cloneRecord(task));
   }
 
@@ -229,6 +251,13 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {
     this.feedback.push(cloneRecord(feedback));
+  }
+
+  async listUserFeedback(): Promise<UserFeedbackRecord[]> {
+    return this.feedback
+      .slice()
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((feedback) => cloneRecord(feedback));
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {

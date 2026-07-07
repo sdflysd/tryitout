@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, KeyRound, LogOut, Sparkles, WalletCards } from "lucide-react";
+import { Flame, KeyRound, LogIn, LogOut, Sparkles, UserPlus, WalletCards } from "lucide-react";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import HomeView from "./components/HomeView";
@@ -54,6 +54,7 @@ type ViewState = "home" | "input" | "generating" | "report";
 interface AppProps {
   commercialMode?: boolean;
   initialCommercialUser?: CommercialUser;
+  initialCreditBalance?: number;
 }
 
 export const HISTORY_STORAGE_KEY = "money_simulator_history";
@@ -117,6 +118,7 @@ export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidat
 export default function App({
   commercialMode = isCommercialClientModeEnabled(),
   initialCommercialUser,
+  initialCreditBalance = 0,
 }: AppProps = {}) {
   const [view, setView] = useState<ViewState>("home");
   const [historyList, setHistoryList] = useState<Simulation[]>([]);
@@ -134,7 +136,7 @@ export default function App({
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<AgentRuntimeCapabilities | undefined>(undefined);
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [commercialUser, setCommercialUser] = useState<CommercialUser | undefined>(initialCommercialUser);
-  const [creditBalance, setCreditBalance] = useState(0);
+  const [creditBalance, setCreditBalance] = useState(initialCreditBalance);
   const [commercialEmail, setCommercialEmail] = useState("");
   const [commercialPassword, setCommercialPassword] = useState("");
   const [accessCode, setAccessCode] = useState("");
@@ -456,6 +458,7 @@ export default function App({
       const credits = await getCommercialCredits();
       setCreditBalance(credits.balance);
       setCommercialPassword("");
+      setCommercialMessage(mode === "login" ? "登录成功。" : "注册成功。");
     } catch (error) {
       setCommercialMessage(error instanceof Error ? error.message : "auth_failed");
     }
@@ -468,7 +471,7 @@ export default function App({
       const result = await redeemCommercialAccessCode(accessCode);
       setCreditBalance(result.balance);
       setAccessCode("");
-      setCommercialMessage("Access code redeemed.");
+      setCommercialMessage("兑换码已到账。");
     } catch (error) {
       setCommercialMessage(error instanceof Error ? error.message : "redeem_failed");
     }
@@ -537,76 +540,48 @@ export default function App({
         </div>
       </header>
 
-      {commercialMode && (
+      {commercialMode && !commercialUser && (
+        <CommercialAuthScreen
+          email={commercialEmail}
+          password={commercialPassword}
+          message={commercialMessage}
+          onEmailChange={setCommercialEmail}
+          onPasswordChange={setCommercialPassword}
+          onSubmit={(mode) => void handleCommercialAuth(mode)}
+        />
+      )}
+
+      {commercialMode && commercialUser && (
         <section
           id="commercial-account-bar"
           className="border-b border-white/10 bg-[#0a0f1f] px-4 py-3 text-white"
-          aria-label="Commercial account"
+          aria-label="商用账号"
         >
-          <div className="mx-auto grid max-w-4xl gap-3 md:grid-cols-[1fr_auto] md:items-center">
+          <div className="mx-auto grid max-w-6xl gap-3 md:grid-cols-[1fr_auto] md:items-center">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <div className="inline-flex items-center gap-2 text-xs font-black text-white/80">
                 <WalletCards className="h-4 w-4 text-emerald-300" />
-                <span>Commercial account</span>
+                <span>当前账号</span>
               </div>
               <span className="inline-flex w-fit items-center gap-1 rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">
-                Credit balance: {creditBalance}
+                积分余额：{creditBalance}
               </span>
-              {commercialUser ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/66">
-                  <span>{commercialUser.email}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleCommercialLogout()}
-                    className="inline-flex min-h-9 items-center gap-1 rounded-md border border-white/12 bg-white/7 px-2 text-white/70 transition-colors hover:bg-white/12"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span>Logout</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <label className="sr-only" htmlFor="commercial-email">Email</label>
-                  <input
-                    id="commercial-email"
-                    type="email"
-                    value={commercialEmail}
-                    onChange={(event) => setCommercialEmail(event.target.value)}
-                    placeholder="Email"
-                    className="h-9 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
-                  />
-                  <label className="sr-only" htmlFor="commercial-password">Password</label>
-                  <input
-                    id="commercial-password"
-                    type="password"
-                    value={commercialPassword}
-                    onChange={(event) => setCommercialPassword(event.target.value)}
-                    placeholder="Password"
-                    className="h-9 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleCommercialAuth("login")}
-                      className="h-9 rounded-md bg-amber-300 px-3 text-xs font-black text-slate-950 transition-colors hover:bg-amber-200"
-                    >
-                      Login
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleCommercialAuth("register")}
-                      className="h-9 rounded-md border border-white/14 bg-white/8 px-3 text-xs font-black text-white transition-colors hover:bg-white/12"
-                    >
-                      Register
-                    </button>
-                  </div>
-                </div>
-              )}
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/66">
+                <span>{commercialUser.email}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleCommercialLogout()}
+                  className="inline-flex min-h-9 items-center gap-1 rounded-md border border-white/12 bg-white/7 px-2 text-white/70 transition-colors hover:bg-white/12"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>退出</span>
+                </button>
+              </div>
             </div>
             <form onSubmit={handleRedeemAccessCode} className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <label className="inline-flex items-center gap-2 text-xs font-black text-white/72" htmlFor="commercial-access-code">
                 <KeyRound className="h-4 w-4 text-amber-300" />
-                <span>Access code</span>
+                <span>兑换码</span>
               </label>
               <input
                 id="commercial-access-code"
@@ -619,7 +594,7 @@ export default function App({
                 type="submit"
                 className="h-9 rounded-md bg-emerald-400 px-3 text-xs font-black text-emerald-950 transition-colors hover:bg-emerald-300"
               >
-                Redeem
+                兑换
               </button>
             </form>
             {commercialMessage && (
@@ -632,6 +607,7 @@ export default function App({
       )}
 
       {/* Main Container */}
+      {(!commercialMode || commercialUser) && (
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
         <AnimatePresence mode="wait">
           {view === "home" && (
@@ -754,6 +730,7 @@ export default function App({
           )}
         </AnimatePresence>
       </main>
+      )}
 
       {/* Share Poster Modal Overlay */}
       <AnimatePresence>
@@ -765,6 +742,99 @@ export default function App({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function CommercialAuthScreen({
+  email,
+  password,
+  message,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+}: {
+  email: string;
+  password: string;
+  message: string;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onSubmit: (mode: "login" | "register") => void;
+}) {
+  return (
+    <main
+      id="commercial-auth-screen"
+      className="flex flex-1 items-center justify-center px-4 py-10"
+      aria-label="商用版登录"
+    >
+      <section className="grid w-full max-w-5xl gap-6 md:grid-cols-[1fr_0.85fr] md:items-center">
+        <div className="max-w-xl">
+          <div className="inline-flex items-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100">
+            <WalletCards className="h-4 w-4" aria-hidden="true" />
+            <span>本机商用测试模式</span>
+          </div>
+          <h1 className="mt-5 text-4xl font-black leading-tight text-white md:text-5xl">
+            登录 TryItOut 商用版
+          </h1>
+          <p className="mt-4 text-sm font-semibold leading-7 text-white/64">
+            账号、积分、兑换码和队列任务都会走本机 Postgres 与 Redis。登录后再进入沙盘，管理员账号会直接进入商用后台。
+          </p>
+        </div>
+
+        <form
+          className="rounded-md border border-white/10 bg-white/7 p-5 shadow-2xl shadow-black/20"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit("login");
+          }}
+        >
+          <h2 className="text-xl font-black text-white">账号登录</h2>
+          <label className="mt-4 block text-xs font-bold text-white/70" htmlFor="commercial-email">
+            邮箱
+          </label>
+          <input
+            id="commercial-email"
+            type="email"
+            value={email}
+            onChange={(event) => onEmailChange(event.target.value)}
+            placeholder="local-admin@tryitout.dev"
+            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 placeholder:text-slate-400"
+          />
+          <label className="mt-3 block text-xs font-bold text-white/70" htmlFor="commercial-password">
+            密码
+          </label>
+          <input
+            id="commercial-password"
+            type="password"
+            value={password}
+            onChange={(event) => onPasswordChange(event.target.value)}
+            placeholder="请输入密码"
+            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 placeholder:text-slate-400"
+          />
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <button
+              type="submit"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-amber-300 px-4 text-sm font-black text-slate-950 transition-colors hover:bg-amber-200"
+            >
+              <LogIn className="h-4 w-4" aria-hidden="true" />
+              <span>登录</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSubmit("register")}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-white/14 bg-white/8 px-4 text-sm font-black text-white transition-colors hover:bg-white/12"
+            >
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              <span>注册</span>
+            </button>
+          </div>
+          {message && (
+            <div className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100" aria-live="polite">
+              {message}
+            </div>
+          )}
+        </form>
+      </section>
+    </main>
   );
 }
 

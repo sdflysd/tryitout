@@ -280,3 +280,23 @@ test("appendAdminAuditLog inserts actor, action, target, and metadata", async ()
     now,
   ]);
 });
+
+test("admin list methods query users, access codes, tasks, and feedback", async () => {
+  const client = new FakeQueryClient();
+  client.rows.push([], [], [], []);
+  const repository = new PostgresCommercialRepository(client);
+
+  await repository.listUsers();
+  await repository.listAccessCodes();
+  await repository.listCommercialTasks();
+  await repository.listUserFeedback();
+
+  assert.match(client.calls[0].sql, /FROM users/i);
+  assert.match(client.calls[0].sql, /ORDER BY created_at DESC/i);
+  assert.match(client.calls[1].sql, /FROM access_codes/i);
+  assert.match(client.calls[1].sql, /ORDER BY created_at DESC/i);
+  assert.match(client.calls[2].sql, /FROM simulation_tasks/i);
+  assert.match(client.calls[2].sql, /ORDER BY created_at DESC/i);
+  assert.match(client.calls[3].sql, /FROM user_feedback/i);
+  assert.match(client.calls[3].sql, /ORDER BY created_at DESC/i);
+});

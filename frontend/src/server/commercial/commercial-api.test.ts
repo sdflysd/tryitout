@@ -87,6 +87,27 @@ interface AuditLogsBody {
   }>;
 }
 
+interface UpdatedSettingBody {
+  setting: {
+    key: string;
+    value: Record<string, unknown>;
+  };
+}
+
+interface AdminSummaryBody {
+  overview: {
+    activeUsers: number;
+    creditsHeld: number;
+    openTasks: number;
+    feedbackCount: number;
+  };
+  users: Array<{ email: string; balance: number; status: string; tier: string }>;
+  accessCodes: Array<{ id: string; maskedCode: string; status: string; credits: number }>;
+  tasks: Array<{ id: string; status: string; userEmail: string; creditCost: number }>;
+  feedback: Array<{ id: string; rating: number; useful: boolean; userEmail: string }>;
+  auditLogs: Array<{ action: string; actor: string; target: string }>;
+}
+
 interface FeedbackBody {
   feedback: {
     taskId: string;
@@ -489,4 +510,74 @@ test("admin can adjust credits", async () => {
   assert.equal(response.status, 200);
   assert.equal((response.body as BalanceBody).balance, 9);
   assert.equal((await repository.getCreditAccount(user.id))?.balance, 9);
+});
+
+test("admin can update system setting", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+
+  const response = await handlers.updateAdminSystemSetting({
+    sessionToken: adminToken,
+    params: { key: "max_weighted_concurrency" },
+    body: { value: { value: 6 } },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((response.body as UpdatedSettingBody).setting, {
+    key: "max_weighted_concurrency",
+    value: { value: 6 },
+  });
+  assert.deepEqual((await repository.getSystemSetting("max_weighted_concurrency"))?.value, { value: 6 });
+  const logs = await repository.listAdminAuditLogs();
+  assert.equal(logs.at(-1)?.action, "system_setting.updated");
+});
+
+test("admin can read dashboard summary with live repository data", async () => {
+  const { repository, authService, handlers } = createHarness();
+  const adminToken = await createAdminSession(repository, authService, handlers);
+  const userToken = await registerAndLogin(handlers);
+  const user = (await handlers.me({ sessionToken: userToken })).body.user;
+  assert.ok(user);
+  await repository.saveCreditAccount({
+    userId: user.id,
+    balance: 10,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const code = await handlers.createAdminAccessCode({
+    sessionToken: adminToken,
+    body: { creditAmount: 10, tier: "basic", features: [] },
+  });
+  const created = await handlers.createTask({
+    sessionToken: userToken,
+    body: {
+      scenario: "side_hustle",
+      userInput: "launch",
+      interactionMode: "legacy",
+      providerMode: "platform",
+    },
+  });
+  await repository.appendUserFeedback({
+    id: "feedback_1",
+    userId: user.id,
+    taskId: (created.body as TaskBody).taskId,
+    reportId: "report_1",
+    rating: 5,
+    useful: true,
+    text: "useful",
+    createdAt: now,
+  });
+
+  const summary = await handlers.getAdminDashboardSummary({ sessionToken: adminToken });
+
+  assert.equal(summary.status, 200);
+  const body = summary.body as AdminSummaryBody;
+  assert.equal(body.overview.activeUsers, 2);
+  assert.equal(body.overview.openTasks, 1);
+  assert.equal(body.overview.feedbackCount, 1);
+  assert.equal(body.users.find((row) => row.email === user.email)?.balance, 9);
+  assert.equal(body.accessCodes.at(0)?.id, (code.body as CreatedAccessCodeBody).accessCode.accessCodeId);
+  assert.equal(body.tasks.at(0)?.userEmail, user.email);
+  assert.equal(body.feedback.at(0)?.rating, 5);
+  assert.equal(body.auditLogs.at(0)?.action, "创建兑换码");
 });

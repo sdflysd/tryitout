@@ -38,10 +38,12 @@ test("registerCommercialAdminRoutes mounts audited admin APIs", () => {
   assert.deepEqual(
     app.routes.map((route) => `${route.method} ${route.path}`),
     [
+      "GET /api/admin/summary",
       "POST /api/admin/access-codes",
       "POST /api/admin/access-codes/batch",
       "POST /api/admin/access-codes/:accessCodeId/disable",
       "POST /api/admin/credits/adjust",
+      "POST /api/admin/settings/:key",
       "GET /api/admin/audit-logs",
     ],
   );
@@ -87,6 +89,46 @@ test("admin access code disable route forwards params, body, and session token",
   ]);
 });
 
+test("admin setting route forwards key, body, and session token", async () => {
+  const app = new FakeExpressApp();
+  const calls: unknown[] = [];
+
+  registerCommercialAdminRoutes({
+    app,
+    requireCommercialServices: () => createFakeServices(calls),
+    getSessionToken: () => "session_admin",
+    sendCommercialApiResponse: (_res, result) => {
+      calls.push({ sentStatus: result.status });
+    },
+  });
+
+  const route = app.routes.find(
+    (candidate) => candidate.path === "/api/admin/settings/:key",
+  );
+  assert.ok(route);
+
+  await route.handler(
+    {
+      body: { value: { value: 6 } },
+      params: { key: "max_weighted_concurrency" },
+      headers: {},
+    },
+    {},
+  );
+
+  assert.deepEqual(calls, [
+    {
+      handler: "updateAdminSystemSetting",
+      request: {
+        body: { value: { value: 6 } },
+        params: { key: "max_weighted_concurrency" },
+        sessionToken: "session_admin",
+      },
+    },
+    { sentStatus: 200 },
+  ]);
+});
+
 function createFakeServices(calls: unknown[] = []) {
   const ok = (handler: string, request: unknown): CommercialApiResponse => {
     calls.push({ handler, request });
@@ -99,6 +141,8 @@ function createFakeServices(calls: unknown[] = []) {
       createAdminAccessCodeBatch: (request: unknown) => ok("createAdminAccessCodeBatch", request),
       disableAdminAccessCode: (request: unknown) => ok("disableAdminAccessCode", request),
       adjustAdminCredits: (request: unknown) => ok("adjustAdminCredits", request),
+      updateAdminSystemSetting: (request: unknown) => ok("updateAdminSystemSetting", request),
+      getAdminDashboardSummary: (request: unknown) => ok("getAdminDashboardSummary", request),
       listAdminAuditLogs: (request: unknown) => ok("listAdminAuditLogs", request),
     },
   };
