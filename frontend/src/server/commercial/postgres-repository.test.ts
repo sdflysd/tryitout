@@ -2,6 +2,50 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PostgresCommercialRepository } from "./postgres-repository.js";
+import type { CommercialSimulationReportRecord } from "./types.js";
+
+type QueryLog = { sql: string; params?: unknown[] };
+
+function createCapturingRepository(): {
+  queries: QueryLog[];
+  repo: PostgresCommercialRepository;
+} {
+  const queries: QueryLog[] = [];
+  return {
+    queries,
+    repo: new PostgresCommercialRepository({
+      query: async (sql, params) => {
+        queries.push({ sql, params });
+        return { rows: [] };
+      },
+    }),
+  };
+}
+
+function createRowRepository(
+  rows: Array<Record<string, unknown>>,
+): {
+  queries: QueryLog[];
+  repo: PostgresCommercialRepository;
+} {
+  const queries: QueryLog[] = [];
+  return {
+    queries,
+    repo: new PostgresCommercialRepository({
+      query: async <T = Record<string, unknown>>(
+        sql: string,
+        params?: unknown[],
+      ) => {
+        queries.push({ sql, params });
+        return { rows: rows as T[] };
+      },
+    }),
+  };
+}
+
+function parsedJsonParam(params: unknown[] | undefined, index: number): unknown {
+  return JSON.parse(params?.[index] as string);
+}
 
 test("postgres repository maps saveUser to users upsert", async () => {
   const queries: Array<{ sql: string; params?: unknown[] }> = [];
@@ -253,4 +297,587 @@ test("postgres repository supplies defaults for not-null optional fields", async
   assert.equal(queries[1].params?.[7], 0);
   assert.equal(queries[2].params?.[3], 1);
   assert.equal(queries[3].params?.[16], 0);
+});
+
+test("postgres repository rejects rows missing required columns", async () => {
+  const { repo } = createRowRepository([
+    {
+      id: "task_1",
+      scenario_type: "life_choice",
+      interaction_mode: "enabled",
+      provider_mode: "platform",
+      status: "queued",
+      credit_cost: 3,
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(repo.getCommercialTask("task_1"), /simulation_tasks\.user_id/);
+});
+
+test("postgres repository rejects malformed required array columns", async () => {
+  const { repo } = createRowRepository([
+    {
+      id: "user_1",
+      email: "user@example.test",
+      email_normalized: "user@example.test",
+      password_hash: "hash",
+      role: "user",
+      tier: "basic",
+      status: "active",
+      features: { not: "an array" },
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(repo.findUserByEmail("user@example.test"), /users\.features/);
+});
+
+test("postgres repository rejects malformed required json object columns", async () => {
+  const { repo } = createRowRepository([
+    {
+      id: "batch_1",
+      name: "Launch",
+      code_count: 2,
+      credits: 10,
+      features: [],
+      metadata: [],
+      created_at: "created",
+    },
+  ]);
+
+  await assert.rejects(repo.getAccessCodeBatch("batch_1"), /access_code_batches\.metadata/);
+});
+
+test("postgres repository maps sessions writes and nullable row fields", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveSession({
+    id: "sess_1",
+    userId: "user_1",
+    tokenHash: "token_hash",
+    userAgent: "agent",
+    ipHash: "ip_hash",
+    expiresAt: "expires",
+    revokedAt: "revoked",
+    createdAt: "created",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into user_sessions/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "sess_1",
+    "user_1",
+    "token_hash",
+    "agent",
+    "ip_hash",
+    "expires",
+    "revoked",
+    "created",
+  ]);
+
+  const { repo: readRepo, queries: readQueries } = createRowRepository([
+    {
+      id: "sess_1",
+      user_id: "user_1",
+      token_hash: "token_hash",
+      user_agent: null,
+      ip_hash: null,
+      expires_at: new Date("2026-07-07T01:00:00.000Z"),
+      revoked_at: null,
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.findSessionByTokenHash("token_hash"), {
+    id: "sess_1",
+    userId: "user_1",
+    tokenHash: "token_hash",
+    expiresAt: "2026-07-07T01:00:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  assert.deepEqual(readQueries[0].params, ["token_hash"]);
+});
+
+test("postgres repository maps access code batches writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveAccessCodeBatch({
+    id: "batch_1",
+    createdByUserId: "admin_1",
+    name: "Launch",
+    source: "campaign",
+    codeCount: 2,
+    credits: 10,
+    tier: "pro",
+    features: ["deep_mode"],
+    expiresAt: "expires",
+    disabledAt: "disabled",
+    notes: "notes",
+    metadata: { channel: "email" },
+    createdAt: "created",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into access_code_batches/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "batch_1",
+    "admin_1",
+    "Launch",
+    "campaign",
+    2,
+    10,
+    "pro",
+    JSON.stringify(["deep_mode"]),
+    "expires",
+    "disabled",
+    "notes",
+    JSON.stringify({ channel: "email" }),
+    "created",
+  ]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 7), ["deep_mode"]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 11), {
+    channel: "email",
+  });
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      id: "batch_1",
+      created_by_user_id: null,
+      name: "Launch",
+      source: null,
+      code_count: "2",
+      credits: "10",
+      tier: null,
+      features: ["deep_mode"],
+      expires_at: null,
+      disabled_at: null,
+      notes: null,
+      metadata: { channel: "email" },
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.getAccessCodeBatch("batch_1"), {
+    id: "batch_1",
+    name: "Launch",
+    codeCount: 2,
+    credits: 10,
+    features: ["deep_mode"],
+    metadata: { channel: "email" },
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+});
+
+test("postgres repository maps access codes writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash",
+    codeMask: "TEST-****",
+    status: "redeemed",
+    credits: 10,
+    tier: "pro",
+    features: ["priority_queue"],
+    expiresAt: "expires",
+    redeemedByUserId: "user_1",
+    redeemedAt: "redeemed",
+    disabledAt: "disabled",
+    createdAt: "created",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into access_codes/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "code_1",
+    "batch_1",
+    "hash",
+    "TEST-****",
+    "redeemed",
+    10,
+    "pro",
+    JSON.stringify(["priority_queue"]),
+    "expires",
+    "user_1",
+    "redeemed",
+    "disabled",
+    "created",
+  ]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 7), [
+    "priority_queue",
+  ]);
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash",
+      code_mask: "TEST-****",
+      status: "active",
+      credits: "10",
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: null,
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.findAccessCodeByHash("hash"), {
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash",
+    codeMask: "TEST-****",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+});
+
+test("postgres repository maps access code redemptions inserts and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    creditLedgerId: "ledger_1",
+    credits: 10,
+    tierGranted: "pro",
+    featuresGranted: ["deep_mode"],
+    redeemedAt: "redeemed",
+    metadata: { source: "code" },
+  });
+
+  assert.match(writeQueries[0].sql, /insert into access_code_redemptions/i);
+  assert.doesNotMatch(writeQueries[0].sql, /on conflict/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "redemption_1",
+    "code_1",
+    "user_1",
+    "ledger_1",
+    10,
+    "pro",
+    JSON.stringify(["deep_mode"]),
+    "redeemed",
+    JSON.stringify({ source: "code" }),
+  ]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 6), ["deep_mode"]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 8), {
+    source: "code",
+  });
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      id: "redemption_1",
+      access_code_id: "code_1",
+      user_id: "user_1",
+      credit_ledger_id: null,
+      credits: "10",
+      tier_granted: null,
+      features_granted: [],
+      redeemed_at: new Date("2026-07-07T00:00:00.000Z"),
+      metadata: { source: "code" },
+    },
+  ]);
+
+  assert.deepEqual(
+    await readRepo.findAccessCodeRedemptionByCodeId("code_1"),
+    {
+      id: "redemption_1",
+      accessCodeId: "code_1",
+      userId: "user_1",
+      credits: 10,
+      featuresGranted: [],
+      redeemedAt: "2026-07-07T00:00:00.000Z",
+      metadata: { source: "code" },
+    },
+  );
+});
+
+test("postgres repository maps report writes and nullable JSONB reads", async () => {
+  const publicReport = {
+    id: "simulation_1",
+  } as unknown as NonNullable<CommercialSimulationReportRecord["publicReport"]>;
+  const deepReport = {
+    projectName: "Deep report",
+  } as unknown as NonNullable<CommercialSimulationReportRecord["deepReport"]>;
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+
+  await writeRepo.saveCommercialReport({
+    id: "report_1",
+    taskId: "task_1",
+    userId: "user_1",
+    publicReport,
+    deepReport,
+    shareCard: { title: "Share" },
+    unlocked: true,
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into simulation_reports/i);
+  assert.match(writeQueries[0].sql, /on conflict \(id\) do update/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "report_1",
+    "task_1",
+    "user_1",
+    JSON.stringify(publicReport),
+    JSON.stringify(deepReport),
+    JSON.stringify({ title: "Share" }),
+    true,
+    "created",
+    "updated",
+  ]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 5), {
+    title: "Share",
+  });
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      id: "report_1",
+      task_id: "task_1",
+      user_id: "user_1",
+      public_report: null,
+      deep_report: { projectName: "Deep report" },
+      share_card: null,
+      unlocked: true,
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+      updated_at: "updated",
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.getCommercialReportByTaskId("task_1"), {
+    id: "report_1",
+    taskId: "task_1",
+    userId: "user_1",
+    deepReport: { projectName: "Deep report" },
+    unlocked: true,
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "updated",
+  });
+});
+
+test("postgres repository maps analytics and feedback lists", async () => {
+  const { repo: analyticsRepo } = createRowRepository([
+    {
+      id: "event_1",
+      user_id: null,
+      task_id: "task_1",
+      session_id: null,
+      event_type: "task_started",
+      source: "server",
+      properties: { mode: "enabled" },
+      occurred_at: new Date("2026-07-07T00:00:00.000Z"),
+    },
+  ]);
+  assert.deepEqual(await analyticsRepo.listAnalyticsEvents(), [
+    {
+      id: "event_1",
+      taskId: "task_1",
+      eventType: "task_started",
+      source: "server",
+      properties: { mode: "enabled" },
+      occurredAt: "2026-07-07T00:00:00.000Z",
+    },
+  ]);
+
+  const { repo: feedbackRepo, queries } = createRowRepository([
+    {
+      id: "feedback_1",
+      user_id: "user_1",
+      task_id: null,
+      report_id: "report_1",
+      rating: "5",
+      feedback_type: null,
+      comment: "Useful",
+      metadata: { source: "report" },
+      created_at: new Date("2026-07-07T00:01:00.000Z"),
+    },
+  ]);
+  assert.deepEqual(await feedbackRepo.listUserFeedback("user_1"), [
+    {
+      id: "feedback_1",
+      userId: "user_1",
+      reportId: "report_1",
+      rating: 5,
+      comment: "Useful",
+      metadata: { source: "report" },
+      createdAt: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+  assert.deepEqual(queries[0].params, ["user_1"]);
+});
+
+test("postgres repository maps model provider writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveUserModelProvider({
+    id: "provider_1",
+    userId: "user_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.example.test",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    modelFast: "fast",
+    modelBalanced: "balanced",
+    modelDeep: "deep",
+    status: "active",
+    lastTestedAt: "tested",
+    lastTestStatus: "passed",
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into user_model_providers/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "provider_1",
+    "user_1",
+    "openai",
+    "OpenAI",
+    "https://api.example.test",
+    "encrypted",
+    "sk-****",
+    "fast",
+    "balanced",
+    "deep",
+    "active",
+    "tested",
+    "passed",
+    "created",
+    "updated",
+  ]);
+
+  const { repo: readRepo, queries: readQueries } = createRowRepository([
+    {
+      id: "provider_1",
+      user_id: "user_1",
+      provider: "openai",
+      display_name: "OpenAI",
+      base_url: "https://api.example.test",
+      encrypted_api_key: "encrypted",
+      api_key_mask: "sk-****",
+      model_fast: null,
+      model_balanced: "balanced",
+      model_deep: null,
+      status: "disabled",
+      last_tested_at: new Date("2026-07-07T00:00:00.000Z"),
+      last_test_status: "failed",
+      created_at: "created",
+      updated_at: new Date("2026-07-07T00:01:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.listUserModelProviders("user_1"), [
+    {
+      id: "provider_1",
+      userId: "user_1",
+      provider: "openai",
+      displayName: "OpenAI",
+      baseUrl: "https://api.example.test",
+      encryptedApiKey: "encrypted",
+      apiKeyMask: "sk-****",
+      modelBalanced: "balanced",
+      status: "disabled",
+      lastTestedAt: "2026-07-07T00:00:00.000Z",
+      lastTestStatus: "failed",
+      createdAt: "created",
+      updatedAt: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+  assert.deepEqual(readQueries[0].params, ["user_1"]);
+});
+
+test("postgres repository maps system setting writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveSystemSetting({
+    key: "queue.paused",
+    value: { paused: true },
+    description: "Queue pause flag",
+    updatedByUserId: "admin_1",
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into system_settings/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "queue.paused",
+    JSON.stringify({ paused: true }),
+    "Queue pause flag",
+    "admin_1",
+    "created",
+    "updated",
+  ]);
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 1), {
+    paused: true,
+  });
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      key: "queue.paused",
+      value: { paused: false },
+      description: null,
+      updated_by_user_id: null,
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+      updated_at: "updated",
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.getSystemSetting("queue.paused"), {
+    key: "queue.paused",
+    value: { paused: false },
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "updated",
+  });
+});
+
+test("postgres repository leaves natural-key duplicate handling to database constraints", async () => {
+  const { repo: reportRepo, queries: reportQueries } = createCapturingRepository();
+  await reportRepo.saveCommercialReport({
+    id: "report_1",
+    taskId: "task_1",
+    userId: "user_1",
+    unlocked: false,
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+  assert.match(reportQueries[0].sql, /on conflict \(id\) do update/i);
+  assert.doesNotMatch(reportQueries[0].sql, /on conflict \(task_id\)/i);
+
+  const { repo: providerRepo, queries: providerQueries } = createCapturingRepository();
+  await providerRepo.saveUserModelProvider({
+    id: "provider_1",
+    userId: "user_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.example.test",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+  assert.match(providerQueries[0].sql, /on conflict \(id\) do update/i);
+  assert.doesNotMatch(providerQueries[0].sql, /on conflict \(user_id, provider\)/i);
+
+  const duplicateError = new Error(
+    'duplicate key value violates unique constraint "simulation_reports_task_unique"',
+  );
+  const repo = new PostgresCommercialRepository({
+    query: async () => {
+      throw duplicateError;
+    },
+  });
+
+  await assert.rejects(
+    repo.saveCommercialReport({
+      id: "report_2",
+      taskId: "task_1",
+      userId: "user_1",
+      unlocked: false,
+      createdAt: "created",
+      updatedAt: "updated",
+    }),
+    /simulation_reports_task_unique/,
+  );
 });

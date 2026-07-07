@@ -26,7 +26,15 @@ export interface QueryClient {
   ): Promise<{ rows: T[] }>;
 }
 
-type DbValue = string | number | boolean | null | Date | JsonObject | unknown[];
+type DbValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Date
+  | JsonObject
+  | unknown[];
 type DbRow = Record<string, DbValue>;
 
 export class PostgresCommercialRepository implements CommercialRepository {
@@ -584,6 +592,9 @@ export class PostgresCommercialRepository implements CommercialRepository {
           $1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9
         )
         on conflict (id) do update set
+          -- Updates are keyed by stable id to match InMemoryCommercialRepository.
+          -- A different id with the same task_id should surface the DB unique
+          -- constraint instead of becoming a natural-key upsert.
           task_id = excluded.task_id,
           user_id = excluded.user_id,
           public_report = excluded.public_report,
@@ -711,6 +722,9 @@ export class PostgresCommercialRepository implements CommercialRepository {
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
         )
         on conflict (id) do update set
+          -- Updates are keyed by stable id to match InMemoryCommercialRepository.
+          -- A different id with the same (user_id, provider) should surface the
+          -- DB unique constraint instead of becoming a natural-key upsert.
           user_id = excluded.user_id,
           provider = excluded.provider,
           display_name = excluded.display_name,
@@ -857,41 +871,125 @@ function mapOptional<T>(row: DbRow | undefined, mapper: (row: DbRow) => T): T | 
   return row === undefined ? undefined : mapper(row);
 }
 
-function maybeString(value: DbValue): string | undefined {
+function rowValue(row: DbRow, field: string, table: string): DbValue {
+  if (!Object.hasOwn(row, field)) {
+    throw new Error(`${table}.${field} is required`);
+  }
+
+  return row[field];
+}
+
+function maybeString(value: DbValue, label: string): string | undefined {
   if (value === null || value === undefined) {
     return undefined;
+  }
+
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean" &&
+    !(value instanceof Date)
+  ) {
+    throw new Error(`${label} must be a string or timestamp`);
   }
 
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function stringField(row: DbRow, field: string): string {
-  return maybeString(row[field]) ?? "";
+function optionalStringField(
+  row: DbRow,
+  field: string,
+  table: string,
+): string | undefined {
+  return maybeString(row[field], `${table}.${field}`);
 }
 
-function numberField(row: DbRow, field: string): number {
-  return Number(row[field]);
+function stringField(row: DbRow, field: string, table: string): string {
+  const value = maybeString(rowValue(row, field, table), `${table}.${field}`);
+  if (value === undefined) {
+    throw new Error(`${table}.${field} is required`);
+  }
+
+  return value;
 }
 
-function booleanField(row: DbRow, field: string): boolean {
-  return Boolean(row[field]);
-}
-
-function jsonObjectField(row: DbRow, field: string): JsonObject {
+function optionalNumberField(
+  row: DbRow,
+  field: string,
+  table: string,
+): number | undefined {
   const value = row[field];
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    && !(value instanceof Date)
-    ? (value as JsonObject)
-    : {};
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" && typeof value !== "string") {
+    throw new Error(`${table}.${field} must be a number`);
+  }
+
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) {
+    throw new Error(`${table}.${field} must be a number`);
+  }
+
+  return numberValue;
 }
 
-function maybeJsonObject(row: DbRow, field: string): JsonObject | undefined {
-  return row[field] === null ? undefined : jsonObjectField(row, field);
+function numberField(row: DbRow, field: string, table: string): number {
+  const value = optionalNumberField(row, field, table);
+  if (value === undefined) {
+    throw new Error(`${table}.${field} is required`);
+  }
+
+  return value;
 }
 
-function arrayField<T>(row: DbRow, field: string): T[] {
+function booleanField(row: DbRow, field: string, table: string): boolean {
+  const value = rowValue(row, field, table);
+  if (typeof value !== "boolean") {
+    throw new Error(`${table}.${field} must be a boolean`);
+  }
+
+  return value;
+}
+
+function optionalJsonObjectField(
+  row: DbRow,
+  field: string,
+  table: string,
+): JsonObject | undefined {
   const value = row[field];
-  return Array.isArray(value) ? (value as T[]) : [];
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value instanceof Date
+  ) {
+    throw new Error(`${table}.${field} must be a JSON object`);
+  }
+
+  return value as JsonObject;
+}
+
+function jsonObjectField(row: DbRow, field: string, table: string): JsonObject {
+  const value = optionalJsonObjectField(row, field, table);
+  if (value === undefined) {
+    throw new Error(`${table}.${field} is required`);
+  }
+
+  return value;
+}
+
+function arrayField<T>(row: DbRow, field: string, table: string): T[] {
+  const value = row[field];
+  if (!Array.isArray(value)) {
+    throw new Error(`${table}.${field} must be an array`);
+  }
+
+  return value as T[];
 }
 
 function assignIfDefined<T, K extends keyof T>(
@@ -905,205 +1003,224 @@ function assignIfDefined<T, K extends keyof T>(
 }
 
 function mapCommercialUser(row: DbRow): CommercialUserRecord {
+  const table = "users";
   const record: CommercialUserRecord = {
-    id: stringField(row, "id"),
-    email: stringField(row, "email"),
-    emailNormalized: stringField(row, "email_normalized"),
-    passwordHash: stringField(row, "password_hash"),
-    role: stringField(row, "role") as CommercialUserRecord["role"],
-    tier: stringField(row, "tier") as CommercialUserRecord["tier"],
-    status: stringField(row, "status") as CommercialUserRecord["status"],
-    features: arrayField(row, "features"),
-    createdAt: stringField(row, "created_at"),
-    updatedAt: stringField(row, "updated_at"),
+    id: stringField(row, "id", table),
+    email: stringField(row, "email", table),
+    emailNormalized: stringField(row, "email_normalized", table),
+    passwordHash: stringField(row, "password_hash", table),
+    role: stringField(row, "role", table) as CommercialUserRecord["role"],
+    tier: stringField(row, "tier", table) as CommercialUserRecord["tier"],
+    status: stringField(row, "status", table) as CommercialUserRecord["status"],
+    features: arrayField(row, "features", table),
+    createdAt: stringField(row, "created_at", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
-  assignIfDefined(record, "lastLoginAt", maybeString(row.last_login_at));
+  assignIfDefined(
+    record,
+    "lastLoginAt",
+    optionalStringField(row, "last_login_at", table),
+  );
   return record;
 }
 
 function mapCommercialSession(row: DbRow): CommercialSessionRecord {
+  const table = "user_sessions";
   const record: CommercialSessionRecord = {
-    id: stringField(row, "id"),
-    userId: stringField(row, "user_id"),
-    tokenHash: stringField(row, "token_hash"),
-    expiresAt: stringField(row, "expires_at"),
-    createdAt: stringField(row, "created_at"),
+    id: stringField(row, "id", table),
+    userId: stringField(row, "user_id", table),
+    tokenHash: stringField(row, "token_hash", table),
+    expiresAt: stringField(row, "expires_at", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "userAgent", maybeString(row.user_agent));
-  assignIfDefined(record, "ipHash", maybeString(row.ip_hash));
-  assignIfDefined(record, "revokedAt", maybeString(row.revoked_at));
+  assignIfDefined(record, "userAgent", optionalStringField(row, "user_agent", table));
+  assignIfDefined(record, "ipHash", optionalStringField(row, "ip_hash", table));
+  assignIfDefined(record, "revokedAt", optionalStringField(row, "revoked_at", table));
   return record;
 }
 
 function mapUserCreditAccount(row: DbRow): UserCreditAccountRecord {
+  const table = "user_credit_accounts";
   return {
-    userId: stringField(row, "user_id"),
-    balance: numberField(row, "balance"),
-    frozenCredits: numberField(row, "frozen_credits"),
-    totalRedeemed: numberField(row, "total_redeemed"),
-    totalCaptured: numberField(row, "total_captured"),
-    updatedAt: stringField(row, "updated_at"),
+    userId: stringField(row, "user_id", table),
+    balance: numberField(row, "balance", table),
+    frozenCredits: numberField(row, "frozen_credits", table),
+    totalRedeemed: numberField(row, "total_redeemed", table),
+    totalCaptured: numberField(row, "total_captured", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
 }
 
 function mapCreditLedgerEntry(row: DbRow): CreditLedgerEntryRecord {
+  const table = "credit_ledger";
   const record: CreditLedgerEntryRecord = {
-    id: stringField(row, "id"),
-    userId: stringField(row, "user_id"),
+    id: stringField(row, "id", table),
+    userId: stringField(row, "user_id", table),
     entryType: stringField(
       row,
       "entry_type",
+      table,
     ) as CreditLedgerEntryRecord["entryType"],
-    amount: numberField(row, "amount"),
-    balanceAfter: numberField(row, "balance_after"),
-    idempotencyKey: stringField(row, "idempotency_key"),
-    createdAt: stringField(row, "created_at"),
+    amount: numberField(row, "amount", table),
+    balanceAfter: numberField(row, "balance_after", table),
+    idempotencyKey: stringField(row, "idempotency_key", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "taskId", maybeString(row.task_id));
-  assignIfDefined(record, "accessCodeId", maybeString(row.access_code_id));
-  assignIfDefined(record, "frozenAfter", row.frozen_after === null ? undefined : numberField(row, "frozen_after"));
-  assignIfDefined(record, "reason", maybeString(row.reason));
-  assignIfDefined(record, "metadata", maybeJsonObject(row, "metadata"));
+  assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
+  assignIfDefined(record, "accessCodeId", optionalStringField(row, "access_code_id", table));
+  assignIfDefined(record, "frozenAfter", optionalNumberField(row, "frozen_after", table));
+  assignIfDefined(record, "reason", optionalStringField(row, "reason", table));
+  assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
   return record;
 }
 
 function mapAccessCodeBatch(row: DbRow): AccessCodeBatchRecord {
+  const table = "access_code_batches";
   const record: AccessCodeBatchRecord = {
-    id: stringField(row, "id"),
-    name: stringField(row, "name"),
-    codeCount: numberField(row, "code_count"),
-    credits: numberField(row, "credits"),
-    features: arrayField(row, "features"),
-    metadata: jsonObjectField(row, "metadata"),
-    createdAt: stringField(row, "created_at"),
+    id: stringField(row, "id", table),
+    name: stringField(row, "name", table),
+    codeCount: numberField(row, "code_count", table),
+    credits: numberField(row, "credits", table),
+    features: arrayField(row, "features", table),
+    metadata: jsonObjectField(row, "metadata", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "createdByUserId", maybeString(row.created_by_user_id));
-  assignIfDefined(record, "source", maybeString(row.source));
-  assignIfDefined(record, "tier", maybeString(row.tier) as AccessCodeBatchRecord["tier"]);
-  assignIfDefined(record, "expiresAt", maybeString(row.expires_at));
-  assignIfDefined(record, "disabledAt", maybeString(row.disabled_at));
-  assignIfDefined(record, "notes", maybeString(row.notes));
+  assignIfDefined(record, "createdByUserId", optionalStringField(row, "created_by_user_id", table));
+  assignIfDefined(record, "source", optionalStringField(row, "source", table));
+  assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeBatchRecord["tier"]);
+  assignIfDefined(record, "expiresAt", optionalStringField(row, "expires_at", table));
+  assignIfDefined(record, "disabledAt", optionalStringField(row, "disabled_at", table));
+  assignIfDefined(record, "notes", optionalStringField(row, "notes", table));
   return record;
 }
 
 function mapAccessCode(row: DbRow): AccessCodeRecord {
+  const table = "access_codes";
   const record: AccessCodeRecord = {
-    id: stringField(row, "id"),
-    batchId: stringField(row, "batch_id"),
-    codeHash: stringField(row, "code_hash"),
-    codeMask: stringField(row, "code_mask"),
-    status: stringField(row, "status") as AccessCodeRecord["status"],
-    credits: numberField(row, "credits"),
-    features: arrayField(row, "features"),
-    createdAt: stringField(row, "created_at"),
+    id: stringField(row, "id", table),
+    batchId: stringField(row, "batch_id", table),
+    codeHash: stringField(row, "code_hash", table),
+    codeMask: stringField(row, "code_mask", table),
+    status: stringField(row, "status", table) as AccessCodeRecord["status"],
+    credits: numberField(row, "credits", table),
+    features: arrayField(row, "features", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "tier", maybeString(row.tier) as AccessCodeRecord["tier"]);
-  assignIfDefined(record, "expiresAt", maybeString(row.expires_at));
-  assignIfDefined(record, "redeemedByUserId", maybeString(row.redeemed_by_user_id));
-  assignIfDefined(record, "redeemedAt", maybeString(row.redeemed_at));
-  assignIfDefined(record, "disabledAt", maybeString(row.disabled_at));
+  assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeRecord["tier"]);
+  assignIfDefined(record, "expiresAt", optionalStringField(row, "expires_at", table));
+  assignIfDefined(record, "redeemedByUserId", optionalStringField(row, "redeemed_by_user_id", table));
+  assignIfDefined(record, "redeemedAt", optionalStringField(row, "redeemed_at", table));
+  assignIfDefined(record, "disabledAt", optionalStringField(row, "disabled_at", table));
   return record;
 }
 
 function mapAccessCodeRedemption(row: DbRow): AccessCodeRedemptionRecord {
+  const table = "access_code_redemptions";
   const record: AccessCodeRedemptionRecord = {
-    id: stringField(row, "id"),
-    accessCodeId: stringField(row, "access_code_id"),
-    userId: stringField(row, "user_id"),
-    credits: numberField(row, "credits"),
-    featuresGranted: arrayField(row, "features_granted"),
-    redeemedAt: stringField(row, "redeemed_at"),
-    metadata: jsonObjectField(row, "metadata"),
+    id: stringField(row, "id", table),
+    accessCodeId: stringField(row, "access_code_id", table),
+    userId: stringField(row, "user_id", table),
+    credits: numberField(row, "credits", table),
+    featuresGranted: arrayField(row, "features_granted", table),
+    redeemedAt: stringField(row, "redeemed_at", table),
+    metadata: jsonObjectField(row, "metadata", table),
   };
-  assignIfDefined(record, "creditLedgerId", maybeString(row.credit_ledger_id));
-  assignIfDefined(record, "tierGranted", maybeString(row.tier_granted) as AccessCodeRedemptionRecord["tierGranted"]);
+  assignIfDefined(record, "creditLedgerId", optionalStringField(row, "credit_ledger_id", table));
+  assignIfDefined(record, "tierGranted", optionalStringField(row, "tier_granted", table) as AccessCodeRedemptionRecord["tierGranted"]);
   return record;
 }
 
 function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
+  const table = "simulation_tasks";
   const record: CommercialSimulationTaskRecord = {
-    id: stringField(row, "id"),
-    userId: stringField(row, "user_id"),
+    id: stringField(row, "id", table),
+    userId: stringField(row, "user_id", table),
     scenarioType: stringField(
       row,
       "scenario_type",
+      table,
     ) as CommercialSimulationTaskRecord["scenarioType"],
     interactionMode: stringField(
       row,
       "interaction_mode",
+      table,
     ) as CommercialSimulationTaskRecord["interactionMode"],
     providerMode: stringField(
       row,
       "provider_mode",
+      table,
     ) as CommercialSimulationTaskRecord["providerMode"],
-    status: stringField(row, "status") as CommercialSimulationTaskRecord["status"],
-    creditCost: numberField(row, "credit_cost"),
-    createdAt: stringField(row, "created_at"),
-    updatedAt: stringField(row, "updated_at"),
+    status: stringField(row, "status", table) as CommercialSimulationTaskRecord["status"],
+    creditCost: numberField(row, "credit_cost", table),
+    createdAt: stringField(row, "created_at", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
-  assignIfDefined(record, "creditHoldLedgerId", maybeString(row.credit_hold_ledger_id));
-  assignIfDefined(record, "priority", row.priority === null ? undefined : numberField(row, "priority"));
-  assignIfDefined(record, "queueWeight", row.queue_weight === null ? undefined : numberField(row, "queue_weight"));
-  assignIfDefined(record, "idempotencyKey", maybeString(row.idempotency_key));
-  assignIfDefined(record, "inputSummary", maybeJsonObject(row, "input_summary"));
-  assignIfDefined(record, "errorCode", maybeString(row.error_code));
-  assignIfDefined(record, "queuedAt", maybeString(row.queued_at));
-  assignIfDefined(record, "startedAt", maybeString(row.started_at));
-  assignIfDefined(record, "completedAt", maybeString(row.completed_at));
+  assignIfDefined(record, "creditHoldLedgerId", optionalStringField(row, "credit_hold_ledger_id", table));
+  assignIfDefined(record, "priority", optionalNumberField(row, "priority", table));
+  assignIfDefined(record, "queueWeight", optionalNumberField(row, "queue_weight", table));
+  assignIfDefined(record, "idempotencyKey", optionalStringField(row, "idempotency_key", table));
+  assignIfDefined(record, "inputSummary", optionalJsonObjectField(row, "input_summary", table));
+  assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
+  assignIfDefined(record, "queuedAt", optionalStringField(row, "queued_at", table));
+  assignIfDefined(record, "startedAt", optionalStringField(row, "started_at", table));
+  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
   return record;
 }
 
 function mapSimulationTaskRun(row: DbRow): SimulationTaskRunRecord {
+  const table = "simulation_task_runs";
   const record: SimulationTaskRunRecord = {
-    id: stringField(row, "id"),
-    taskId: stringField(row, "task_id"),
-    status: stringField(row, "status") as SimulationTaskRunRecord["status"],
-    startedAt: stringField(row, "started_at"),
+    id: stringField(row, "id", table),
+    taskId: stringField(row, "task_id", table),
+    status: stringField(row, "status", table) as SimulationTaskRunRecord["status"],
+    startedAt: stringField(row, "started_at", table),
   };
-  assignIfDefined(record, "workerId", maybeString(row.worker_id));
-  assignIfDefined(record, "attempt", row.attempt === null ? undefined : numberField(row, "attempt"));
-  assignIfDefined(record, "errorCode", maybeString(row.error_code));
-  assignIfDefined(record, "completedAt", maybeString(row.completed_at));
-  assignIfDefined(record, "metadata", maybeJsonObject(row, "metadata"));
+  assignIfDefined(record, "workerId", optionalStringField(row, "worker_id", table));
+  assignIfDefined(record, "attempt", optionalNumberField(row, "attempt", table));
+  assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
+  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
+  assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
   return record;
 }
 
 function mapSimulationStepRunCost(row: DbRow): SimulationStepRunCostRecord {
+  const table = "simulation_step_runs";
   const record: SimulationStepRunCostRecord = {
-    id: stringField(row, "id"),
-    taskId: stringField(row, "task_id"),
-    stepName: stringField(row, "step_name"),
-    status: stringField(row, "status") as SimulationStepRunCostRecord["status"],
-    startedAt: stringField(row, "started_at"),
+    id: stringField(row, "id", table),
+    taskId: stringField(row, "task_id", table),
+    stepName: stringField(row, "step_name", table),
+    status: stringField(row, "status", table) as SimulationStepRunCostRecord["status"],
+    startedAt: stringField(row, "started_at", table),
   };
-  assignIfDefined(record, "taskRunId", maybeString(row.task_run_id));
-  assignIfDefined(record, "stageIndex", row.stage_index === null ? undefined : numberField(row, "stage_index"));
-  assignIfDefined(record, "roundIndex", row.round_index === null ? undefined : numberField(row, "round_index"));
-  assignIfDefined(record, "agentId", maybeString(row.agent_id));
-  assignIfDefined(record, "provider", maybeString(row.provider));
-  assignIfDefined(record, "modelId", maybeString(row.model_id));
-  assignIfDefined(record, "modelProfileId", maybeString(row.model_profile_id));
-  assignIfDefined(record, "promptTokens", row.prompt_tokens === null ? undefined : numberField(row, "prompt_tokens"));
-  assignIfDefined(record, "completionTokens", row.completion_tokens === null ? undefined : numberField(row, "completion_tokens"));
-  assignIfDefined(record, "totalTokens", row.total_tokens === null ? undefined : numberField(row, "total_tokens"));
-  assignIfDefined(record, "cachedTokens", row.cached_tokens === null ? undefined : numberField(row, "cached_tokens"));
-  assignIfDefined(record, "estimatedCost", row.estimated_cost === null ? undefined : numberField(row, "estimated_cost"));
-  assignIfDefined(record, "latencyMs", row.latency_ms === null ? undefined : numberField(row, "latency_ms"));
-  assignIfDefined(record, "retryCount", row.retry_count === null ? undefined : numberField(row, "retry_count"));
-  assignIfDefined(record, "errorCode", maybeString(row.error_code));
-  assignIfDefined(record, "completedAt", maybeString(row.completed_at));
-  assignIfDefined(record, "metadata", maybeJsonObject(row, "metadata"));
+  assignIfDefined(record, "taskRunId", optionalStringField(row, "task_run_id", table));
+  assignIfDefined(record, "stageIndex", optionalNumberField(row, "stage_index", table));
+  assignIfDefined(record, "roundIndex", optionalNumberField(row, "round_index", table));
+  assignIfDefined(record, "agentId", optionalStringField(row, "agent_id", table));
+  assignIfDefined(record, "provider", optionalStringField(row, "provider", table));
+  assignIfDefined(record, "modelId", optionalStringField(row, "model_id", table));
+  assignIfDefined(record, "modelProfileId", optionalStringField(row, "model_profile_id", table));
+  assignIfDefined(record, "promptTokens", optionalNumberField(row, "prompt_tokens", table));
+  assignIfDefined(record, "completionTokens", optionalNumberField(row, "completion_tokens", table));
+  assignIfDefined(record, "totalTokens", optionalNumberField(row, "total_tokens", table));
+  assignIfDefined(record, "cachedTokens", optionalNumberField(row, "cached_tokens", table));
+  assignIfDefined(record, "estimatedCost", optionalNumberField(row, "estimated_cost", table));
+  assignIfDefined(record, "latencyMs", optionalNumberField(row, "latency_ms", table));
+  assignIfDefined(record, "retryCount", optionalNumberField(row, "retry_count", table));
+  assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
+  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
+  assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
   return record;
 }
 
 function mapCommercialReport(row: DbRow): CommercialSimulationReportRecord {
+  const table = "simulation_reports";
   const record: CommercialSimulationReportRecord = {
-    id: stringField(row, "id"),
-    taskId: stringField(row, "task_id"),
-    userId: stringField(row, "user_id"),
-    unlocked: booleanField(row, "unlocked"),
-    createdAt: stringField(row, "created_at"),
-    updatedAt: stringField(row, "updated_at"),
+    id: stringField(row, "id", table),
+    taskId: stringField(row, "task_id", table),
+    userId: stringField(row, "user_id", table),
+    unlocked: booleanField(row, "unlocked", table),
+    createdAt: stringField(row, "created_at", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
   assignIfDefined(
     record,
@@ -1119,83 +1236,88 @@ function mapCommercialReport(row: DbRow): CommercialSimulationReportRecord {
       ? undefined
       : (row.deep_report as unknown as CommercialSimulationReportRecord["deepReport"]),
   );
-  assignIfDefined(record, "shareCard", maybeJsonObject(row, "share_card"));
+  assignIfDefined(record, "shareCard", optionalJsonObjectField(row, "share_card", table));
   return record;
 }
 
 function mapAnalyticsEvent(row: DbRow): AnalyticsEventRecord {
+  const table = "analytics_events";
   const record: AnalyticsEventRecord = {
-    id: stringField(row, "id"),
-    eventType: stringField(row, "event_type"),
-    properties: jsonObjectField(row, "properties"),
-    occurredAt: stringField(row, "occurred_at"),
+    id: stringField(row, "id", table),
+    eventType: stringField(row, "event_type", table),
+    properties: jsonObjectField(row, "properties", table),
+    occurredAt: stringField(row, "occurred_at", table),
   };
-  assignIfDefined(record, "userId", maybeString(row.user_id));
-  assignIfDefined(record, "taskId", maybeString(row.task_id));
-  assignIfDefined(record, "sessionId", maybeString(row.session_id));
-  assignIfDefined(record, "source", maybeString(row.source));
+  assignIfDefined(record, "userId", optionalStringField(row, "user_id", table));
+  assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
+  assignIfDefined(record, "sessionId", optionalStringField(row, "session_id", table));
+  assignIfDefined(record, "source", optionalStringField(row, "source", table));
   return record;
 }
 
 function mapUserFeedback(row: DbRow): UserFeedbackRecord {
+  const table = "user_feedback";
   const record: UserFeedbackRecord = {
-    id: stringField(row, "id"),
-    metadata: jsonObjectField(row, "metadata"),
-    createdAt: stringField(row, "created_at"),
+    id: stringField(row, "id", table),
+    metadata: jsonObjectField(row, "metadata", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "userId", maybeString(row.user_id));
-  assignIfDefined(record, "taskId", maybeString(row.task_id));
-  assignIfDefined(record, "reportId", maybeString(row.report_id));
-  assignIfDefined(record, "rating", row.rating === null ? undefined : numberField(row, "rating"));
-  assignIfDefined(record, "feedbackType", maybeString(row.feedback_type));
-  assignIfDefined(record, "comment", maybeString(row.comment));
+  assignIfDefined(record, "userId", optionalStringField(row, "user_id", table));
+  assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
+  assignIfDefined(record, "reportId", optionalStringField(row, "report_id", table));
+  assignIfDefined(record, "rating", optionalNumberField(row, "rating", table));
+  assignIfDefined(record, "feedbackType", optionalStringField(row, "feedback_type", table));
+  assignIfDefined(record, "comment", optionalStringField(row, "comment", table));
   return record;
 }
 
 function mapUserModelProvider(row: DbRow): UserModelProviderRecord {
+  const table = "user_model_providers";
   const record: UserModelProviderRecord = {
-    id: stringField(row, "id"),
-    userId: stringField(row, "user_id"),
-    provider: stringField(row, "provider"),
-    displayName: stringField(row, "display_name"),
-    baseUrl: stringField(row, "base_url"),
-    encryptedApiKey: stringField(row, "encrypted_api_key"),
-    apiKeyMask: stringField(row, "api_key_mask"),
-    status: stringField(row, "status") as UserModelProviderRecord["status"],
-    createdAt: stringField(row, "created_at"),
-    updatedAt: stringField(row, "updated_at"),
+    id: stringField(row, "id", table),
+    userId: stringField(row, "user_id", table),
+    provider: stringField(row, "provider", table),
+    displayName: stringField(row, "display_name", table),
+    baseUrl: stringField(row, "base_url", table),
+    encryptedApiKey: stringField(row, "encrypted_api_key", table),
+    apiKeyMask: stringField(row, "api_key_mask", table),
+    status: stringField(row, "status", table) as UserModelProviderRecord["status"],
+    createdAt: stringField(row, "created_at", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
-  assignIfDefined(record, "modelFast", maybeString(row.model_fast));
-  assignIfDefined(record, "modelBalanced", maybeString(row.model_balanced));
-  assignIfDefined(record, "modelDeep", maybeString(row.model_deep));
-  assignIfDefined(record, "lastTestedAt", maybeString(row.last_tested_at));
-  assignIfDefined(record, "lastTestStatus", maybeString(row.last_test_status) as UserModelProviderRecord["lastTestStatus"]);
+  assignIfDefined(record, "modelFast", optionalStringField(row, "model_fast", table));
+  assignIfDefined(record, "modelBalanced", optionalStringField(row, "model_balanced", table));
+  assignIfDefined(record, "modelDeep", optionalStringField(row, "model_deep", table));
+  assignIfDefined(record, "lastTestedAt", optionalStringField(row, "last_tested_at", table));
+  assignIfDefined(record, "lastTestStatus", optionalStringField(row, "last_test_status", table) as UserModelProviderRecord["lastTestStatus"]);
   return record;
 }
 
 function mapSystemSetting(row: DbRow): SystemSettingRecord {
+  const table = "system_settings";
   const record: SystemSettingRecord = {
-    key: stringField(row, "key"),
-    value: row.value,
-    createdAt: stringField(row, "created_at"),
-    updatedAt: stringField(row, "updated_at"),
+    key: stringField(row, "key", table),
+    value: rowValue(row, "value", table),
+    createdAt: stringField(row, "created_at", table),
+    updatedAt: stringField(row, "updated_at", table),
   };
-  assignIfDefined(record, "description", maybeString(row.description));
-  assignIfDefined(record, "updatedByUserId", maybeString(row.updated_by_user_id));
+  assignIfDefined(record, "description", optionalStringField(row, "description", table));
+  assignIfDefined(record, "updatedByUserId", optionalStringField(row, "updated_by_user_id", table));
   return record;
 }
 
 function mapAdminAuditLog(row: DbRow): AdminAuditLogRecord {
+  const table = "admin_audit_logs";
   const record: AdminAuditLogRecord = {
-    id: stringField(row, "id"),
-    action: stringField(row, "action"),
-    targetType: stringField(row, "target_type"),
-    metadata: jsonObjectField(row, "metadata"),
-    createdAt: stringField(row, "created_at"),
+    id: stringField(row, "id", table),
+    action: stringField(row, "action", table),
+    targetType: stringField(row, "target_type", table),
+    metadata: jsonObjectField(row, "metadata", table),
+    createdAt: stringField(row, "created_at", table),
   };
-  assignIfDefined(record, "actorUserId", maybeString(row.actor_user_id));
-  assignIfDefined(record, "targetId", maybeString(row.target_id));
-  assignIfDefined(record, "ipHash", maybeString(row.ip_hash));
-  assignIfDefined(record, "userAgent", maybeString(row.user_agent));
+  assignIfDefined(record, "actorUserId", optionalStringField(row, "actor_user_id", table));
+  assignIfDefined(record, "targetId", optionalStringField(row, "target_id", table));
+  assignIfDefined(record, "ipHash", optionalStringField(row, "ip_hash", table));
+  assignIfDefined(record, "userAgent", optionalStringField(row, "user_agent", table));
   return record;
 }
