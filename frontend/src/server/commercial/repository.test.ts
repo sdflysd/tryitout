@@ -162,6 +162,87 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   assert.equal((await repo.listAdminAuditLogs()).length, 1);
 });
 
+test("repository exposes admin list views for users, credits, codes, tasks, reports, and costs", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.createUserWithCreditAccount(makeUser(), makeCreditAccount());
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_1",
+    userId: "user_1",
+    entryType: "adjustment",
+    amount: 10,
+    balanceAfter: 10,
+    idempotencyKey: "adjust_1",
+    createdAt: "now",
+  });
+  await repo.saveAccessCodeBatch({
+    id: "batch_1",
+    name: "Batch",
+    codeCount: 1,
+    credits: 10,
+    features: [],
+    metadata: {},
+    createdAt: "now",
+  });
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "redeemed",
+    credits: 10,
+    features: [],
+    redeemedByUserId: "user_1",
+    redeemedAt: "redeemed",
+    createdAt: "now",
+  });
+  await repo.saveCommercialTask(makeTask({ status: "completed" }));
+  await repo.saveCommercialReport({
+    id: "report_1",
+    taskId: "task_1",
+    userId: "user_1",
+    unlocked: true,
+    createdAt: "now",
+    updatedAt: "now",
+  });
+  await repo.appendSimulationStepRunCost({
+    id: "cost_1",
+    taskId: "task_1",
+    stepName: "simulate",
+    estimatedCost: 0.12,
+    status: "completed",
+    startedAt: "now",
+  });
+
+  assert.deepEqual((await repo.listUsers()).map((user) => user.id), ["user_1"]);
+  assert.deepEqual(
+    (await repo.listCreditAccounts()).map((account) => account.userId),
+    ["user_1"],
+  );
+  assert.deepEqual(
+    (await repo.listCreditLedgerEntries("user_1")).map((entry) => entry.id),
+    ["ledger_1"],
+  );
+  assert.deepEqual(
+    (await repo.listAccessCodeBatches()).map((batch) => batch.id),
+    ["batch_1"],
+  );
+  assert.deepEqual((await repo.listAccessCodes()).map((code) => code.id), [
+    "code_1",
+  ]);
+  assert.deepEqual(
+    (await repo.listCommercialTasks("user_1")).map((task) => task.id),
+    ["task_1"],
+  );
+  assert.deepEqual(
+    (await repo.listCommercialReports("user_1")).map((report) => report.id),
+    ["report_1"],
+  );
+  assert.deepEqual(
+    (await repo.listSimulationStepRunCosts()).map((cost) => cost.id),
+    ["cost_1"],
+  );
+});
+
 test("repository saves simulation task runs by id", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveSimulationTaskRun({

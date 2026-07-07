@@ -233,6 +233,171 @@ test("postgres repository maps findUserByEmail row to record", async () => {
   assert.deepEqual(queries[0].params, ["user@example.test"]);
 });
 
+test("postgres repository maps admin list views for users, accounts, ledger, codes, tasks, reports, and costs", async () => {
+  const userRepo = createRowRepository([
+    {
+      id: "user_1",
+      email: "user@example.test",
+      email_normalized: "user@example.test",
+      password_hash: "hash",
+      role: "admin",
+      tier: "pro",
+      status: "active",
+      features: ["admin_ops"],
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+  assert.equal((await userRepo.repo.listUsers())[0]?.id, "user_1");
+  assert.match(userRepo.queries[0].sql, /from users/i);
+  assert.match(userRepo.queries[0].sql, /order by created_at desc/i);
+
+  const accountRepo = createRowRepository([
+    {
+      user_id: "user_1",
+      balance: "10",
+      frozen_credits: "2",
+      total_redeemed: "20",
+      total_captured: "3",
+      updated_at: "updated",
+    },
+  ]);
+  assert.equal((await accountRepo.repo.listCreditAccounts())[0]?.balance, 10);
+  assert.match(accountRepo.queries[0].sql, /from user_credit_accounts/i);
+
+  const ledgerRepo = createRowRepository([
+    {
+      id: "ledger_1",
+      user_id: "user_1",
+      task_id: null,
+      access_code_id: null,
+      entry_type: "adjustment",
+      amount: "10",
+      balance_after: "10",
+      frozen_after: "0",
+      idempotency_key: "adjust_1",
+      reason: "manual",
+      metadata: {},
+      created_at: "created",
+    },
+  ]);
+  assert.equal(
+    (await ledgerRepo.repo.listCreditLedgerEntries("user_1"))[0]?.id,
+    "ledger_1",
+  );
+  assert.deepEqual(ledgerRepo.queries[0].params, ["user_1"]);
+
+  const batchRepo = createRowRepository([
+    {
+      id: "batch_1",
+      created_by_user_id: "admin_1",
+      name: "Batch",
+      source: "sales",
+      code_count: "1",
+      credits: "10",
+      tier: "pro",
+      features: ["deep_mode"],
+      expires_at: null,
+      disabled_at: null,
+      notes: null,
+      metadata: {},
+      created_at: "created",
+    },
+  ]);
+  assert.equal((await batchRepo.repo.listAccessCodeBatches())[0]?.id, "batch_1");
+  assert.match(batchRepo.queries[0].sql, /from access_code_batches/i);
+
+  const codeRepo = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TEST-****-001",
+      status: "redeemed",
+      credits: "10",
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: "user_1",
+      redeemed_at: "redeemed",
+      disabled_at: null,
+      created_at: "created",
+    },
+  ]);
+  assert.equal((await codeRepo.repo.listAccessCodes())[0]?.redeemedByUserId, "user_1");
+  assert.match(codeRepo.queries[0].sql, /from access_codes/i);
+
+  const taskRepo = createRowRepository([
+    {
+      id: "task_1",
+      user_id: "user_1",
+      scenario_type: "life_choice",
+      interaction_mode: "enabled",
+      provider_mode: "platform",
+      status: "completed",
+      credit_cost: "3",
+      credit_hold_ledger_id: null,
+      priority: "0",
+      queue_weight: "1",
+      idempotency_key: null,
+      input_summary: {},
+      error_code: null,
+      queued_at: "queued",
+      started_at: null,
+      completed_at: "completed",
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+  assert.equal((await taskRepo.repo.listCommercialTasks("user_1"))[0]?.id, "task_1");
+  assert.deepEqual(taskRepo.queries[0].params, ["user_1"]);
+
+  const reportRepo = createRowRepository([
+    {
+      id: "report_1",
+      task_id: "task_1",
+      user_id: "user_1",
+      public_report: null,
+      deep_report: null,
+      share_card: null,
+      unlocked: true,
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+  assert.equal((await reportRepo.repo.listCommercialReports("user_1"))[0]?.id, "report_1");
+  assert.deepEqual(reportRepo.queries[0].params, ["user_1"]);
+
+  const costRepo = createRowRepository([
+    {
+      id: "cost_1",
+      task_run_id: null,
+      task_id: "task_1",
+      stage_index: null,
+      step_name: "simulate",
+      round_index: null,
+      agent_id: null,
+      provider: null,
+      model_id: null,
+      model_profile_id: null,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      cached_tokens: null,
+      estimated_cost: "0.12",
+      latency_ms: null,
+      retry_count: null,
+      status: "completed",
+      error_code: null,
+      started_at: "started",
+      completed_at: "completed",
+      metadata: {},
+    },
+  ]);
+  assert.equal((await costRepo.repo.listSimulationStepRunCosts())[0]?.estimatedCost, 0.12);
+  assert.equal(costRepo.queries[0].params, undefined);
+});
+
 test("postgres repository maps saveCreditAccount to user_credit_accounts upsert", async () => {
   const queries: Array<{ sql: string; params?: unknown[] }> = [];
   const repo = new PostgresCommercialRepository({

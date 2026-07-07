@@ -1,6 +1,7 @@
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
 import { AccessCodeService } from "./access-code-service.js";
+import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import type { BullMqQueueLike } from "./bullmq-simulation-queue.js";
 import { BullMqSimulationQueue } from "./bullmq-simulation-queue.js";
@@ -33,6 +34,7 @@ export interface EnabledCommercialServices {
   accessCodeService: AccessCodeService;
   creditService: CreditService;
   auditService: AdminAuditService;
+  adminService: CommercialAdminService;
   analyticsService: CommercialAnalyticsService;
   taskService: CommercialTaskService;
 }
@@ -89,6 +91,11 @@ export function createCommercialServices(
     ...commonOptions,
     accessCodePepper: config.accessCodePepper,
   });
+  const accessCodeService = new AccessCodeService({
+    ...commonOptions,
+    accessCodePepper: config.accessCodePepper,
+  });
+  const auditService = new AdminAuditService(commonOptions);
   const taskService = new CommercialTaskService({
     ...commonOptions,
     creditService,
@@ -103,12 +110,15 @@ export function createCommercialServices(
       ...commonOptions,
       sessionSecret: config.sessionSecret,
     }),
-    accessCodeService: new AccessCodeService({
-      ...commonOptions,
-      accessCodePepper: config.accessCodePepper,
-    }),
+    accessCodeService,
     creditService,
-    auditService: new AdminAuditService(commonOptions),
+    auditService,
+    adminService: new CommercialAdminService({
+      ...commonOptions,
+      accessCodeService,
+      creditService,
+      auditService,
+    }),
     analyticsService: new CommercialAnalyticsService(repository),
     taskService,
   };

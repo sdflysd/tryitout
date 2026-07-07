@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AccessCodeService } from "./access-code-service.js";
+import { CommercialAdminService } from "./admin-service.js";
 import { CommercialAuthService } from "./auth-service.js";
 import { BullMqSimulationQueue } from "./bullmq-simulation-queue.js";
 import {
@@ -43,6 +44,7 @@ test("commercial mode creates platform services with Postgres and BullMQ adapter
   assert.ok(services.accessCodeService instanceof AccessCodeService);
   assert.ok(services.creditService instanceof CreditService);
   assert.ok(services.auditService);
+  assert.ok(services.adminService instanceof CommercialAdminService);
   assert.ok(services.analyticsService);
   assert.ok(services.taskService instanceof CommercialTaskService);
 

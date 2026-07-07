@@ -135,6 +135,19 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCommercialUser);
   }
 
+  async listUsers(): Promise<CommercialUserRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, email, email_normalized, password_hash, role, tier, status,
+          features, last_login_at, created_at, updated_at
+        from users
+        order by created_at desc, id asc
+      `,
+    );
+    return rows.map(mapCommercialUser);
+  }
+
   async findUserByEmail(
     email: string,
   ): Promise<CommercialUserRecord | undefined> {
@@ -293,6 +306,19 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapUserCreditAccount);
   }
 
+  async listCreditAccounts(): Promise<UserCreditAccountRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          user_id, balance, frozen_credits, total_redeemed, total_captured,
+          updated_at
+        from user_credit_accounts
+        order by user_id asc
+      `,
+    );
+    return rows.map(mapUserCreditAccount);
+  }
+
   async appendCreditLedgerEntry(
     entry: CreditLedgerEntryRecord,
   ): Promise<void> {
@@ -320,6 +346,25 @@ export class PostgresCommercialRepository implements CommercialRepository {
         entry.createdAt,
       ],
     );
+  }
+
+  async listCreditLedgerEntries(
+    userId?: string,
+  ): Promise<CreditLedgerEntryRecord[]> {
+    const params = userId === undefined ? undefined : [userId];
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, user_id, task_id, access_code_id, entry_type, amount,
+          balance_after, frozen_after, idempotency_key, reason, metadata,
+          created_at
+        from credit_ledger
+        ${userId === undefined ? "" : "where user_id = $1"}
+        order by created_at desc, id asc
+      `,
+      params,
+    );
+    return rows.map(mapCreditLedgerEntry);
   }
 
   async findCreditLedgerEntryByIdempotencyKey(
@@ -746,6 +791,19 @@ export class PostgresCommercialRepository implements CommercialRepository {
     );
   }
 
+  async listAccessCodeBatches(): Promise<AccessCodeBatchRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, created_by_user_id, name, source, code_count, credits, tier,
+          features, expires_at, disabled_at, notes, metadata, created_at
+        from access_code_batches
+        order by created_at desc, id asc
+      `,
+    );
+    return rows.map(mapAccessCodeBatch);
+  }
+
   async createAccessCodeBatchWithCodes(
     batch: AccessCodeBatchRecord,
     codes: AccessCodeRecord[],
@@ -907,6 +965,19 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [codeId],
     );
     return mapOptional(rows[0], mapAccessCode);
+  }
+
+  async listAccessCodes(): Promise<AccessCodeRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+        from access_codes
+        order by created_at desc, id asc
+      `,
+    );
+    return rows.map(mapAccessCode);
   }
 
   async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
@@ -1397,6 +1468,26 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCommercialTask);
   }
 
+  async listCommercialTasks(
+    userId?: string,
+  ): Promise<CommercialSimulationTaskRecord[]> {
+    const params = userId === undefined ? undefined : [userId];
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, user_id, scenario_type, interaction_mode, provider_mode, status,
+          credit_cost, credit_hold_ledger_id, priority, queue_weight,
+          idempotency_key, input_summary, error_code, queued_at, started_at,
+          completed_at, created_at, updated_at
+        from simulation_tasks
+        ${userId === undefined ? "" : "where user_id = $1"}
+        order by created_at desc, id asc
+      `,
+      params,
+    );
+    return rows.map(mapCommercialTask);
+  }
+
   async findCommercialTaskByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CommercialSimulationTaskRecord | undefined> {
@@ -1557,8 +1648,9 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async listSimulationStepRunCosts(
-    taskId: string,
+    taskId?: string,
   ): Promise<SimulationStepRunCostRecord[]> {
+    const params = taskId === undefined ? undefined : [taskId];
     const { rows } = await this.query<DbRow>(
       `
         select
@@ -1568,10 +1660,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
           latency_ms, retry_count, status, error_code, started_at,
           completed_at, metadata
         from simulation_step_runs
-        where task_id = $1
+        ${taskId === undefined ? "" : "where task_id = $1"}
         order by started_at asc, id asc
       `,
-      [taskId],
+      params,
     );
     return rows.map(mapSimulationStepRunCost);
   }
@@ -1629,6 +1721,24 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [taskId],
     );
     return mapOptional(rows[0], mapCommercialReport);
+  }
+
+  async listCommercialReports(
+    userId?: string,
+  ): Promise<CommercialSimulationReportRecord[]> {
+    const params = userId === undefined ? undefined : [userId];
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, task_id, user_id, public_report, deep_report, share_card,
+          unlocked, created_at, updated_at
+        from simulation_reports
+        ${userId === undefined ? "" : "where user_id = $1"}
+        order by created_at desc, id asc
+      `,
+      params,
+    );
+    return rows.map(mapCommercialReport);
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {

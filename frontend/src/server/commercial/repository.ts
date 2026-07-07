@@ -34,6 +34,7 @@ export interface RedeemAccessCodeWithCreditLedgerResult extends CreditLedgerTran
 export interface CommercialRepository {
   saveUser(user: CommercialUserRecord): Promise<void>;
   getUser(userId: string): Promise<CommercialUserRecord | undefined>;
+  listUsers(): Promise<CommercialUserRecord[]>;
   findUserByEmail(email: string): Promise<CommercialUserRecord | undefined>;
   createUserWithCreditAccount(
     user: CommercialUserRecord,
@@ -50,7 +51,11 @@ export interface CommercialRepository {
   getCreditAccount(
     userId: string,
   ): Promise<UserCreditAccountRecord | undefined>;
+  listCreditAccounts(): Promise<UserCreditAccountRecord[]>;
   appendCreditLedgerEntry(entry: CreditLedgerEntryRecord): Promise<void>;
+  listCreditLedgerEntries(
+    userId?: string,
+  ): Promise<CreditLedgerEntryRecord[]>;
   findCreditLedgerEntryByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CreditLedgerEntryRecord | undefined>;
@@ -90,6 +95,7 @@ export interface CommercialRepository {
   }): Promise<CreditLedgerTransitionResult | undefined>;
 
   saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void>;
+  listAccessCodeBatches(): Promise<AccessCodeBatchRecord[]>;
   createAccessCodeBatchWithCodes(
     batch: AccessCodeBatchRecord,
     codes: AccessCodeRecord[],
@@ -99,6 +105,7 @@ export interface CommercialRepository {
   ): Promise<AccessCodeBatchRecord | undefined>;
   saveAccessCode(code: AccessCodeRecord): Promise<void>;
   getAccessCode(codeId: string): Promise<AccessCodeRecord | undefined>;
+  listAccessCodes(): Promise<AccessCodeRecord[]>;
   listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]>;
   findAccessCodeByHash(codeHash: string): Promise<AccessCodeRecord | undefined>;
   saveAccessCodeRedemption(
@@ -134,6 +141,9 @@ export interface CommercialRepository {
   getCommercialTask(
     taskId: string,
   ): Promise<CommercialSimulationTaskRecord | undefined>;
+  listCommercialTasks(
+    userId?: string,
+  ): Promise<CommercialSimulationTaskRecord[]>;
   findCommercialTaskByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CommercialSimulationTaskRecord | undefined>;
@@ -145,12 +155,15 @@ export interface CommercialRepository {
   listSimulationTaskRuns(taskId: string): Promise<SimulationTaskRunRecord[]>;
   appendSimulationStepRunCost(run: SimulationStepRunCostRecord): Promise<void>;
   listSimulationStepRunCosts(
-    taskId: string,
+    taskId?: string,
   ): Promise<SimulationStepRunCostRecord[]>;
   saveCommercialReport(report: CommercialSimulationReportRecord): Promise<void>;
   getCommercialReportByTaskId(
     taskId: string,
   ): Promise<CommercialSimulationReportRecord | undefined>;
+  listCommercialReports(
+    userId?: string,
+  ): Promise<CommercialSimulationReportRecord[]>;
 
   appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void>;
   listAnalyticsEvents(): Promise<AnalyticsEventRecord[]>;
@@ -197,6 +210,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async getUser(userId: string): Promise<CommercialUserRecord | undefined> {
     return this.users.get(userId);
+  }
+
+  async listUsers(): Promise<CommercialUserRecord[]> {
+    return [...this.users.values()].sort(sortByCreatedAtDescThenId);
   }
 
   async findUserByEmail(
@@ -271,6 +288,12 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return this.creditAccounts.get(userId);
   }
 
+  async listCreditAccounts(): Promise<UserCreditAccountRecord[]> {
+    return [...this.creditAccounts.values()].sort((left, right) =>
+      left.userId.localeCompare(right.userId),
+    );
+  }
+
   async appendCreditLedgerEntry(
     entry: CreditLedgerEntryRecord,
   ): Promise<void> {
@@ -281,6 +304,14 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       "credit_ledger.idempotencyKey",
     );
     appendById(this.creditLedger, entry, "credit_ledger.id");
+  }
+
+  async listCreditLedgerEntries(
+    userId?: string,
+  ): Promise<CreditLedgerEntryRecord[]> {
+    return this.creditLedger
+      .filter((entry) => userId === undefined || entry.userId === userId)
+      .sort(sortByCreatedAtDescThenId);
   }
 
   async findCreditLedgerEntryByIdempotencyKey(
@@ -316,6 +347,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void> {
     this.accessCodeBatches.set(batch.id, batch);
+  }
+
+  async listAccessCodeBatches(): Promise<AccessCodeBatchRecord[]> {
+    return [...this.accessCodeBatches.values()].sort(sortByCreatedAtDescThenId);
   }
 
   async createAccessCodeBatchWithCodes(
@@ -365,6 +400,10 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     codeId: string,
   ): Promise<AccessCodeRecord | undefined> {
     return this.accessCodes.get(codeId);
+  }
+
+  async listAccessCodes(): Promise<AccessCodeRecord[]> {
+    return [...this.accessCodes.values()].sort(sortByCreatedAtDescThenId);
   }
 
   async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
@@ -802,6 +841,14 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return this.commercialTasks.get(taskId);
   }
 
+  async listCommercialTasks(
+    userId?: string,
+  ): Promise<CommercialSimulationTaskRecord[]> {
+    return [...this.commercialTasks.values()]
+      .filter((task) => userId === undefined || task.userId === userId)
+      .sort(sortByCreatedAtDescThenId);
+  }
+
   async findCommercialTaskByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CommercialSimulationTaskRecord | undefined> {
@@ -850,9 +897,16 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async listSimulationStepRunCosts(
-    taskId: string,
+    taskId?: string,
   ): Promise<SimulationStepRunCostRecord[]> {
-    return this.stepRunCosts.filter((run) => run.taskId === taskId);
+    return this.stepRunCosts
+      .filter((run) => taskId === undefined || run.taskId === taskId)
+      .sort((left, right) => {
+        if (left.startedAt !== right.startedAt) {
+          return left.startedAt.localeCompare(right.startedAt);
+        }
+        return left.id.localeCompare(right.id);
+      });
   }
 
   async saveCommercialReport(
@@ -871,6 +925,14 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     taskId: string,
   ): Promise<CommercialSimulationReportRecord | undefined> {
     return [...this.reports.values()].find((report) => report.taskId === taskId);
+  }
+
+  async listCommercialReports(
+    userId?: string,
+  ): Promise<CommercialSimulationReportRecord[]> {
+    return [...this.reports.values()]
+      .filter((report) => userId === undefined || report.userId === userId)
+      .sort(sortByCreatedAtDescThenId);
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {
@@ -1019,6 +1081,16 @@ function appendById<T extends { id: string }>(
   }
 
   items.push(item);
+}
+
+function sortByCreatedAtDescThenId<T extends { id: string; createdAt: string }>(
+  left: T,
+  right: T,
+): number {
+  if (left.createdAt !== right.createdAt) {
+    return right.createdAt.localeCompare(left.createdAt);
+  }
+  return left.id.localeCompare(right.id);
 }
 
 function linkMetadata(
