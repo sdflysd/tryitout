@@ -25,14 +25,18 @@ import { registerCommercialAdminRoutes } from "./src/server/commercial/admin-rou
 import {
   handleCancelCommercialTaskRequest,
   handleCreateCommercialTaskRequest,
+  handleDeleteModelProviderRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
+  handleGetModelProviderRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
   handleRegisterRequest,
+  handleSaveModelProviderRequest,
+  handleTestModelProviderRequest,
   type CommercialApiResult,
 } from "./src/server/commercial/commercial-api.js";
 import { createCommercialServicesFromEnv } from "./src/server/commercial/commercial-services.js";
@@ -311,6 +315,50 @@ app.get("/api/credits", async (req, res) => {
     return res.status(404).json({ error: "Commercial mode is disabled" });
   }
   const result = await handleGetCreditsRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.get("/api/model-provider", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleGetModelProviderRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.put("/api/model-provider", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleSaveModelProviderRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.post("/api/model-provider/test", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleTestModelProviderRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
+});
+
+app.delete("/api/model-provider", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleDeleteModelProviderRequest(
     toCommercialRequest(req),
     commercialServices,
   );

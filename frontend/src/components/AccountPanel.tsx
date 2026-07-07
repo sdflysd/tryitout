@@ -14,12 +14,14 @@ import type {
   CommercialCredentialsDto,
   CommercialCreditAccountDto,
   CommercialUserDto,
+  PublicModelProviderDto,
   RedeemAccessCodeInputDto,
 } from "../commercial-client.js";
 
 interface AccountPanelProps {
   user?: CommercialUserDto;
   account?: CommercialCreditAccountDto;
+  modelProvider?: PublicModelProviderDto;
   statusMessage?: string;
   errorMessage?: string;
   busy?: boolean;
@@ -33,6 +35,7 @@ interface AccountPanelProps {
 export default function AccountPanel({
   user,
   account,
+  modelProvider,
   statusMessage,
   errorMessage,
   busy = false,
@@ -110,12 +113,26 @@ export default function AccountPanel({
       </div>
 
       {user ? (
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <AccountMetric label="Available credits" value={account?.balance ?? 0} tone="emerald" />
-            <AccountMetric label="Frozen credits" value={account?.frozenCredits ?? 0} tone="amber" />
-            <AccountMetric label="Redeemed total" value={account?.totalRedeemed ?? 0} tone="cyan" />
-            <AccountMetric label="Captured total" value={account?.totalCaptured ?? 0} tone="slate" />
+        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.7fr)]">
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <AccountMetric label="Available credits" value={account?.balance ?? 0} tone="emerald" />
+              <AccountMetric label="Frozen credits" value={account?.frozenCredits ?? 0} tone="amber" />
+              <AccountMetric label="Redeemed total" value={account?.totalRedeemed ?? 0} tone="cyan" />
+              <AccountMetric label="Captured total" value={account?.totalCaptured ?? 0} tone="slate" />
+            </div>
+            {modelProvider !== undefined && (
+              <div className="border border-white/10 bg-black/14 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Model provider</span>
+                  <span className="rounded-sm border border-emerald-200/20 bg-emerald-200/10 px-1.5 py-0.5 text-[10px] font-black text-emerald-100">{modelProvider.status}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-bold text-white/62">
+                  <span>{modelProvider.displayName}</span>
+                  <span className="font-mono text-cyan-100">{modelProvider.apiKeyMask}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <form onSubmit={(event) => void handleRedeemSubmit(event)} className="grid gap-2 sm:grid-cols-[1fr_auto]">

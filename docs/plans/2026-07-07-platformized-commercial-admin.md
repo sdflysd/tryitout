@@ -1672,6 +1672,8 @@ git commit -m "feat: add BYOK secret and URL safety"
 
 ### Task 27: Add User Model Provider Service
 
+Status: Completed on 2026-07-07.
+
 **Files:**
 - Create: `frontend/src/server/commercial/model-provider-service.ts`
 - Test: `frontend/src/server/commercial/model-provider-service.test.ts`

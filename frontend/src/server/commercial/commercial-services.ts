@@ -12,6 +12,7 @@ import { CreditService } from "./credit-service.js";
 import { AdminAuditService } from "./audit-service.js";
 import { CommercialAnalyticsService } from "./analytics-service.js";
 import { WorkerMonitoringService } from "./worker-monitoring.js";
+import { ModelProviderService } from "./model-provider-service.js";
 import {
   PostgresCommercialRepository,
   type AcquiredQueryClient,
@@ -38,6 +39,7 @@ export interface EnabledCommercialServices {
   adminService: CommercialAdminService;
   analyticsService: CommercialAnalyticsService;
   workerMonitoringService: WorkerMonitoringService;
+  modelProviderService: ModelProviderService;
   taskService: CommercialTaskService;
 }
 
@@ -99,6 +101,10 @@ export function createCommercialServices(
     creditService,
     queue,
   });
+  const modelProviderService = new ModelProviderService({
+    ...commonOptions,
+    encryptionKey: config.userSecretEncryptionKey,
+  });
 
   return {
     enabled: true,
@@ -120,6 +126,7 @@ export function createCommercialServices(
     }),
     analyticsService: new CommercialAnalyticsService(commonOptions),
     workerMonitoringService,
+    modelProviderService,
     taskService,
   };
 }

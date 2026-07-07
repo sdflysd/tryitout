@@ -3,12 +3,16 @@ import test from "node:test";
 
 import {
   CommercialClientError,
+  deleteModelProvider,
   fetchCommercialCredits,
   fetchCommercialMe,
+  fetchModelProvider,
   loginCommercialUser,
   logoutCommercialUser,
   redeemAccessCode,
   registerCommercialUser,
+  saveModelProvider,
+  testModelProvider,
 } from "./commercial-client.js";
 
 test("register and login post credentials with session cookies enabled", async () => {
@@ -121,6 +125,47 @@ test("commercial client surfaces structured API errors", async () => {
       error.code === "insufficient_credits" &&
       /insufficient/.test(error.message),
   );
+});
+
+test("commercial client manages masked BYOK provider endpoints", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const provider = {
+    id: "provider_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyMask: "sk-liv...3456",
+    status: "active",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  };
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init ?? {} });
+    return new Response(JSON.stringify({ provider }), { status: 200 });
+  };
+
+  await saveModelProvider({
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "sk-live-secret123456",
+  }, fetchImpl as typeof fetch);
+  await fetchModelProvider(fetchImpl as typeof fetch);
+  await testModelProvider(fetchImpl as typeof fetch);
+  await deleteModelProvider(fetchImpl as typeof fetch);
+
+  assert.deepEqual(
+    calls.map((call) => `${call.init.method ?? "GET"} ${call.url}`),
+    [
+      "PUT /api/model-provider",
+      "GET /api/model-provider",
+      "POST /api/model-provider/test",
+      "DELETE /api/model-provider",
+    ],
+  );
+  assert.equal(calls.every((call) => call.init.credentials === "include"), true);
+  assert.equal(JSON.stringify(calls).includes("sk-live-secret123456"), true);
+  assert.equal(JSON.stringify(provider).includes("sk-live-secret123456"), false);
 });
 
 function makeUser() {

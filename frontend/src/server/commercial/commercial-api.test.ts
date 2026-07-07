@@ -18,14 +18,19 @@ import {
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
+  handleDeleteModelProviderRequest,
+  handleGetModelProviderRequest,
   handleListAdminAuditLogsRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
   handleRegisterRequest,
+  handleSaveModelProviderRequest,
+  handleTestModelProviderRequest,
 } from "./commercial-api.js";
 import { CommercialTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
+import { ModelProviderService } from "./model-provider-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
@@ -49,6 +54,7 @@ const RAW_ADMIN_CODES = [
   "TIO-ABCD-EFGH-JK24",
   "TIO-ABCD-EFGH-JK25",
 ];
+const MODEL_PROVIDER_KEY = Buffer.alloc(32, 8);
 
 test("register creates a user DTO without returning password hash", async () => {
   const deps = makeDeps();
@@ -465,6 +471,62 @@ test("admin can adjust user credits and list resulting audit logs", async () => 
   );
 });
 
+test("user model provider endpoints save, mask, test, and delete BYOK configuration", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  const user = await deps.repository.findUserByEmail("user@example.test");
+  assert.ok(user);
+  await deps.repository.saveUser({
+    ...user,
+    tier: "pro",
+    features: ["custom_model_provider"],
+  });
+
+  const saved = await handleSaveModelProviderRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken },
+      body: {
+        provider: "openai",
+        displayName: "OpenAI",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-live-secret123456",
+      },
+    }),
+    deps,
+  );
+  const fetched = await handleGetModelProviderRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+  const tested = await handleTestModelProviderRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+  const deleted = await handleDeleteModelProviderRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(saved.status, 200);
+  assert.equal("provider" in saved.body, true);
+  if (!("provider" in saved.body)) return;
+  assert.equal(saved.body.provider.apiKeyMask, "sk-liv...3456");
+  assert.equal(JSON.stringify(saved.body).includes("encryptedApiKey"), false);
+  assert.equal(
+    JSON.stringify(await deps.repository.listUserModelProviders(user.id)).includes("sk-live-secret123456"),
+    false,
+  );
+  assert.deepEqual(fetched.body, { provider: saved.body.provider });
+  assert.equal(tested.status, 200);
+  assert.equal("provider" in tested.body, true);
+  if (!("provider" in tested.body)) return;
+  assert.equal(tested.body.provider.lastTestStatus, "passed");
+  assert.equal(deleted.status, 200);
+  assert.equal("provider" in deleted.body, true);
+  if (!("provider" in deleted.body)) return;
+  assert.equal(deleted.body.provider.status, "disabled");
+});
+
 function makeDeps() {
   const repository = new InMemoryCommercialRepository();
   const ids = new TestIds();
@@ -524,11 +586,20 @@ function makeDeps() {
     auditService,
     now,
   });
+  const modelProviderService = new ModelProviderService({
+    repository,
+    encryptionKey: MODEL_PROVIDER_KEY,
+    createId,
+    now,
+    resolveHostname: async () => ["172.64.154.211"],
+    testProviderConnection: async () => ({ ok: true }),
+  });
 
   return {
     adminService,
     authService,
     creditService,
+    modelProviderService,
     repository,
     taskService,
   };

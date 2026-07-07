@@ -27,6 +27,11 @@ import type {
   RedeemAccessCodeResult,
 } from "./credit-service.js";
 import { CreditServiceError } from "./credit-service.js";
+import type {
+  ModelProviderService,
+  PublicModelProviderDto,
+} from "./model-provider-service.js";
+import { ModelProviderServiceError } from "./model-provider-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type {
   AdminAuditLogRecord,
@@ -84,6 +89,7 @@ export interface CommercialApiDeps {
   adminService: CommercialAdminService;
   authService: CommercialAuthService;
   creditService: CreditService;
+  modelProviderService?: ModelProviderService;
   repository: CommercialRepository;
   taskService: CommercialTaskService;
 }
@@ -129,6 +135,16 @@ type AdjustAdminUserCreditsBody = {
   reason: string;
   idempotencyKey: string;
   metadata?: JsonObject;
+};
+
+type SaveModelProviderBody = {
+  provider: string;
+  displayName: string;
+  baseUrl: string;
+  apiKey: string;
+  modelFast?: string;
+  modelBalanced?: string;
+  modelDeep?: string;
 };
 
 export async function handleRegisterRequest(
@@ -276,6 +292,105 @@ export async function handleGetCreditsRequest(
     status: 200,
     body: { account },
   };
+}
+
+export async function handleSaveModelProviderRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ provider: PublicModelProviderDto } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const service = requireModelProviderService(deps);
+  if (service === undefined) {
+    return notFound("Model provider service is unavailable", "model_provider_unavailable");
+  }
+  const parsed = parseSaveModelProviderBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_model_provider_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        provider: await service.saveProvider({
+          userId: auth.user.id,
+          ...parsed.value,
+        }),
+      },
+    };
+  } catch (error) {
+    return mapModelProviderError(error);
+  }
+}
+
+export async function handleGetModelProviderRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ provider?: PublicModelProviderDto } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const service = requireModelProviderService(deps);
+  if (service === undefined) {
+    return notFound("Model provider service is unavailable", "model_provider_unavailable");
+  }
+
+  return {
+    status: 200,
+    body: {
+      provider: await service.getPublicProvider(auth.user.id),
+    },
+  };
+}
+
+export async function handleTestModelProviderRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ provider: PublicModelProviderDto } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const service = requireModelProviderService(deps);
+  if (service === undefined) {
+    return notFound("Model provider service is unavailable", "model_provider_unavailable");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { provider: await service.testProviderConnection(auth.user.id) },
+    };
+  } catch (error) {
+    return mapModelProviderError(error);
+  }
+}
+
+export async function handleDeleteModelProviderRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ provider: PublicModelProviderDto } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const service = requireModelProviderService(deps);
+  if (service === undefined) {
+    return notFound("Model provider service is unavailable", "model_provider_unavailable");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { provider: await service.deleteProvider(auth.user.id) },
+    };
+  } catch (error) {
+    return mapModelProviderError(error);
+  }
 }
 
 export async function handleGetAdminOverviewRequest(
@@ -831,6 +946,52 @@ function parseAdjustAdminUserCreditsBody(
   };
 }
 
+function parseSaveModelProviderBody(
+  body: unknown,
+): { ok: true; value: SaveModelProviderBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const provider = readRequiredString(body, "provider");
+  if (provider.ok === false) return provider;
+  const displayName = readRequiredString(body, "displayName");
+  if (displayName.ok === false) return displayName;
+  const baseUrl = readRequiredString(body, "baseUrl");
+  if (baseUrl.ok === false) return baseUrl;
+  const apiKey = readRequiredString(body, "apiKey");
+  if (apiKey.ok === false) return apiKey;
+  const modelFast = parseOptionalString(body.modelFast, "modelFast");
+  if (modelFast.ok === false) return modelFast;
+  const modelBalanced = parseOptionalString(body.modelBalanced, "modelBalanced");
+  if (modelBalanced.ok === false) return modelBalanced;
+  const modelDeep = parseOptionalString(body.modelDeep, "modelDeep");
+  if (modelDeep.ok === false) return modelDeep;
+
+  return {
+    ok: true,
+    value: {
+      provider: provider.value,
+      displayName: displayName.value,
+      baseUrl: baseUrl.value,
+      apiKey: apiKey.value,
+      modelFast: modelFast.value,
+      modelBalanced: modelBalanced.value,
+      modelDeep: modelDeep.value,
+    },
+  };
+}
+
+function readRequiredString(
+  body: Record<string, unknown>,
+  field: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const value = body[field];
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, error: `${field} is required` };
+  }
+  return { ok: true, value };
+}
+
 function parseCreateTaskBody(
   body: unknown,
 ):
@@ -1072,6 +1233,30 @@ function mapAdminError(
     };
   }
   throw error;
+}
+
+function mapModelProviderError(
+  error: unknown,
+): CommercialApiResult<CommercialApiErrorBody> {
+  if (error instanceof ModelProviderServiceError) {
+    const status =
+      error.code === "provider_not_allowed"
+        ? 403
+        : error.code === "provider_not_found"
+          ? 404
+          : 400;
+    return {
+      status,
+      body: { error: error.message, code: error.code },
+    };
+  }
+  throw error;
+}
+
+function requireModelProviderService(
+  deps: CommercialApiDeps,
+): ModelProviderService | undefined {
+  return deps.modelProviderService;
 }
 
 function badRequest(

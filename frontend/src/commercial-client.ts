@@ -71,6 +71,32 @@ export interface RedeemAccessCodeResultDto {
   redemption: CommercialAccessCodeRedemptionDto;
 }
 
+export interface PublicModelProviderDto {
+  id: string;
+  provider: string;
+  displayName: string;
+  baseUrl: string;
+  apiKeyMask: string;
+  modelFast?: string;
+  modelBalanced?: string;
+  modelDeep?: string;
+  status: "active" | "disabled";
+  lastTestedAt?: string;
+  lastTestStatus?: "passed" | "failed";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveModelProviderInputDto {
+  provider: string;
+  displayName: string;
+  baseUrl: string;
+  apiKey: string;
+  modelFast?: string;
+  modelBalanced?: string;
+  modelDeep?: string;
+}
+
 export class CommercialClientError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -157,7 +183,51 @@ export async function redeemAccessCode(
   return body as unknown as RedeemAccessCodeResultDto;
 }
 
-function jsonRequest(method: "POST", body: unknown): RequestInit {
+export async function saveModelProvider(
+  input: SaveModelProviderInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<{ provider: PublicModelProviderDto }> {
+  const body = await requestCommercialJson(
+    "/api/model-provider",
+    jsonRequest("PUT", input),
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "provider", "Invalid model provider response");
+  return body as unknown as { provider: PublicModelProviderDto };
+}
+
+export async function fetchModelProvider(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<{ provider?: PublicModelProviderDto }> {
+  const body = await requestCommercialJson("/api/model-provider", {}, fetchImpl);
+  return body as unknown as { provider?: PublicModelProviderDto };
+}
+
+export async function testModelProvider(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<{ provider: PublicModelProviderDto }> {
+  const body = await requestCommercialJson(
+    "/api/model-provider/test",
+    { method: "POST" },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "provider", "Invalid model provider test response");
+  return body as unknown as { provider: PublicModelProviderDto };
+}
+
+export async function deleteModelProvider(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<{ provider: PublicModelProviderDto }> {
+  const body = await requestCommercialJson(
+    "/api/model-provider",
+    { method: "DELETE" },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "provider", "Invalid model provider delete response");
+  return body as unknown as { provider: PublicModelProviderDto };
+}
+
+function jsonRequest(method: "POST" | "PUT", body: unknown): RequestInit {
   return {
     method,
     headers: { "content-type": "application/json" },
