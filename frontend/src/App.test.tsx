@@ -32,13 +32,37 @@ test("commercial mode renders a dedicated Chinese auth screen when signed out", 
   const html = renderToStaticMarkup(<App commercialMode />);
 
   assert.match(html, /id="commercial-auth-screen"/);
-  assert.match(html, /登录 TryItOut 商用版/);
+  assert.match(html, /欢迎使用 TryItOut 商用版/);
+  assert.match(html, /安全登录/);
+  assert.match(html, /创建账号/);
+  assert.match(html, /账号安全/);
+  assert.match(html, /服务状态/);
   assert.match(html, /邮箱/);
   assert.match(html, /密码/);
-  assert.match(html, /登录/);
-  assert.match(html, /注册/);
+  assert.match(html, /进入工作台/);
   assert.doesNotMatch(html, /id="commercial-account-bar"/);
   assert.doesNotMatch(html, /Commercial account/);
+  assert.doesNotMatch(html, /本机商用测试模式/);
+  assert.doesNotMatch(html, /Postgres 与 Redis/);
+});
+
+test("commercial auth errors are shown as product-grade Chinese copy", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    formatCommercialAuthMessage?: (message: string) => string;
+  };
+
+  assert.equal(
+    appModule.formatCommercialAuthMessage?.("email_already_registered"),
+    "该邮箱已注册，请直接登录。",
+  );
+  assert.equal(
+    appModule.formatCommercialAuthMessage?.("invalid_credentials"),
+    "邮箱或密码不正确，请检查后重试。",
+  );
+  assert.equal(
+    appModule.formatCommercialAuthMessage?.("auth_failed"),
+    "认证失败，请稍后重试。",
+  );
 });
 
 test("commercial mode renders a compact Chinese account bar after sign in", async () => {

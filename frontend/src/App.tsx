@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, KeyRound, LogIn, LogOut, Sparkles, UserPlus, WalletCards } from "lucide-react";
+import { Flame, KeyRound, LogIn, LogOut, ShieldCheck, Sparkles, UserPlus, WalletCards } from "lucide-react";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import HomeView from "./components/HomeView";
@@ -141,6 +141,7 @@ export default function App({
   const [commercialPassword, setCommercialPassword] = useState("");
   const [accessCode, setAccessCode] = useState("");
   const [commercialMessage, setCommercialMessage] = useState("");
+  const [commercialAuthMode, setCommercialAuthMode] = useState<"login" | "register">("login");
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
     deepModeRequested: boolean;
@@ -460,7 +461,7 @@ export default function App({
       setCommercialPassword("");
       setCommercialMessage(mode === "login" ? "登录成功。" : "注册成功。");
     } catch (error) {
-      setCommercialMessage(error instanceof Error ? error.message : "auth_failed");
+      setCommercialMessage(formatCommercialAuthMessage(error instanceof Error ? error.message : "auth_failed"));
     }
   };
 
@@ -545,8 +546,13 @@ export default function App({
           email={commercialEmail}
           password={commercialPassword}
           message={commercialMessage}
+          mode={commercialAuthMode}
           onEmailChange={setCommercialEmail}
           onPasswordChange={setCommercialPassword}
+          onModeChange={(mode) => {
+            setCommercialAuthMode(mode);
+            setCommercialMessage("");
+          }}
           onSubmit={(mode) => void handleCommercialAuth(mode)}
         />
       )}
@@ -749,55 +755,92 @@ function CommercialAuthScreen({
   email,
   password,
   message,
+  mode,
   onEmailChange,
   onPasswordChange,
+  onModeChange,
   onSubmit,
 }: {
   email: string;
   password: string;
   message: string;
+  mode: "login" | "register";
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  onModeChange: (mode: "login" | "register") => void;
   onSubmit: (mode: "login" | "register") => void;
 }) {
+  const isLogin = mode === "login";
+
   return (
     <main
       id="commercial-auth-screen"
-      className="flex flex-1 items-center justify-center px-4 py-10"
-      aria-label="商用版登录"
+      className="flex flex-1 items-center justify-center px-4 py-8 md:py-12"
+      aria-label="TryItOut 商用版认证"
     >
-      <section className="grid w-full max-w-5xl gap-6 md:grid-cols-[1fr_0.85fr] md:items-center">
-        <div className="max-w-xl">
-          <div className="inline-flex items-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100">
-            <WalletCards className="h-4 w-4" aria-hidden="true" />
-            <span>本机商用测试模式</span>
+      <section className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-amber-200/20 bg-white/8 text-amber-300">
+            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
           </div>
-          <h1 className="mt-5 text-4xl font-black leading-tight text-white md:text-5xl">
-            登录 TryItOut 商用版
+          <h1 className="mt-4 text-2xl font-black leading-tight text-white md:text-3xl">
+            欢迎使用 TryItOut 商用版
           </h1>
-          <p className="mt-4 text-sm font-semibold leading-7 text-white/64">
-            账号、积分、兑换码和队列任务都会走本机 Postgres 与 Redis。登录后再进入沙盘，管理员账号会直接进入商用后台。
+          <p className="mt-2 text-sm font-semibold leading-6 text-white/58">
+            登录后进入积分沙盘、任务队列和管理员工作台。
           </p>
         </div>
 
         <form
-          className="rounded-md border border-white/10 bg-white/7 p-5 shadow-2xl shadow-black/20"
+          className="rounded-md border border-white/12 bg-[#111622] p-6 shadow-2xl shadow-black/24"
           onSubmit={(event) => {
             event.preventDefault();
-            onSubmit("login");
+            onSubmit(mode);
           }}
         >
-          <h2 className="text-xl font-black text-white">账号登录</h2>
-          <label className="mt-4 block text-xs font-bold text-white/70" htmlFor="commercial-email">
+          <div className="grid grid-cols-2 rounded-md border border-white/10 bg-white/5 p-1" role="tablist" aria-label="认证方式">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isLogin}
+              onClick={() => onModeChange("login")}
+              className={`min-h-10 rounded-md text-sm font-black transition-colors ${
+                isLogin ? "bg-white text-slate-950" : "text-white/68 hover:bg-white/8 hover:text-white"
+              }`}
+            >
+              安全登录
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!isLogin}
+              onClick={() => onModeChange("register")}
+              className={`min-h-10 rounded-md text-sm font-black transition-colors ${
+                !isLogin ? "bg-white text-slate-950" : "text-white/68 hover:bg-white/8 hover:text-white"
+              }`}
+            >
+              创建账号
+            </button>
+          </div>
+
+          <div className="mt-5">
+            <h2 className="text-lg font-black text-white">{isLogin ? "账号登录" : "注册新账号"}</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-white/54">
+              {isLogin ? "使用已开通的商用账号进入工作台。" : "创建账号后可通过兑换码激活积分。"}
+            </p>
+          </div>
+
+          <label className="mt-5 block text-xs font-bold text-white/70" htmlFor="commercial-email">
             邮箱
           </label>
           <input
             id="commercial-email"
             type="email"
+            autoComplete="email"
             value={email}
             onChange={(event) => onEmailChange(event.target.value)}
-            placeholder="local-admin@tryitout.dev"
-            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 placeholder:text-slate-400"
+            placeholder="name@company.com"
+            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-amber-300 focus:ring-2 focus:ring-amber-300/25"
           />
           <label className="mt-3 block text-xs font-bold text-white/70" htmlFor="commercial-password">
             密码
@@ -805,37 +848,51 @@ function CommercialAuthScreen({
           <input
             id="commercial-password"
             type="password"
+            autoComplete={isLogin ? "current-password" : "new-password"}
             value={password}
             onChange={(event) => onPasswordChange(event.target.value)}
-            placeholder="请输入密码"
-            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 placeholder:text-slate-400"
+            placeholder={isLogin ? "输入账号密码" : "至少 8 位，建议包含字母和数字"}
+            className="mt-1 h-11 w-full rounded-md border border-white/12 bg-white px-3 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-amber-300 focus:ring-2 focus:ring-amber-300/25"
           />
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <button
-              type="submit"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-amber-300 px-4 text-sm font-black text-slate-950 transition-colors hover:bg-amber-200"
-            >
-              <LogIn className="h-4 w-4" aria-hidden="true" />
-              <span>登录</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onSubmit("register")}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-white/14 bg-white/8 px-4 text-sm font-black text-white transition-colors hover:bg-white/12"
-            >
-              <UserPlus className="h-4 w-4" aria-hidden="true" />
-              <span>注册</span>
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-amber-300 px-4 text-sm font-black text-slate-950 transition-colors hover:bg-amber-200"
+          >
+            {isLogin ? <LogIn className="h-4 w-4" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
+            <span>{isLogin ? "进入工作台" : "创建并进入"}</span>
+          </button>
           {message && (
-            <div className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100" aria-live="polite">
+            <div className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold leading-5 text-amber-100" aria-live="polite">
               {message}
             </div>
           )}
+
+          <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-xs font-semibold text-white/54 sm:grid-cols-2">
+            <div>
+              <div className="font-black text-white/78">账号安全</div>
+              <div className="mt-1">会话 Cookie 仅服务端可读。</div>
+            </div>
+            <div>
+              <div className="font-black text-white/78">服务状态</div>
+              <div className="mt-1">积分、任务和审计记录实时同步。</div>
+            </div>
+          </div>
         </form>
       </section>
     </main>
   );
+}
+
+export function formatCommercialAuthMessage(message: string): string {
+  const labels: Record<string, string> = {
+    email_already_registered: "该邮箱已注册，请直接登录。",
+    invalid_credentials: "邮箱或密码不正确，请检查后重试。",
+    auth_failed: "认证失败，请稍后重试。",
+    user_disabled: "该账号已被停用，请联系管理员。",
+    password_too_short: "密码至少需要 8 位。",
+    invalid_email: "请输入有效邮箱地址。",
+  };
+  return labels[message] ?? message;
 }
 
 function isCommercialClientModeEnabled(): boolean {
