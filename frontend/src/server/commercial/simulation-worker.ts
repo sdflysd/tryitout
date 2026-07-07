@@ -21,6 +21,11 @@ export interface RunCommercialSimulationQueueJobInput {
 
 export type CommercialSimulationWorkerResult =
   | { status: "deferred"; taskId: string }
+  | {
+      status: "skipped";
+      taskId: string;
+      taskStatus: CommercialTaskStatusDto["status"];
+    }
   | { status: "completed"; taskId: string; report: SimulationApiResponse }
   | { status: "failed"; taskId: string; errorCode: string };
 
@@ -36,7 +41,14 @@ export async function runCommercialSimulationQueueJob(
   }
 
   try {
-    await input.taskService.markRunning(input.job.data.taskId);
+    const running = await input.taskService.markRunning(input.job.data.taskId);
+    if (running.status !== "running") {
+      return {
+        status: "skipped",
+        taskId: input.job.data.taskId,
+        taskStatus: running.status,
+      };
+    }
     const providerRuntime = await input.taskService.resolveProviderForTask(input.job.data.taskId);
     const report = await input.runSimulation(input.job, providerRuntime);
     await input.taskService.markCompleted({

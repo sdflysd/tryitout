@@ -41,21 +41,31 @@ const sampleSimulationResponse: SimulationApiResponse = {
 class FakeTaskService {
   calls: string[] = [];
   completedCount = 0;
+  taskStatus: CommercialTaskStatusDto["status"] = "queued";
   providerRuntime: CommercialTaskProviderRuntime = { providerMode: "platform" };
 
   async markRunning(taskId: string): Promise<CommercialTaskStatusDto> {
     this.calls.push(`running:${taskId}`);
+    if (this.taskStatus !== "queued") {
+      return status(taskId, this.taskStatus);
+    }
+    this.taskStatus = "running";
     return status(taskId, "running");
   }
 
   async markCompleted(input: { taskId: string; report: SimulationApiResponse }): Promise<CommercialTaskStatusDto> {
     this.calls.push(`completed:${input.taskId}:${input.report.report.projectName}`);
+    if (this.taskStatus === "completed") {
+      return status(input.taskId, "completed");
+    }
     this.completedCount += 1;
+    this.taskStatus = "completed";
     return status(input.taskId, "completed");
   }
 
   async markFailed(input: { taskId: string; errorCode: string }): Promise<CommercialTaskStatusDto> {
     this.calls.push(`failed:${input.taskId}:${input.errorCode}`);
+    this.taskStatus = "failed";
     return status(input.taskId, "failed");
   }
 
@@ -203,6 +213,34 @@ test("worker releases limiter capacity in finally", async () => {
   assert.equal(limiter.tryAcquire({ id: "next", weight: 1 }), true);
 });
 
+test("worker skips simulation when the task is no longer running after claim", async () => {
+  const limiter = new WeightedConcurrencyLimiter(1);
+  const taskService = new FakeTaskService();
+  taskService.markRunning = async (taskId: string) => {
+    taskService.calls.push(`running:${taskId}:cancelled`);
+    return status(taskId, "cancelled");
+  };
+  const calls: string[] = [];
+
+  const result = await runCommercialSimulationQueueJob({
+    job: job(1),
+    taskService,
+    limiter,
+    runSimulation: async () => {
+      calls.push("simulation");
+      return sampleSimulationResponse;
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "skipped",
+    taskId: "task_1",
+    taskStatus: "cancelled",
+  });
+  assert.deepEqual(calls, []);
+  assert.equal(limiter.activeWeight, 0);
+});
+
 test("worker retry of same completed task does not double-capture credits", async () => {
   const limiter = new WeightedConcurrencyLimiter(3);
   const taskService = new FakeTaskService();
@@ -220,6 +258,6 @@ test("worker retry of same completed task does not double-capture credits", asyn
     runSimulation: async () => sampleSimulationResponse,
   });
 
-  assert.equal(taskService.completedCount, 2);
+  assert.equal(taskService.completedCount, 1);
   assert.equal(limiter.activeWeight, 0);
 });
