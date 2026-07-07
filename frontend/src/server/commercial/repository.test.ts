@@ -34,7 +34,7 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   await repo.appendCreditLedgerEntry({
     id: "ledger_1",
     userId: "user_1",
-    type: "redeem",
+    entryType: "redeem",
     amount: 10,
     balanceAfter: 10,
     idempotencyKey: "redeem_1",
@@ -60,7 +60,7 @@ test("repository stores credit accounts, ledger entries, sessions, tasks, and au
   });
   await repo.appendAdminAuditLog({
     id: "audit_1",
-    adminUserId: "admin_1",
+    actorUserId: "admin_1",
     action: "user_credit_adjusted",
     targetType: "user",
     targetId: "user_1",

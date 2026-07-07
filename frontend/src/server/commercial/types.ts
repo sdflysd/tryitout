@@ -66,7 +66,7 @@ export interface CreditLedgerEntryRecord {
   userId: string;
   taskId?: string;
   accessCodeId?: string;
-  type: CreditLedgerEntryType;
+  entryType: CreditLedgerEntryType;
   amount: number;
   balanceAfter: number;
   frozenAfter?: number;
@@ -242,7 +242,7 @@ export interface SystemSettingRecord {
 
 export interface AdminAuditLogRecord {
   id: string;
-  adminUserId?: string;
+  actorUserId?: string;
   action: AdminAuditAction | string;
   targetType: string;
   targetId?: string;
