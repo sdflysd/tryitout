@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AdminAuditService,
   AdminAuditServiceError,
+  type AppendAdminAuditInput,
   assertAuditAction,
 } from "./audit-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
@@ -173,7 +174,7 @@ test("rejects missing audit target ids", async () => {
       action: "credits_adjusted",
       targetType: "user",
       metadata: {},
-    }),
+    } as unknown as AppendAdminAuditInput),
     (error) => hasAuditCode(error, "invalid_audit_input"),
   );
 });

@@ -35,7 +35,7 @@ export interface AppendAdminAuditInput {
   actorUserId: string;
   action: AdminAuditAction | string;
   targetType: string;
-  targetId?: string;
+  targetId: string;
   metadata?: JsonObject;
   ipHash?: string;
   userAgent?: string;
