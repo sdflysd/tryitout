@@ -11,6 +11,7 @@ import type {
   SimulationStepRunCostRecord,
   SimulationTaskRunRecord,
 } from "./types.js";
+import { getSimulationJobWeight } from "./simulation-queue.js";
 
 export type SimulationWorkerStepRunInput = Omit<
   SimulationStepRunCostRecord,
@@ -66,6 +67,12 @@ export async function runSimulationQueueJob(
     startedAt: currentIso(),
   });
   await options.repository.saveSimulationTaskRun(taskRun);
+  await options.repository.saveWorkerHeartbeat({
+    workerId: options.workerId,
+    activeWeight: getSimulationJobWeight(options.claim.job),
+    currentTaskId: taskId,
+    lastHeartbeatAt: taskRun.startedAt,
+  });
 
   try {
     await options.taskService.markRunning({ taskId });
@@ -102,6 +109,11 @@ export async function runSimulationQueueJob(
     throw error;
   } finally {
     await options.queue.release(options.claim.claimId);
+    await options.repository.saveWorkerHeartbeat({
+      workerId: options.workerId,
+      activeWeight: 0,
+      lastHeartbeatAt: taskRun.completedAt ?? currentIso(),
+    });
   }
 }
 

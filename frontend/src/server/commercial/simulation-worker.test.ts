@@ -151,6 +151,42 @@ test("worker records a running task-run attempt before simulation work", async (
   assert.deepEqual(observedRuns, ["simulation_task_run_1:running"]);
 });
 
+test("worker records heartbeat while running and clears current task after release", async () => {
+  const scenario = await createScenario();
+  const created = await scenario.service.createTask(makeCreateInput());
+  const claim = await scenario.queue.claimNext();
+  assert.ok(claim);
+  const observedHeartbeats: string[] = [];
+
+  await runSimulationQueueJob({
+    claim,
+    queue: scenario.queue,
+    repository: scenario.repo,
+    taskService: scenario.service,
+    workerId: "worker_1",
+    runSimulation: async () => {
+      observedHeartbeats.push(
+        (await scenario.repo.listWorkerHeartbeats())
+          .map((heartbeat) => `${heartbeat.workerId}:${heartbeat.activeWeight}:${heartbeat.currentTaskId}`)
+          .join(","),
+      );
+      return makePublicReport(created.task.id);
+    },
+    now: () => scenario.now.next(),
+    createId: (prefix = "id") => scenario.ids.create(prefix),
+  });
+
+  assert.deepEqual(observedHeartbeats, [`worker_1:3:${created.task.id}`]);
+  assert.deepEqual(
+    (await scenario.repo.listWorkerHeartbeats()).map((heartbeat) => ({
+      workerId: heartbeat.workerId,
+      activeWeight: heartbeat.activeWeight,
+      currentTaskId: heartbeat.currentTaskId,
+    })),
+    [{ workerId: "worker_1", activeWeight: 0, currentTaskId: undefined }],
+  );
+});
+
 test("worker saves report and calls task completion on success", async () => {
   const scenario = await createScenario({ balance: 10 });
   const created = await scenario.service.createTask(makeCreateInput());

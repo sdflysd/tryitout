@@ -9,6 +9,7 @@ import {
 } from "./admin-service.js";
 import { CreditService } from "./credit-service.js";
 import { InMemoryCommercialRepository } from "./repository.js";
+import { WorkerMonitoringService } from "./worker-monitoring.js";
 import type {
   CommercialSimulationTaskRecord,
   CommercialUserRecord,
@@ -155,6 +156,56 @@ test("overview aggregates commercial operating metrics for the admin dashboard",
   assert.equal(overview.queue.oldestQueuedAt, "2026-07-07T00:20:00.000Z");
   assert.equal(overview.accessCodes.total, 2);
   assert.equal(overview.accessCodes.redeemed, 1);
+});
+
+test("overview includes worker monitoring queue summary", async () => {
+  const { repo, service } = createScenario({ maxActiveWeight: 6 });
+  await repo.saveCommercialTask(makeTask({
+    id: "queued_1",
+    status: "queued",
+    queuedAt: "2026-07-07T00:10:00.000Z",
+    queueWeight: 3,
+  }));
+  await repo.saveCommercialTask(makeTask({
+    id: "running_stuck",
+    status: "running",
+    startedAt: "2026-07-07T00:00:00.000Z",
+    queueWeight: 3,
+  }));
+  await repo.saveCommercialTask(makeTask({
+    id: "retrying_1",
+    status: "queued",
+    errorCode: "provider_timeout",
+    queuedAt: "2026-07-07T00:12:00.000Z",
+    queueWeight: 1,
+  }));
+  await repo.saveWorkerHeartbeat({
+    workerId: "worker_1",
+    activeWeight: 3,
+    currentTaskId: "running_stuck",
+    lastHeartbeatAt: "2026-07-07T00:29:00.000Z",
+  });
+
+  const overview = await service.getOverview();
+
+  assert.deepEqual(overview.queue, {
+    backlog: 3,
+    oldestQueuedAt: "2026-07-07T00:10:00.000Z",
+    queued: 2,
+    running: 1,
+    retrying: 1,
+    stuck: 1,
+    activeWeight: 3,
+    maxWeight: 6,
+    workers: [
+      {
+        workerId: "worker_1",
+        activeWeight: 3,
+        currentTaskId: "running_stuck",
+        lastHeartbeatAt: "2026-07-07T00:29:00.000Z",
+      },
+    ],
+  });
 });
 
 test("lists users with account and task summaries without leaking password hashes", async () => {
@@ -490,7 +541,7 @@ test("admin service reports missing users and tasks as domain errors", async () 
   );
 });
 
-function createScenario(): {
+function createScenario(options: { maxActiveWeight?: number } = {}): {
   repo: InMemoryCommercialRepository;
   service: CommercialAdminService;
 } {
@@ -515,6 +566,11 @@ function createScenario(): {
     createId: (prefix = "id") => ids.create(prefix),
     now: () => clock.next(),
   });
+  const workerMonitoringService = new WorkerMonitoringService({
+    repository: repo,
+    maxActiveWeight: options.maxActiveWeight ?? 30,
+    now: () => "2026-07-07T00:30:00.000Z",
+  });
   return {
     repo,
     service: new CommercialAdminService({
@@ -522,6 +578,7 @@ function createScenario(): {
       accessCodeService,
       creditService,
       auditService,
+      workerMonitoringService,
       now: () => clock.next(),
     }),
   };

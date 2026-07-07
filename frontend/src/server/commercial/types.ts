@@ -153,6 +153,13 @@ export interface SimulationTaskRunRecord {
   metadata?: JsonObject;
 }
 
+export interface WorkerHeartbeatRecord {
+  workerId: string;
+  activeWeight: number;
+  currentTaskId?: string;
+  lastHeartbeatAt: string;
+}
+
 export interface SimulationStepRunCostRecord {
   id: string;
   taskRunId?: string;

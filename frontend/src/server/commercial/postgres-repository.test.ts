@@ -2563,6 +2563,42 @@ test("postgres repository maps analytics and feedback lists", async () => {
   assert.deepEqual(queries[0].params, ["user_1"]);
 });
 
+test("postgres repository maps worker heartbeat writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveWorkerHeartbeat({
+    workerId: "worker_1",
+    activeWeight: 3,
+    currentTaskId: "task_1",
+    lastHeartbeatAt: "2026-07-07T00:00:00.000Z",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into worker_heartbeats/i);
+  assert.match(writeQueries[0].sql, /on conflict \(worker_id\) do update/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "worker_1",
+    3,
+    "task_1",
+    "2026-07-07T00:00:00.000Z",
+  ]);
+
+  const { repo: readRepo } = createRowRepository([
+    {
+      worker_id: "worker_1",
+      active_weight: "3",
+      current_task_id: null,
+      last_heartbeat_at: new Date("2026-07-07T00:00:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.listWorkerHeartbeats(), [
+    {
+      workerId: "worker_1",
+      activeWeight: 3,
+      lastHeartbeatAt: "2026-07-07T00:00:00.000Z",
+    },
+  ]);
+});
+
 test("postgres repository maps model provider writes and reads", async () => {
   const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
   await writeRepo.saveUserModelProvider({

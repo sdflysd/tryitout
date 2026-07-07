@@ -75,6 +75,13 @@ const EMPTY_OVERVIEW: AdminOverviewDto = {
   },
   queue: {
     backlog: 0,
+    queued: 0,
+    running: 0,
+    retrying: 0,
+    stuck: 0,
+    activeWeight: 0,
+    maxWeight: 0,
+    workers: [],
   },
   accessCodes: {
     total: 0,
@@ -175,6 +182,7 @@ export default function AdminApp({
               <div className="flex flex-wrap gap-2 text-xs font-bold">
                 <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">Commercial mode monitored</span>
                 <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">Queue Backlog {resolvedOverview.queue.backlog}</span>
+                <span className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">Active Weight {resolvedOverview.queue.activeWeight ?? 0}/{resolvedOverview.queue.maxWeight ?? 0}</span>
                 <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">Oldest {resolvedOverview.queue.oldestQueuedAt ?? "none"}</span>
               </div>
             </div>
@@ -272,6 +280,7 @@ function OverviewDashboard({
               <tbody className="divide-y divide-slate-100">
                 <SignalRow area="Tasks" signal={`${failureRate} failed`} impact="Review provider, worker, and prompt safety errors" />
                 <SignalRow area="Queue" signal={`${overview.queue.backlog} backlog`} impact="Watch capacity before paid users stall" />
+                <SignalRow area="Stuck Tasks" signal={`${overview.queue.stuck ?? 0} stuck`} impact={`${overview.queue.retrying ?? 0} retrying / ${overview.queue.running ?? overview.tasks.byStatus.running} running`} />
                 <SignalRow area="Codes" signal={`${overview.accessCodes.disabled} disabled`} impact="Audit campaign shutdowns and partner batches" />
               </tbody>
             </table>
@@ -308,8 +317,8 @@ function OverviewDashboard({
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
               <MiniStat label="Queued" value={overview.tasks.byStatus.queued} />
-              <MiniStat label="Running" value={overview.tasks.byStatus.running} />
-              <MiniStat label="Refunded" value={overview.tasks.byStatus.refunded} />
+              <MiniStat label="Running" value={overview.queue.running ?? overview.tasks.byStatus.running} />
+              <MiniStat label="Stuck" value={overview.queue.stuck ?? 0} />
             </div>
           </div>
         </div>

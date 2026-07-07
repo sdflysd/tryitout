@@ -19,6 +19,7 @@ import type {
   SystemSettingRecord,
   UserCreditAccountRecord,
   UserFeedbackRecord,
+  WorkerHeartbeatRecord,
   UserModelProviderRecord,
 } from "./types.js";
 
@@ -157,6 +158,8 @@ export interface CommercialRepository {
   listSimulationStepRunCosts(
     taskId?: string,
   ): Promise<SimulationStepRunCostRecord[]>;
+  saveWorkerHeartbeat(heartbeat: WorkerHeartbeatRecord): Promise<void>;
+  listWorkerHeartbeats(): Promise<WorkerHeartbeatRecord[]>;
   saveCommercialReport(report: CommercialSimulationReportRecord): Promise<void>;
   getCommercialReportByTaskId(
     taskId: string,
@@ -191,6 +194,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   >();
   private readonly taskRuns: SimulationTaskRunRecord[] = [];
   private readonly stepRunCosts: SimulationStepRunCostRecord[] = [];
+  private readonly workerHeartbeats = new Map<string, WorkerHeartbeatRecord>();
   private readonly reports = new Map<string, CommercialSimulationReportRecord>();
   private readonly analyticsEvents: AnalyticsEventRecord[] = [];
   private readonly feedback: UserFeedbackRecord[] = [];
@@ -907,6 +911,24 @@ export class InMemoryCommercialRepository implements CommercialRepository {
         }
         return left.id.localeCompare(right.id);
       });
+  }
+
+  async saveWorkerHeartbeat(
+    heartbeat: WorkerHeartbeatRecord,
+  ): Promise<void> {
+    if (!Number.isInteger(heartbeat.activeWeight) || heartbeat.activeWeight < 0) {
+      throw new Error("worker_heartbeats.activeWeight must be a non-negative integer");
+    }
+    if (!heartbeat.workerId.trim()) {
+      throw new Error("worker_heartbeats.workerId is required");
+    }
+    this.workerHeartbeats.set(heartbeat.workerId, { ...heartbeat });
+  }
+
+  async listWorkerHeartbeats(): Promise<WorkerHeartbeatRecord[]> {
+    return [...this.workerHeartbeats.values()].sort((left, right) =>
+      left.workerId.localeCompare(right.workerId),
+    );
   }
 
   async saveCommercialReport(

@@ -13,6 +13,10 @@ import type { AdminAuditService } from "./audit-service.js";
 import type { CreditService, CreditTransitionResult } from "./credit-service.js";
 import type { CommercialRepository } from "./repository.js";
 import type {
+  QueueSummary,
+  WorkerMonitoringService,
+} from "./worker-monitoring.js";
+import type {
   AccessCodeBatchRecord,
   AccessCodeRecord,
   AdminAuditLogRecord,
@@ -46,6 +50,7 @@ export interface CommercialAdminServiceOptions {
   accessCodeService: AccessCodeService;
   creditService: CreditService;
   auditService: AdminAuditService;
+  workerMonitoringService?: WorkerMonitoringService;
   now?: () => Date | string;
 }
 
@@ -113,7 +118,7 @@ export interface AdminOverview {
   queue: {
     backlog: number;
     oldestQueuedAt?: string;
-  };
+  } & Partial<QueueSummary>;
   accessCodes: {
     total: number;
     active: number;
@@ -229,6 +234,7 @@ export class CommercialAdminService {
   private readonly accessCodeService: AccessCodeService;
   private readonly creditService: CreditService;
   private readonly auditService: AdminAuditService;
+  private readonly workerMonitoringService?: WorkerMonitoringService;
   private readonly now: () => Date | string;
 
   constructor(options: CommercialAdminServiceOptions) {
@@ -236,6 +242,7 @@ export class CommercialAdminService {
     this.accessCodeService = options.accessCodeService;
     this.creditService = options.creditService;
     this.auditService = options.auditService;
+    this.workerMonitoringService = options.workerMonitoringService;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -247,6 +254,7 @@ export class CommercialAdminService {
       creditLedger,
       costs,
       accessCodes,
+      queueSummary,
     ] = await Promise.all([
       this.repository.listUsers(),
       this.repository.listCreditAccounts(),
@@ -254,6 +262,7 @@ export class CommercialAdminService {
       this.repository.listCreditLedgerEntries(),
       this.repository.listSimulationStepRunCosts(),
       this.repository.listAccessCodes(),
+      this.workerMonitoringService?.getQueueSummary(),
     ]);
 
     const tasksByStatus = emptyTaskStatusCounts();
@@ -297,8 +306,9 @@ export class CommercialAdminService {
         estimatedTotal: roundMoney(sum(costs, (cost) => cost.estimatedCost ?? 0)),
       },
       queue: {
-        backlog: tasksByStatus.queued + tasksByStatus.running,
+        backlog: (queueSummary?.queued ?? tasksByStatus.queued) + (queueSummary?.running ?? tasksByStatus.running),
         ...oldestQueuedAt(tasks),
+        ...(queueSummary ?? {}),
       },
       accessCodes: {
         total: accessCodes.length,

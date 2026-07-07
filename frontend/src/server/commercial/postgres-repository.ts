@@ -22,6 +22,7 @@ import type {
   UserCreditAccountRecord,
   UserFeedbackRecord,
   UserModelProviderRecord,
+  WorkerHeartbeatRecord,
 } from "./types.js";
 import type {
   CommercialRepository,
@@ -1776,6 +1777,41 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return rows.map(mapAnalyticsEvent);
   }
 
+  async saveWorkerHeartbeat(
+    heartbeat: WorkerHeartbeatRecord,
+  ): Promise<void> {
+    await this.query(
+      `
+        insert into worker_heartbeats (
+          worker_id, active_weight, current_task_id, last_heartbeat_at
+        )
+        values ($1, $2, $3, $4)
+        on conflict (worker_id) do update set
+          active_weight = excluded.active_weight,
+          current_task_id = excluded.current_task_id,
+          last_heartbeat_at = excluded.last_heartbeat_at
+      `,
+      [
+        heartbeat.workerId,
+        heartbeat.activeWeight,
+        heartbeat.currentTaskId ?? null,
+        heartbeat.lastHeartbeatAt,
+      ],
+    );
+  }
+
+  async listWorkerHeartbeats(): Promise<WorkerHeartbeatRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          worker_id, active_weight, current_task_id, last_heartbeat_at
+        from worker_heartbeats
+        order by worker_id asc
+      `,
+    );
+    return rows.map(mapWorkerHeartbeat);
+  }
+
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {
     await this.query(
       `
@@ -2658,6 +2694,21 @@ function mapAnalyticsEvent(row: DbRow): AnalyticsEventRecord {
   assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
   assignIfDefined(record, "sessionId", optionalStringField(row, "session_id", table));
   assignIfDefined(record, "source", optionalStringField(row, "source", table));
+  return record;
+}
+
+function mapWorkerHeartbeat(row: DbRow): WorkerHeartbeatRecord {
+  const table = "worker_heartbeats";
+  const record: WorkerHeartbeatRecord = {
+    workerId: stringField(row, "worker_id", table),
+    activeWeight: numberField(row, "active_weight", table),
+    lastHeartbeatAt: timestampField(row, "last_heartbeat_at", table),
+  };
+  assignIfDefined(
+    record,
+    "currentTaskId",
+    optionalStringField(row, "current_task_id", table),
+  );
   return record;
 }
 

@@ -34,6 +34,8 @@ test("AdminApp renders supplied operating metrics and monitoring tables", () => 
   assert.match(html, /18\.75%/);
   assert.match(html, /¥128\.42/);
   assert.match(html, /Queue Backlog/);
+  assert.match(html, /Active Weight/);
+  assert.match(html, /Stuck Tasks/);
   assert.match(html, /Recent Failures/);
   assert.match(html, /High Cost Tasks/);
   assert.match(html, /Redemption Watch/);
@@ -137,6 +139,12 @@ function makeOverview(): AdminOverviewDto {
     },
     queue: {
       backlog: 12,
+      queued: 9,
+      running: 3,
+      retrying: 2,
+      stuck: 1,
+      activeWeight: 5,
+      maxWeight: 12,
       oldestQueuedAt: "2026-07-07T00:20:00.000Z",
     },
     accessCodes: {

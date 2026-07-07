@@ -30,6 +30,18 @@ export interface AdminOverviewDto {
   queue: {
     backlog: number;
     oldestQueuedAt?: string;
+    queued?: number;
+    running?: number;
+    retrying?: number;
+    stuck?: number;
+    activeWeight?: number;
+    maxWeight?: number;
+    workers?: Array<{
+      workerId: string;
+      activeWeight: number;
+      currentTaskId?: string;
+      lastHeartbeatAt: string;
+    }>;
   };
   accessCodes: {
     total: number;

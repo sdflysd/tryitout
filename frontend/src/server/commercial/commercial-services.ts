@@ -11,6 +11,7 @@ import { CommercialTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
 import { AdminAuditService } from "./audit-service.js";
 import { CommercialAnalyticsService } from "./analytics-service.js";
+import { WorkerMonitoringService } from "./worker-monitoring.js";
 import {
   PostgresCommercialRepository,
   type AcquiredQueryClient,
@@ -36,6 +37,7 @@ export interface EnabledCommercialServices {
   auditService: AdminAuditService;
   adminService: CommercialAdminService;
   analyticsService: CommercialAnalyticsService;
+  workerMonitoringService: WorkerMonitoringService;
   taskService: CommercialTaskService;
 }
 
@@ -88,6 +90,10 @@ export function createCommercialServices(
     accessCodePepper: config.accessCodePepper,
   });
   const auditService = new AdminAuditService(commonOptions);
+  const workerMonitoringService = new WorkerMonitoringService({
+    ...commonOptions,
+    maxActiveWeight: config.maxWeightedConcurrency,
+  });
   const taskService = new CommercialTaskService({
     ...commonOptions,
     creditService,
@@ -110,8 +116,10 @@ export function createCommercialServices(
       accessCodeService,
       creditService,
       auditService,
+      workerMonitoringService,
     }),
     analyticsService: new CommercialAnalyticsService(commonOptions),
+    workerMonitoringService,
     taskService,
   };
 }

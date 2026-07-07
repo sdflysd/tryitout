@@ -1573,6 +1573,8 @@ git commit -m "feat: store commercial analytics events"
 
 ### Task 25: Add Queue And Worker Monitoring Records
 
+Status: Completed on 2026-07-07.
+
 **Files:**
 - Modify: `frontend/src/server/commercial/types.ts`
 - Modify: `frontend/src/server/commercial/repository.ts`

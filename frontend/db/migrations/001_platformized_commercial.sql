@@ -183,6 +183,14 @@ CREATE TABLE simulation_task_runs (
   CONSTRAINT simulation_task_runs_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
 );
 
+CREATE TABLE worker_heartbeats (
+  worker_id text PRIMARY KEY,
+  active_weight integer NOT NULL DEFAULT 0,
+  current_task_id text REFERENCES simulation_tasks(id) ON DELETE SET NULL,
+  last_heartbeat_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT worker_heartbeats_active_weight_check CHECK (active_weight >= 0)
+);
+
 CREATE TABLE simulation_step_runs (
   id text PRIMARY KEY,
   task_run_id text REFERENCES simulation_task_runs(id) ON DELETE CASCADE,
@@ -338,6 +346,7 @@ CREATE INDEX access_code_redemptions_user_id_idx ON access_code_redemptions(user
 CREATE INDEX simulation_tasks_status_idx ON simulation_tasks(status);
 CREATE INDEX simulation_tasks_user_id_idx ON simulation_tasks(user_id);
 CREATE INDEX simulation_task_runs_task_id_idx ON simulation_task_runs(task_id);
+CREATE INDEX worker_heartbeats_current_task_id_idx ON worker_heartbeats(current_task_id);
 CREATE INDEX simulation_step_runs_task_id_idx ON simulation_step_runs(task_id);
 CREATE INDEX simulation_reports_task_id_idx ON simulation_reports(task_id);
 CREATE INDEX analytics_events_event_type_idx ON analytics_events(event_type);
