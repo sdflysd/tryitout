@@ -115,6 +115,108 @@ export interface AdminDisableAccessCodeBatchResultDto {
   disabledCodeCount: number;
 }
 
+export interface AdminUserRowDto {
+  id: string;
+  email: string;
+  status: "active" | "disabled";
+  tier: AdminUserTierDto;
+  role?: "user" | "admin";
+  features?: AdminCommercialFeatureDto[];
+  availableCredits: number;
+  frozenCredits: number;
+  redeemedBatchCount: number;
+  taskCount: number;
+  completedTaskCount: number;
+  failedTaskCount: number;
+  activeTaskCount?: number;
+  lastLoginAt?: string;
+  recentActivityAt?: string;
+  createdAt?: string;
+}
+
+export interface AdminTaskTimelineDto {
+  label: string;
+  at: string;
+}
+
+export interface AdminTaskStepCostDto {
+  stepName: string;
+  provider: string;
+  modelId: string;
+  tokens: number;
+  estimatedCost: number;
+  status: "completed" | "failed" | "skipped";
+}
+
+export interface AdminTaskRowDto {
+  id: string;
+  userEmail: string;
+  scenarioType: string;
+  interactionMode: string;
+  providerMode: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "refunded";
+  queueWaitMs?: number;
+  runDurationMs?: number;
+  credits: number;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCost: number;
+  errorCode?: string;
+  workerId?: string;
+  createdAt?: string;
+  timeline: AdminTaskTimelineDto[];
+  stepCosts: AdminTaskStepCostDto[];
+}
+
+export interface AdminCostGroupDto {
+  key: string;
+  cost: number;
+  tokens: number;
+}
+
+export interface AdminCostSummaryDto {
+  totalEstimatedCost: number;
+  providerGroups: AdminCostGroupDto[];
+  modelGroups: AdminCostGroupDto[];
+  stepGroups: AdminCostGroupDto[];
+  taskGroups: AdminCostGroupDto[];
+  outcomeGroups: AdminCostGroupDto[];
+}
+
+export interface AdminAdjustUserCreditsInputDto {
+  amount: number;
+  reason: string;
+  idempotencyKey: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AdminCreditAccountDto {
+  userId: string;
+  balance: number;
+  frozenCredits: number;
+  totalRedeemed: number;
+  totalCaptured: number;
+  updatedAt: string;
+}
+
+export interface AdminCreditLedgerEntryDto {
+  id: string;
+  userId: string;
+  entryType: "redeem" | "hold" | "capture" | "release" | "refund" | "adjustment";
+  amount: number;
+  balanceAfter: number;
+  frozenAfter: number;
+  idempotencyKey: string;
+  reason?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AdminAdjustUserCreditsResultDto {
+  account: AdminCreditAccountDto;
+  ledger: AdminCreditLedgerEntryDto;
+}
+
 export class AdminClientError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -173,6 +275,26 @@ export async function disableAdminAccessCodeBatch(
   assertObjectWithProperty(body, "disabledCodeCount", "Invalid access-code disable response");
 
   return body as unknown as AdminDisableAccessCodeBatchResultDto;
+}
+
+export async function adjustAdminUserCredits(
+  userId: string,
+  input: AdminAdjustUserCreditsInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAdjustUserCreditsResultDto> {
+  const body = await requestAdminJson(
+    `/api/admin/users/${encodeURIComponent(userId)}/credits`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "account", "Invalid credit adjustment response");
+  assertObjectWithProperty(body, "ledger", "Invalid credit adjustment response");
+
+  return body as unknown as AdminAdjustUserCreditsResultDto;
 }
 
 async function requestAdminJson(

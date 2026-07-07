@@ -1,0 +1,185 @@
+import {
+  BadgeDollarSign,
+  Boxes,
+  Cpu,
+  Layers3,
+  Route,
+} from "lucide-react";
+
+import type {
+  AdminCostGroupDto,
+  AdminCostSummaryDto,
+} from "./admin-client.js";
+
+interface CostsPageProps {
+  summary?: AdminCostSummaryDto;
+}
+
+const EMPTY_SUMMARY: AdminCostSummaryDto = {
+  totalEstimatedCost: 0,
+  providerGroups: [],
+  modelGroups: [],
+  stepGroups: [],
+  taskGroups: [],
+  outcomeGroups: [],
+};
+
+export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
+  return (
+    <div className="space-y-5">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Cost operations metrics">
+        <Metric title="Total Estimated Cost" value={formatCurrency(summary.totalEstimatedCost)} detail="All tracked model calls" tone="amber" />
+        <Metric title="Provider" value={summary.providerGroups.length} detail="Vendor split" tone="cyan" />
+        <Metric title="Model" value={summary.modelGroups.length} detail="Model mix" tone="emerald" />
+        <Metric title="Step" value={summary.stepGroups.length} detail="Workflow spend" tone="slate" />
+        <Metric title="Task" value={summary.taskGroups.length} detail="High-cost task trail" tone="rose" />
+      </section>
+
+      <section className="border border-slate-200 bg-white">
+        <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2">
+            <BadgeDollarSign className="h-4 w-4 text-slate-500" aria-hidden="true" />
+            <div>
+              <h2 className="text-sm font-black text-slate-950">Cost Operations</h2>
+              <p className="text-xs font-semibold text-slate-500">Provider, model, step, task, and outcome cost controls for commercial execution.</p>
+            </div>
+          </div>
+          <div className="font-mono text-xs font-black text-slate-700">{formatCurrency(summary.totalEstimatedCost)}</div>
+        </div>
+
+        <div className="grid gap-5 p-4 xl:grid-cols-2">
+          <CostGroupTable title="Provider" icon={Boxes} groups={summary.providerGroups} />
+          <CostGroupTable title="Model" icon={Cpu} groups={summary.modelGroups} />
+          <CostGroupTable title="Step" icon={Layers3} groups={summary.stepGroups} />
+          <CostGroupTable title="Task" icon={Route} groups={summary.taskGroups} />
+        </div>
+      </section>
+
+      <section className="border border-slate-200 bg-white">
+        <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
+          <h2 className="text-sm font-black text-slate-950">Success / Failure</h2>
+          <span className="text-xs font-bold text-slate-500">Refund and provider-quality watch</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[680px] text-left text-xs">
+            <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
+              <tr>
+                <th className="px-4 py-2 font-black">Success / Failure</th>
+                <th className="px-4 py-2 font-black">Tokens</th>
+                <th className="px-4 py-2 font-black">Cost</th>
+                <th className="px-4 py-2 font-black">Share</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {summary.outcomeGroups.map((group) => (
+                <tr key={group.key}>
+                  <td className="px-4 py-3 font-mono font-black text-slate-950">{group.key}</td>
+                  <td className="px-4 py-3 font-mono text-slate-700">{group.tokens}</td>
+                  <td className="px-4 py-3 font-mono font-black text-slate-950">{formatCurrency(group.cost)}</td>
+                  <td className="px-4 py-3 font-mono text-slate-700">{formatShare(group.cost, summary.totalEstimatedCost)}</td>
+                </tr>
+              ))}
+              {summary.outcomeGroups.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
+                    No outcome cost data loaded.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CostGroupTable({
+  title,
+  icon: Icon,
+  groups,
+}: {
+  title: string;
+  icon: typeof Boxes;
+  groups: AdminCostGroupDto[];
+}) {
+  const totalCost = groups.reduce((total, group) => total + group.cost, 0);
+  return (
+    <section className="border border-slate-200">
+      <div className="flex min-h-11 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
+        <div className="flex items-center gap-2 text-sm font-black text-slate-950">
+          <Icon className="h-4 w-4 text-slate-500" aria-hidden="true" />
+          <span>{title}</span>
+        </div>
+        <span className="font-mono text-[10px] font-black text-slate-500">{formatCurrency(totalCost)}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[440px] text-left text-xs">
+          <thead className="border-b border-slate-200 text-[10px] uppercase tracking-[0.13em] text-slate-500">
+            <tr>
+              <th className="px-3 py-2 font-black">{title}</th>
+              <th className="px-3 py-2 font-black">Tokens</th>
+              <th className="px-3 py-2 font-black">Cost</th>
+              <th className="px-3 py-2 font-black">Share</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {groups.map((group) => (
+              <tr key={group.key}>
+                <td className="px-3 py-3 font-mono font-black text-slate-950">{group.key}</td>
+                <td className="px-3 py-3 font-mono text-slate-700">{group.tokens}</td>
+                <td className="px-3 py-3 font-mono font-black text-slate-950">{formatCurrency(group.cost)}</td>
+                <td className="px-3 py-3 font-mono text-slate-700">{formatShare(group.cost, totalCost)}</td>
+              </tr>
+            ))}
+            {groups.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-3 py-6 text-center text-xs font-bold text-slate-500">
+                  No {title.toLowerCase()} cost data loaded.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function Metric({
+  title,
+  value,
+  detail,
+  tone,
+}: {
+  title: string;
+  value: string | number;
+  detail: string;
+  tone: "amber" | "cyan" | "emerald" | "slate" | "rose";
+}) {
+  const toneClass = {
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+    cyan: "border-cyan-200 bg-cyan-50 text-cyan-950",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    slate: "border-slate-200 bg-white text-slate-950",
+    rose: "border-rose-200 bg-rose-50 text-rose-950",
+  }[tone];
+  return (
+    <div className={`min-h-24 border p-4 ${toneClass}`}>
+      <div className="text-[10px] font-black uppercase tracking-[0.14em] opacity-60">{title}</div>
+      <div className="mt-3 font-mono text-2xl font-black tracking-tight">{value}</div>
+      <div className="mt-2 text-xs font-semibold opacity-70">{detail}</div>
+    </div>
+  );
+}
+
+function formatCurrency(value: number): string {
+  return `¥${value.toFixed(2)}`;
+}
+
+function formatShare(value: number, total: number): string {
+  if (total === 0) {
+    return "0.00%";
+  }
+  return `${((value / total) * 100).toFixed(2)}%`;
+}

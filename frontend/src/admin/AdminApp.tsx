@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 
 import AccessCodesPage from "./AccessCodesPage.js";
+import CostsPage from "./CostsPage.js";
+import TasksPage from "./TasksPage.js";
+import UsersPage from "./UsersPage.js";
 import {
   fetchAdminOverview,
   type AdminOverviewDto,
@@ -183,20 +186,53 @@ export default function AdminApp({
                 {loadError !== undefined ? loadError : "Loading live metrics"}
               </section>
             )}
-            {activeView === "Access Codes" ? (
-              <AccessCodesPage />
-            ) : (
-              <OverviewDashboard
-                overview={resolvedOverview}
-                completionRate={completionRate}
-                failureRate={failureRate}
-                redemptionRate={redemptionRate}
-              />
-            )}
+            <AdminView
+              activeView={activeView}
+              overview={resolvedOverview}
+              completionRate={completionRate}
+              failureRate={failureRate}
+              redemptionRate={redemptionRate}
+            />
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function AdminView({
+  activeView,
+  overview,
+  completionRate,
+  failureRate,
+  redemptionRate,
+}: {
+  activeView: AdminNavLabel;
+  overview: AdminOverviewDto;
+  completionRate: string;
+  failureRate: string;
+  redemptionRate: string;
+}) {
+  if (activeView === "Access Codes") {
+    return <AccessCodesPage />;
+  }
+  if (activeView === "Users") {
+    return <UsersPage />;
+  }
+  if (activeView === "Tasks") {
+    return <TasksPage />;
+  }
+  if (activeView === "Costs") {
+    return <CostsPage />;
+  }
+
+  return (
+    <OverviewDashboard
+      overview={overview}
+      completionRate={completionRate}
+      failureRate={failureRate}
+      redemptionRate={redemptionRate}
+    />
   );
 }
 

@@ -55,6 +55,33 @@ test("AdminApp can render the access-code operations view", () => {
   assert.match(html, /Generate copyable raw codes/);
 });
 
+test("AdminApp can render the user operations view", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialView="Users" />,
+  );
+
+  assert.match(html, /User Operations/);
+  assert.match(html, /Credit Adjustment/);
+});
+
+test("AdminApp can render the task operations view", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialView="Tasks" />,
+  );
+
+  assert.match(html, /Task Operations/);
+  assert.match(html, /Step Cost Table/);
+});
+
+test("AdminApp can render the cost operations view", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialView="Costs" />,
+  );
+
+  assert.match(html, /Cost Operations/);
+  assert.match(html, /Success \/ Failure/);
+});
+
 test("admin client fetches overview with credentials included", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
