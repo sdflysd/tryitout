@@ -335,6 +335,74 @@ test("postgres repository rejects malformed required array columns", async () =>
   await assert.rejects(repo.findUserByEmail("user@example.test"), /users\.features/);
 });
 
+test("postgres repository rejects wrong-shaped required text columns", async () => {
+  const numericId = createRowRepository([
+    {
+      id: 123,
+      email: "user@example.test",
+      email_normalized: "user@example.test",
+      password_hash: "hash",
+      role: "user",
+      tier: "basic",
+      status: "active",
+      features: [],
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(numericId.repo.findUserByEmail("user@example.test"), /users\.id/);
+
+  const booleanStatus = createRowRepository([
+    {
+      id: "user_1",
+      email: "user@example.test",
+      email_normalized: "user@example.test",
+      password_hash: "hash",
+      role: "user",
+      tier: "basic",
+      status: true,
+      features: [],
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(booleanStatus.repo.getUser("user_1"), /users\.status/);
+});
+
+test("postgres repository maps timestamp columns from Date and string values", async () => {
+  const { repo } = createRowRepository([
+    {
+      id: "user_1",
+      email: "user@example.test",
+      email_normalized: "user@example.test",
+      password_hash: "hash",
+      role: "user",
+      tier: "basic",
+      status: "active",
+      features: [],
+      last_login_at: new Date("2026-07-07T00:02:00.000Z"),
+      created_at: new Date("2026-07-07T00:00:00.000Z"),
+      updated_at: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+
+  assert.deepEqual(await repo.getUser("user_1"), {
+    id: "user_1",
+    email: "user@example.test",
+    emailNormalized: "user@example.test",
+    passwordHash: "hash",
+    role: "user",
+    tier: "basic",
+    status: "active",
+    features: [],
+    lastLoginAt: "2026-07-07T00:02:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:01:00.000Z",
+  });
+});
+
 test("postgres repository rejects malformed required json object columns", async () => {
   const { repo } = createRowRepository([
     {
@@ -349,6 +417,77 @@ test("postgres repository rejects malformed required json object columns", async
   ]);
 
   await assert.rejects(repo.getAccessCodeBatch("batch_1"), /access_code_batches\.metadata/);
+});
+
+test("postgres repository rejects malformed report JSON columns", async () => {
+  const publicReportArray = createRowRepository([
+    {
+      id: "report_1",
+      task_id: "task_1",
+      user_id: "user_1",
+      public_report: [],
+      deep_report: null,
+      share_card: null,
+      unlocked: true,
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(
+    publicReportArray.repo.getCommercialReportByTaskId("task_1"),
+    /simulation_reports\.public_report/,
+  );
+
+  const deepReportPrimitive = createRowRepository([
+    {
+      id: "report_1",
+      task_id: "task_1",
+      user_id: "user_1",
+      public_report: null,
+      deep_report: "not-json-object",
+      share_card: null,
+      unlocked: true,
+      created_at: "created",
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(
+    deepReportPrimitive.repo.getCommercialReportByTaskId("task_1"),
+    /simulation_reports\.deep_report/,
+  );
+});
+
+test("postgres repository rejects blank numeric strings", async () => {
+  const requiredNumber = createRowRepository([
+    {
+      user_id: "user_1",
+      balance: "",
+      frozen_credits: 0,
+      total_redeemed: 0,
+      total_captured: 0,
+      updated_at: "updated",
+    },
+  ]);
+
+  await assert.rejects(requiredNumber.repo.getCreditAccount("user_1"), /user_credit_accounts\.balance/);
+
+  const optionalNumber = createRowRepository([
+    {
+      id: "feedback_1",
+      user_id: "user_1",
+      task_id: null,
+      report_id: null,
+      rating: "   ",
+      feedback_type: null,
+      comment: null,
+      metadata: {},
+      created_at: "created",
+    },
+  ]);
+
+  await assert.rejects(optionalNumber.repo.listUserFeedback("user_1"), /user_feedback\.rating/);
 });
 
 test("postgres repository maps sessions writes and nullable row fields", async () => {

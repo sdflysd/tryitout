@@ -884,16 +884,23 @@ function maybeString(value: DbValue, label: string): string | undefined {
     return undefined;
   }
 
-  if (
-    typeof value !== "string" &&
-    typeof value !== "number" &&
-    typeof value !== "boolean" &&
-    !(value instanceof Date)
-  ) {
-    throw new Error(`${label} must be a string or timestamp`);
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
   }
 
-  return value instanceof Date ? value.toISOString() : String(value);
+  return value;
+}
+
+function maybeTimestamp(value: DbValue, label: string): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" && !(value instanceof Date)) {
+    throw new Error(`${label} must be a timestamp`);
+  }
+
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 function optionalStringField(
@@ -906,6 +913,23 @@ function optionalStringField(
 
 function stringField(row: DbRow, field: string, table: string): string {
   const value = maybeString(rowValue(row, field, table), `${table}.${field}`);
+  if (value === undefined) {
+    throw new Error(`${table}.${field} is required`);
+  }
+
+  return value;
+}
+
+function optionalTimestampField(
+  row: DbRow,
+  field: string,
+  table: string,
+): string | undefined {
+  return maybeTimestamp(row[field], `${table}.${field}`);
+}
+
+function timestampField(row: DbRow, field: string, table: string): string {
+  const value = maybeTimestamp(rowValue(row, field, table), `${table}.${field}`);
   if (value === undefined) {
     throw new Error(`${table}.${field} is required`);
   }
@@ -928,6 +952,10 @@ function optionalNumberField(
   }
 
   const numberValue = typeof value === "number" ? value : Number(value);
+  if (typeof value === "string" && value.trim() === "") {
+    throw new Error(`${table}.${field} must be a number`);
+  }
+
   if (!Number.isFinite(numberValue)) {
     throw new Error(`${table}.${field} must be a number`);
   }
@@ -1013,13 +1041,13 @@ function mapCommercialUser(row: DbRow): CommercialUserRecord {
     tier: stringField(row, "tier", table) as CommercialUserRecord["tier"],
     status: stringField(row, "status", table) as CommercialUserRecord["status"],
     features: arrayField(row, "features", table),
-    createdAt: stringField(row, "created_at", table),
-    updatedAt: stringField(row, "updated_at", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
   assignIfDefined(
     record,
     "lastLoginAt",
-    optionalStringField(row, "last_login_at", table),
+    optionalTimestampField(row, "last_login_at", table),
   );
   return record;
 }
@@ -1030,12 +1058,12 @@ function mapCommercialSession(row: DbRow): CommercialSessionRecord {
     id: stringField(row, "id", table),
     userId: stringField(row, "user_id", table),
     tokenHash: stringField(row, "token_hash", table),
-    expiresAt: stringField(row, "expires_at", table),
-    createdAt: stringField(row, "created_at", table),
+    expiresAt: timestampField(row, "expires_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "userAgent", optionalStringField(row, "user_agent", table));
   assignIfDefined(record, "ipHash", optionalStringField(row, "ip_hash", table));
-  assignIfDefined(record, "revokedAt", optionalStringField(row, "revoked_at", table));
+  assignIfDefined(record, "revokedAt", optionalTimestampField(row, "revoked_at", table));
   return record;
 }
 
@@ -1047,7 +1075,7 @@ function mapUserCreditAccount(row: DbRow): UserCreditAccountRecord {
     frozenCredits: numberField(row, "frozen_credits", table),
     totalRedeemed: numberField(row, "total_redeemed", table),
     totalCaptured: numberField(row, "total_captured", table),
-    updatedAt: stringField(row, "updated_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
 }
 
@@ -1064,7 +1092,7 @@ function mapCreditLedgerEntry(row: DbRow): CreditLedgerEntryRecord {
     amount: numberField(row, "amount", table),
     balanceAfter: numberField(row, "balance_after", table),
     idempotencyKey: stringField(row, "idempotency_key", table),
-    createdAt: stringField(row, "created_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
   assignIfDefined(record, "accessCodeId", optionalStringField(row, "access_code_id", table));
@@ -1083,13 +1111,13 @@ function mapAccessCodeBatch(row: DbRow): AccessCodeBatchRecord {
     credits: numberField(row, "credits", table),
     features: arrayField(row, "features", table),
     metadata: jsonObjectField(row, "metadata", table),
-    createdAt: stringField(row, "created_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "createdByUserId", optionalStringField(row, "created_by_user_id", table));
   assignIfDefined(record, "source", optionalStringField(row, "source", table));
   assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeBatchRecord["tier"]);
-  assignIfDefined(record, "expiresAt", optionalStringField(row, "expires_at", table));
-  assignIfDefined(record, "disabledAt", optionalStringField(row, "disabled_at", table));
+  assignIfDefined(record, "expiresAt", optionalTimestampField(row, "expires_at", table));
+  assignIfDefined(record, "disabledAt", optionalTimestampField(row, "disabled_at", table));
   assignIfDefined(record, "notes", optionalStringField(row, "notes", table));
   return record;
 }
@@ -1104,13 +1132,13 @@ function mapAccessCode(row: DbRow): AccessCodeRecord {
     status: stringField(row, "status", table) as AccessCodeRecord["status"],
     credits: numberField(row, "credits", table),
     features: arrayField(row, "features", table),
-    createdAt: stringField(row, "created_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeRecord["tier"]);
-  assignIfDefined(record, "expiresAt", optionalStringField(row, "expires_at", table));
+  assignIfDefined(record, "expiresAt", optionalTimestampField(row, "expires_at", table));
   assignIfDefined(record, "redeemedByUserId", optionalStringField(row, "redeemed_by_user_id", table));
-  assignIfDefined(record, "redeemedAt", optionalStringField(row, "redeemed_at", table));
-  assignIfDefined(record, "disabledAt", optionalStringField(row, "disabled_at", table));
+  assignIfDefined(record, "redeemedAt", optionalTimestampField(row, "redeemed_at", table));
+  assignIfDefined(record, "disabledAt", optionalTimestampField(row, "disabled_at", table));
   return record;
 }
 
@@ -1122,7 +1150,7 @@ function mapAccessCodeRedemption(row: DbRow): AccessCodeRedemptionRecord {
     userId: stringField(row, "user_id", table),
     credits: numberField(row, "credits", table),
     featuresGranted: arrayField(row, "features_granted", table),
-    redeemedAt: stringField(row, "redeemed_at", table),
+    redeemedAt: timestampField(row, "redeemed_at", table),
     metadata: jsonObjectField(row, "metadata", table),
   };
   assignIfDefined(record, "creditLedgerId", optionalStringField(row, "credit_ledger_id", table));
@@ -1152,8 +1180,8 @@ function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
     ) as CommercialSimulationTaskRecord["providerMode"],
     status: stringField(row, "status", table) as CommercialSimulationTaskRecord["status"],
     creditCost: numberField(row, "credit_cost", table),
-    createdAt: stringField(row, "created_at", table),
-    updatedAt: stringField(row, "updated_at", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
   assignIfDefined(record, "creditHoldLedgerId", optionalStringField(row, "credit_hold_ledger_id", table));
   assignIfDefined(record, "priority", optionalNumberField(row, "priority", table));
@@ -1161,9 +1189,9 @@ function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
   assignIfDefined(record, "idempotencyKey", optionalStringField(row, "idempotency_key", table));
   assignIfDefined(record, "inputSummary", optionalJsonObjectField(row, "input_summary", table));
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
-  assignIfDefined(record, "queuedAt", optionalStringField(row, "queued_at", table));
-  assignIfDefined(record, "startedAt", optionalStringField(row, "started_at", table));
-  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
+  assignIfDefined(record, "queuedAt", optionalTimestampField(row, "queued_at", table));
+  assignIfDefined(record, "startedAt", optionalTimestampField(row, "started_at", table));
+  assignIfDefined(record, "completedAt", optionalTimestampField(row, "completed_at", table));
   return record;
 }
 
@@ -1173,12 +1201,12 @@ function mapSimulationTaskRun(row: DbRow): SimulationTaskRunRecord {
     id: stringField(row, "id", table),
     taskId: stringField(row, "task_id", table),
     status: stringField(row, "status", table) as SimulationTaskRunRecord["status"],
-    startedAt: stringField(row, "started_at", table),
+    startedAt: timestampField(row, "started_at", table),
   };
   assignIfDefined(record, "workerId", optionalStringField(row, "worker_id", table));
   assignIfDefined(record, "attempt", optionalNumberField(row, "attempt", table));
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
-  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
+  assignIfDefined(record, "completedAt", optionalTimestampField(row, "completed_at", table));
   assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
   return record;
 }
@@ -1190,7 +1218,7 @@ function mapSimulationStepRunCost(row: DbRow): SimulationStepRunCostRecord {
     taskId: stringField(row, "task_id", table),
     stepName: stringField(row, "step_name", table),
     status: stringField(row, "status", table) as SimulationStepRunCostRecord["status"],
-    startedAt: stringField(row, "started_at", table),
+    startedAt: timestampField(row, "started_at", table),
   };
   assignIfDefined(record, "taskRunId", optionalStringField(row, "task_run_id", table));
   assignIfDefined(record, "stageIndex", optionalNumberField(row, "stage_index", table));
@@ -1207,7 +1235,7 @@ function mapSimulationStepRunCost(row: DbRow): SimulationStepRunCostRecord {
   assignIfDefined(record, "latencyMs", optionalNumberField(row, "latency_ms", table));
   assignIfDefined(record, "retryCount", optionalNumberField(row, "retry_count", table));
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
-  assignIfDefined(record, "completedAt", optionalStringField(row, "completed_at", table));
+  assignIfDefined(record, "completedAt", optionalTimestampField(row, "completed_at", table));
   assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
   return record;
 }
@@ -1219,22 +1247,22 @@ function mapCommercialReport(row: DbRow): CommercialSimulationReportRecord {
     taskId: stringField(row, "task_id", table),
     userId: stringField(row, "user_id", table),
     unlocked: booleanField(row, "unlocked", table),
-    createdAt: stringField(row, "created_at", table),
-    updatedAt: stringField(row, "updated_at", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
   assignIfDefined(
     record,
     "publicReport",
-    row.public_report === null
-      ? undefined
-      : (row.public_report as unknown as CommercialSimulationReportRecord["publicReport"]),
+    optionalJsonObjectField(row, "public_report", table) as unknown as
+      | CommercialSimulationReportRecord["publicReport"]
+      | undefined,
   );
   assignIfDefined(
     record,
     "deepReport",
-    row.deep_report === null
-      ? undefined
-      : (row.deep_report as unknown as CommercialSimulationReportRecord["deepReport"]),
+    optionalJsonObjectField(row, "deep_report", table) as
+      | CommercialSimulationReportRecord["deepReport"]
+      | undefined,
   );
   assignIfDefined(record, "shareCard", optionalJsonObjectField(row, "share_card", table));
   return record;
@@ -1246,7 +1274,7 @@ function mapAnalyticsEvent(row: DbRow): AnalyticsEventRecord {
     id: stringField(row, "id", table),
     eventType: stringField(row, "event_type", table),
     properties: jsonObjectField(row, "properties", table),
-    occurredAt: stringField(row, "occurred_at", table),
+    occurredAt: timestampField(row, "occurred_at", table),
   };
   assignIfDefined(record, "userId", optionalStringField(row, "user_id", table));
   assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
@@ -1260,7 +1288,7 @@ function mapUserFeedback(row: DbRow): UserFeedbackRecord {
   const record: UserFeedbackRecord = {
     id: stringField(row, "id", table),
     metadata: jsonObjectField(row, "metadata", table),
-    createdAt: stringField(row, "created_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "userId", optionalStringField(row, "user_id", table));
   assignIfDefined(record, "taskId", optionalStringField(row, "task_id", table));
@@ -1282,13 +1310,13 @@ function mapUserModelProvider(row: DbRow): UserModelProviderRecord {
     encryptedApiKey: stringField(row, "encrypted_api_key", table),
     apiKeyMask: stringField(row, "api_key_mask", table),
     status: stringField(row, "status", table) as UserModelProviderRecord["status"],
-    createdAt: stringField(row, "created_at", table),
-    updatedAt: stringField(row, "updated_at", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
   assignIfDefined(record, "modelFast", optionalStringField(row, "model_fast", table));
   assignIfDefined(record, "modelBalanced", optionalStringField(row, "model_balanced", table));
   assignIfDefined(record, "modelDeep", optionalStringField(row, "model_deep", table));
-  assignIfDefined(record, "lastTestedAt", optionalStringField(row, "last_tested_at", table));
+  assignIfDefined(record, "lastTestedAt", optionalTimestampField(row, "last_tested_at", table));
   assignIfDefined(record, "lastTestStatus", optionalStringField(row, "last_test_status", table) as UserModelProviderRecord["lastTestStatus"]);
   return record;
 }
@@ -1298,8 +1326,8 @@ function mapSystemSetting(row: DbRow): SystemSettingRecord {
   const record: SystemSettingRecord = {
     key: stringField(row, "key", table),
     value: rowValue(row, "value", table),
-    createdAt: stringField(row, "created_at", table),
-    updatedAt: stringField(row, "updated_at", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
   };
   assignIfDefined(record, "description", optionalStringField(row, "description", table));
   assignIfDefined(record, "updatedByUserId", optionalStringField(row, "updated_by_user_id", table));
@@ -1313,7 +1341,7 @@ function mapAdminAuditLog(row: DbRow): AdminAuditLogRecord {
     action: stringField(row, "action", table),
     targetType: stringField(row, "target_type", table),
     metadata: jsonObjectField(row, "metadata", table),
-    createdAt: stringField(row, "created_at", table),
+    createdAt: timestampField(row, "created_at", table),
   };
   assignIfDefined(record, "actorUserId", optionalStringField(row, "actor_user_id", table));
   assignIfDefined(record, "targetId", optionalStringField(row, "target_id", table));
