@@ -10,6 +10,7 @@ import { resolveCommercialConfig } from "./commercial-config.js";
 import { CommercialTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
 import { AdminAuditService } from "./audit-service.js";
+import { CommercialAnalyticsService } from "./analytics-service.js";
 import {
   PostgresCommercialRepository,
   type AcquiredQueryClient,
@@ -17,7 +18,6 @@ import {
 } from "./postgres-repository.js";
 import type { CommercialRepository } from "./repository.js";
 import type { SimulationQueue } from "./simulation-queue.js";
-import type { AnalyticsEventRecord } from "./types.js";
 
 export type CommercialServices =
   | {
@@ -45,14 +45,6 @@ export interface CommercialServicesFactoryOptions {
   createQueryClient?: (databaseUrl: string) => QueryClient;
   now?: () => Date | string;
   createId?: (prefix?: string) => string;
-}
-
-export class CommercialAnalyticsService {
-  constructor(private readonly repository: CommercialRepository) {}
-
-  async recordEvent(event: AnalyticsEventRecord): Promise<void> {
-    await this.repository.appendAnalyticsEvent(event);
-  }
 }
 
 export function createCommercialServicesFromEnv(
@@ -119,7 +111,7 @@ export function createCommercialServices(
       creditService,
       auditService,
     }),
-    analyticsService: new CommercialAnalyticsService(repository),
+    analyticsService: new CommercialAnalyticsService(commonOptions),
     taskService,
   };
 }

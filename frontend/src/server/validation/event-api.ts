@@ -3,6 +3,9 @@ import type { ValidationEvent } from "./event-store.js";
 
 interface Deps {
   appendEvent?: (event: unknown) => Promise<ValidationEvent>;
+  analyticsService?: {
+    recordValidationEvent(event: ValidationEvent): Promise<unknown>;
+  };
 }
 
 export async function handleValidationEventRequest(
@@ -10,9 +13,11 @@ export async function handleValidationEventRequest(
   deps: Deps = {},
 ): Promise<{ status: number; body: { ok?: boolean; event?: ValidationEvent; error?: string } }> {
   try {
-    const appendEvent = deps.appendEvent ?? appendValidationEvent;
     const sanitized = sanitizeValidationEvent(body);
-    const event = await appendEvent(sanitized);
+    const event =
+      deps.analyticsService === undefined
+        ? await (deps.appendEvent ?? appendValidationEvent)(sanitized)
+        : await recordCommercialValidationEvent(sanitized, deps.analyticsService);
     return { status: 200, body: { ok: true, event } };
   } catch (error) {
     return {
@@ -22,4 +27,18 @@ export async function handleValidationEventRequest(
       },
     };
   }
+}
+
+async function recordCommercialValidationEvent(
+  event: ValidationEvent,
+  analyticsService: NonNullable<Deps["analyticsService"]>,
+): Promise<ValidationEvent> {
+  const publicEvent = stripPrivateValidationFields(event);
+  await analyticsService.recordValidationEvent(publicEvent);
+  return publicEvent;
+}
+
+function stripPrivateValidationFields(event: ValidationEvent): ValidationEvent {
+  const { text: _text, contact: _contact, ...publicEvent } = event;
+  return publicEvent;
 }

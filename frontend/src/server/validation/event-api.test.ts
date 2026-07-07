@@ -30,3 +30,40 @@ test("handleValidationEventRequest persists valid event", async () => {
   assert.equal(result.body.ok, true);
   assert.deepEqual(stored, { type: "share_clicked", simulationId: "sim_1" });
 });
+
+test("handleValidationEventRequest stores validation events in commercial analytics when provided", async () => {
+  let localAppendCalled = false;
+  const commercialEvents: unknown[] = [];
+
+  const result = await handleValidationEventRequest(
+    {
+      type: "paywall_lead_submitted",
+      simulationId: "task_1",
+      scenarioType: "life_choice",
+      text: "private decision details",
+      contact: "buyer@example.test",
+    },
+    {
+      appendEvent: async () => {
+        localAppendCalled = true;
+        throw new Error("local JSONL append should not run");
+      },
+      analyticsService: {
+        recordValidationEvent: async (event) => {
+          commercialEvents.push(event);
+        },
+      },
+    },
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(localAppendCalled, false);
+  assert.deepEqual(commercialEvents, [
+    {
+      type: "paywall_lead_submitted",
+      simulationId: "task_1",
+      scenarioType: "life_choice",
+    },
+  ]);
+});
