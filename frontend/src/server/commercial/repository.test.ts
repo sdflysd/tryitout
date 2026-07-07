@@ -215,6 +215,46 @@ test("repository rejects duplicate access code hashes", async () => {
   );
 });
 
+test("repository gets access codes by id and lists them by batch", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TEST-****-001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "now",
+  });
+  await repo.saveAccessCode({
+    id: "code_2",
+    batchId: "batch_2",
+    codeHash: "hash_2",
+    codeMask: "TEST-****-002",
+    status: "active",
+    credits: 5,
+    features: [],
+    createdAt: "now",
+  });
+  await repo.saveAccessCode({
+    id: "code_3",
+    batchId: "batch_1",
+    codeHash: "hash_3",
+    codeMask: "TEST-****-003",
+    status: "disabled",
+    credits: 10,
+    features: [],
+    createdAt: "later",
+  });
+
+  assert.equal((await repo.getAccessCode("code_1"))?.codeHash, "hash_1");
+  assert.deepEqual(
+    (await repo.listAccessCodesByBatch("batch_1")).map((code) => code.id),
+    ["code_1", "code_3"],
+  );
+});
+
 test("repository rejects duplicate access code redemptions", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveAccessCodeRedemption({

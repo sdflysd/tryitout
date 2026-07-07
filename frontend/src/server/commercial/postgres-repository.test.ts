@@ -736,6 +736,82 @@ test("postgres repository maps access codes writes and reads", async () => {
   });
 });
 
+test("postgres repository gets access codes by id and lists by batch", async () => {
+  const { repo: getRepo, queries: getQueries } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TIO-****-****-JK23",
+      status: "active",
+      credits: "10",
+      tier: "pro",
+      features: ["deep_mode"],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: null,
+      created_at: "created",
+    },
+  ]);
+
+  assert.deepEqual(await getRepo.getAccessCode("code_1"), {
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TIO-****-****-JK23",
+    status: "active",
+    credits: 10,
+    tier: "pro",
+    features: ["deep_mode"],
+    createdAt: "created",
+  });
+  assert.match(getQueries[0].sql, /from access_codes/i);
+  assert.match(getQueries[0].sql, /where id = \$1/i);
+  assert.deepEqual(getQueries[0].params, ["code_1"]);
+
+  const { repo: listRepo, queries: listQueries } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TIO-****-****-JK23",
+      status: "active",
+      credits: "10",
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: null,
+      created_at: "created",
+    },
+    {
+      id: "code_2",
+      batch_id: "batch_1",
+      code_hash: "hash_2",
+      code_mask: "TIO-****-****-JK24",
+      status: "disabled",
+      credits: "10",
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: "disabled",
+      created_at: "later",
+    },
+  ]);
+
+  assert.deepEqual(
+    (await listRepo.listAccessCodesByBatch("batch_1")).map((code) => code.id),
+    ["code_1", "code_2"],
+  );
+  assert.match(listQueries[0].sql, /from access_codes/i);
+  assert.match(listQueries[0].sql, /where batch_id = \$1/i);
+  assert.deepEqual(listQueries[0].params, ["batch_1"]);
+});
+
 test("postgres repository maps access code redemptions inserts and reads", async () => {
   const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
   await writeRepo.saveAccessCodeRedemption({

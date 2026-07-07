@@ -46,6 +46,8 @@ export interface CommercialRepository {
     batchId: string,
   ): Promise<AccessCodeBatchRecord | undefined>;
   saveAccessCode(code: AccessCodeRecord): Promise<void>;
+  getAccessCode(codeId: string): Promise<AccessCodeRecord | undefined>;
+  listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]>;
   findAccessCodeByHash(codeHash: string): Promise<AccessCodeRecord | undefined>;
   saveAccessCodeRedemption(
     redemption: AccessCodeRedemptionRecord,
@@ -226,6 +228,18 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       "access_codes.codeHash",
     );
     this.accessCodes.set(code.id, code);
+  }
+
+  async getAccessCode(
+    codeId: string,
+  ): Promise<AccessCodeRecord | undefined> {
+    return this.accessCodes.get(codeId);
+  }
+
+  async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
+    return [...this.accessCodes.values()].filter(
+      (code) => code.batchId === batchId,
+    );
   }
 
   async findAccessCodeByHash(

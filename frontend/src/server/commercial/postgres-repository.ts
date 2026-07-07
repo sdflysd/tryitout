@@ -411,6 +411,37 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapAccessCode);
   }
 
+  async getAccessCode(
+    codeId: string,
+  ): Promise<AccessCodeRecord | undefined> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+        from access_codes
+        where id = $1
+      `,
+      [codeId],
+    );
+    return mapOptional(rows[0], mapAccessCode);
+  }
+
+  async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
+    const { rows } = await this.client.query<DbRow>(
+      `
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+        from access_codes
+        where batch_id = $1
+        order by created_at asc, id asc
+      `,
+      [batchId],
+    );
+    return rows.map(mapAccessCode);
+  }
+
   async saveAccessCodeRedemption(
     redemption: AccessCodeRedemptionRecord,
   ): Promise<void> {
