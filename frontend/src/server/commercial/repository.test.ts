@@ -228,6 +228,64 @@ test("repository atomically applies a credit ledger entry to an account", async 
   );
 });
 
+test("repository credit transitions use the current account instead of stale absolute snapshots", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+  await repo.saveCommercialTask(makeTask({ creditCost: 3 }));
+
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 12 }));
+  const result = await repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 7,
+      frozenAfter: 3,
+      idempotencyKey: "hold_1",
+      createdAt: "held",
+    },
+    amount: 3,
+    taskUpdatedAt: "held",
+  });
+
+  assert.equal(result.account.balance, 9);
+  assert.equal(result.account.frozenCredits, 3);
+  assert.equal(result.ledger.balanceAfter, 9);
+  assert.equal((await repo.getCommercialTask("task_1"))?.creditHoldLedgerId, "ledger_1");
+});
+
+test("repository holdCreditsForTask validates task before mutating account", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+  await repo.saveCommercialTask(makeTask({ userId: "user_2" }));
+
+  assert.equal(
+    await repo.holdCreditsForTask({
+      ledgerEntry: {
+        id: "ledger_1",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "hold",
+        amount: -3,
+        balanceAfter: 7,
+        frozenAfter: 3,
+        idempotencyKey: "hold_1",
+        createdAt: "held",
+      },
+      amount: 3,
+      taskUpdatedAt: "held",
+    }),
+    undefined,
+  );
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
+  assert.equal(
+    await repo.findCreditLedgerEntryByIdempotencyKey("hold_1"),
+    undefined,
+  );
+});
+
 test("repository applyCreditLedgerEntry validates uniqueness before mutating account", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
@@ -267,6 +325,120 @@ test("repository applyCreditLedgerEntry validates uniqueness before mutating acc
   );
 
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
+});
+
+test("repository completes holds and refunds captures exactly once", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
+  const hold = await repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "hold_ledger",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -4,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "hold_1",
+      createdAt: "held",
+    },
+    amount: 4,
+    taskUpdatedAt: "held",
+  });
+  assert.ok(hold);
+
+  const capture = await repo.captureHeldCredits({
+    ledgerEntry: {
+      id: "capture_ledger",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "capture",
+      amount: -4,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "capture_1",
+      metadata: { holdLedgerId: "hold_ledger" },
+      createdAt: "captured",
+    },
+    holdLedgerId: "hold_ledger",
+    amount: 4,
+  });
+  assert.equal(capture?.ledger.id, "capture_ledger");
+  assert.equal(
+    await repo.releaseHeldCredits({
+      ledgerEntry: {
+        id: "release_ledger",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "release",
+        amount: 4,
+        balanceAfter: 0,
+        frozenAfter: 0,
+        idempotencyKey: "release_1",
+        metadata: { holdLedgerId: "hold_ledger" },
+        createdAt: "released",
+      },
+      holdLedgerId: "hold_ledger",
+      amount: 4,
+    }),
+    undefined,
+  );
+
+  const refund = await repo.refundCapturedCreditsWithAudit({
+    ledgerEntry: {
+      id: "refund_ledger",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "refund",
+      amount: 4,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "refund_1",
+      metadata: { captureLedgerId: "capture_ledger" },
+      createdAt: "refunded",
+    },
+    captureLedgerId: "capture_ledger",
+    amount: 4,
+    auditLog: {
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "task_refunded",
+      targetType: "task",
+      targetId: "task_1",
+      metadata: { creditLedgerId: "refund_ledger" },
+      createdAt: "refunded",
+    },
+  });
+  assert.equal(refund?.ledger.id, "refund_ledger");
+  assert.equal(
+    await repo.refundCapturedCreditsWithAudit({
+      ledgerEntry: {
+        id: "refund_ledger_2",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "refund",
+        amount: 4,
+        balanceAfter: 0,
+        frozenAfter: 0,
+        idempotencyKey: "refund_2",
+        metadata: { captureLedgerId: "capture_ledger" },
+        createdAt: "refunded_again",
+      },
+      captureLedgerId: "capture_ledger",
+      amount: 4,
+      auditLog: {
+        id: "audit_2",
+        actorUserId: "admin_1",
+        action: "task_refunded",
+        targetType: "task",
+        targetId: "task_1",
+        metadata: { creditLedgerId: "refund_ledger_2" },
+        createdAt: "refunded_again",
+      },
+    }),
+    undefined,
+  );
 });
 
 test("repository atomically applies a credit ledger entry with audit log", async () => {
@@ -350,14 +522,6 @@ test("repository atomically redeems access code with credit ledger and account",
       metadata: {},
     },
     {
-      userId: "user_1",
-      balance: 10,
-      frozenCredits: 0,
-      totalRedeemed: 10,
-      totalCaptured: 0,
-      updatedAt: "redeemed",
-    },
-    {
       id: "ledger_1",
       userId: "user_1",
       accessCodeId: "code_1",
@@ -370,7 +534,8 @@ test("repository atomically redeems access code with credit ledger and account",
     },
   );
 
-  assert.equal(result, true);
+  assert.equal(result?.ledger.id, "ledger_1");
+  assert.equal(result?.account.balance, 10);
   assert.equal((await repo.getAccessCode("code_1"))?.status, "redeemed");
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
   assert.equal(
@@ -429,14 +594,6 @@ test("repository redeemAccessCodeWithCreditLedger validates ledger uniqueness be
         featuresGranted: [],
         redeemedAt: "redeemed",
         metadata: {},
-      },
-      {
-        userId: "user_1",
-        balance: 10,
-        frozenCredits: 0,
-        totalRedeemed: 10,
-        totalCaptured: 0,
-        updatedAt: "redeemed",
       },
       {
         id: "ledger_1",
@@ -1242,6 +1399,21 @@ function makeCreditAccount(userId = "user_1", overrides = {}) {
     totalRedeemed: 0,
     totalCaptured: 0,
     updatedAt: "now",
+    ...overrides,
+  };
+}
+
+function makeTask(overrides = {}) {
+  return {
+    id: "task_1",
+    userId: "user_1",
+    scenarioType: "life_choice" as const,
+    interactionMode: "enabled" as const,
+    providerMode: "platform" as const,
+    status: "queued" as const,
+    creditCost: 3,
+    createdAt: "created",
+    updatedAt: "created",
     ...overrides,
   };
 }

@@ -21,6 +21,9 @@ export type CreditServiceErrorCode =
   | "hold_already_completed"
   | "capture_already_refunded"
   | "insufficient_credits"
+  | "idempotency_conflict"
+  | "task_not_found"
+  | "task_hold_conflict"
   | "invalid_credit_input";
 
 export class CreditServiceError extends Error {
@@ -126,32 +129,35 @@ export class CreditService {
     validateRequired(input.rawCode, "Access code");
     validateRequired(input.idempotencyKey, "Idempotency key");
 
-    const existingLedger = await this.findExistingLedger(input.idempotencyKey);
-    if (existingLedger !== undefined) {
-      const account = await this.requireAccount(existingLedger.userId);
-      const redemption = existingLedger.accessCodeId
-        ? await this.repository.findAccessCodeRedemptionByCodeId(
-            existingLedger.accessCodeId,
-          )
-        : undefined;
-      if (!redemption) {
-        throw new CreditServiceError(
-          "access_code_not_redeemable",
-          "Access code redemption was not recorded",
-        );
-      }
-      return { account, ledger: existingLedger, redemption };
-    }
-
     const codeHash = this.safeHashAccessCode(input.rawCode);
     const code = await this.repository.findAccessCodeByHash(codeHash);
     if (!code) {
       throw new CreditServiceError("access_code_not_found", "Access code not found");
     }
+    const fingerprint = createRequestFingerprint({
+      operation: "redeem_access_code",
+      requestUserId: input.userId,
+      accessCodeId: code.id,
+      amount: code.credits,
+    });
+    const existingLedger = await this.findExistingLedger(input.idempotencyKey);
+    if (existingLedger !== undefined) {
+      this.assertIdempotentReplay(existingLedger, "redeem", fingerprint);
+      const account = await this.requireAccount(input.userId);
+      const redemption = await this.repository.findAccessCodeRedemptionByCodeId(
+        code.id,
+      );
+      if (!redemption || redemption.userId !== input.userId) {
+        throw new CreditServiceError(
+          "idempotency_conflict",
+          "Idempotency key conflicts with a different request",
+        );
+      }
+      return { account, ledger: existingLedger, redemption };
+    }
     const nowDate = this.currentDate();
     this.assertRedeemable(code, nowDate);
 
-    const account = await this.requireAccount(input.userId);
     const nowIso = nowDate.toISOString();
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
@@ -159,18 +165,18 @@ export class CreditService {
       accessCodeId: code.id,
       entryType: "redeem",
       amount: code.credits,
-      balanceAfter: account.balance + code.credits,
-      frozenAfter: account.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: "access_code",
-      metadata: input.metadata ?? {},
+      metadata: requestMetadata(input.metadata, {
+        operation: "redeem_access_code",
+        requestUserId: input.userId,
+        accessCodeId: code.id,
+        amount: code.credits,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
-    };
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      balance: ledger.balanceAfter,
-      totalRedeemed: account.totalRedeemed + code.credits,
-      updatedAt: nowIso,
     };
     const redemption: AccessCodeRedemptionRecord = {
       id: this.createId("access_code_redemption"),
@@ -192,7 +198,6 @@ export class CreditService {
         redeemedAt: nowIso,
       },
       redemption,
-      nextAccount,
       ledger,
     );
     if (!redeemed) {
@@ -202,7 +207,7 @@ export class CreditService {
       );
     }
 
-    return { account: nextAccount, ledger, redemption };
+    return redeemed;
   }
 
   async holdCreditsForTask(
@@ -210,53 +215,54 @@ export class CreditService {
   ): Promise<CreditTransitionResult> {
     this.validateTaskAmountInput(input);
 
-    const existing = await this.returnExistingTransition(input.idempotencyKey);
+    const fingerprint = createRequestFingerprint({
+      operation: "hold_task_credits",
+      requestUserId: input.userId,
+      taskId: input.taskId,
+      amount: input.amount,
+      reason: input.reason,
+    });
+    const existing = await this.returnExistingTransition(
+      input.idempotencyKey,
+      "hold",
+      fingerprint,
+    );
     if (existing !== undefined) {
-      if (existing.ledger.entryType === "hold") {
-        await this.attachHoldLedgerToTask(
-          input.taskId,
-          existing.ledger.id,
-          existing.ledger.createdAt,
-        );
-      }
       return existing;
     }
 
-    const account = await this.requireAccount(input.userId);
-    if (account.balance < input.amount) {
-      throw new CreditServiceError(
-        "insufficient_credits",
-        "Available credit balance is insufficient",
-      );
-    }
-
     const nowIso = this.currentDate().toISOString();
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      balance: account.balance - input.amount,
-      frozenCredits: account.frozenCredits + input.amount,
-      updatedAt: nowIso,
-    };
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
       userId: input.userId,
       taskId: input.taskId,
       entryType: "hold",
       amount: -input.amount,
-      balanceAfter: nextAccount.balance,
-      frozenAfter: nextAccount.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: input.reason,
-      metadata: input.metadata ?? {},
+      metadata: requestMetadata(input.metadata, {
+        operation: "hold_task_credits",
+        requestUserId: input.userId,
+        taskId: input.taskId,
+        amount: input.amount,
+        reason: input.reason,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
     };
 
-    const storedLedger = await this.repository.applyCreditLedgerEntry(
-      nextAccount,
-      ledger,
-    );
-    await this.attachHoldLedgerToTask(input.taskId, storedLedger.id, nowIso);
-    return { account: nextAccount, ledger: storedLedger };
+    const stored = await this.repository.holdCreditsForTask({
+      ledgerEntry: ledger,
+      amount: input.amount,
+      taskUpdatedAt: nowIso,
+    });
+    if (stored !== undefined) {
+      return stored;
+    }
+
+    await this.throwHoldFailure(input);
   }
 
   async captureHeldCredits(
@@ -267,12 +273,23 @@ export class CreditService {
     validateRequired(input.holdLedgerId, "Hold ledger id");
     validateRequired(input.idempotencyKey, "Idempotency key");
 
-    const existing = await this.returnExistingTransition(input.idempotencyKey);
+    const fingerprint = createRequestFingerprint({
+      operation: "capture_hold",
+      requestUserId: input.userId,
+      taskId: input.taskId,
+      holdLedgerId: input.holdLedgerId,
+    });
+    const existing = await this.returnExistingTransition(
+      input.idempotencyKey,
+      "capture",
+      fingerprint,
+    );
     if (existing !== undefined) {
       return existing;
     }
 
-    const { account, hold, amount } = await this.requireOpenHold(input);
+    const { hold, amount } = await this.requireOpenHold(input);
+    const account = await this.requireAccount(input.userId);
     if (account.frozenCredits < amount) {
       throw new CreditServiceError(
         "insufficient_credits",
@@ -281,34 +298,37 @@ export class CreditService {
     }
 
     const nowIso = this.currentDate().toISOString();
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      frozenCredits: account.frozenCredits - amount,
-      totalCaptured: account.totalCaptured + amount,
-      updatedAt: nowIso,
-    };
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
       userId: input.userId,
       taskId: input.taskId,
       entryType: "capture",
       amount: -amount,
-      balanceAfter: nextAccount.balance,
-      frozenAfter: nextAccount.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: input.reason,
-      metadata: {
-        ...(input.metadata ?? {}),
+      metadata: requestMetadata(input.metadata, {
+        operation: "capture_hold",
+        requestUserId: input.userId,
+        taskId: input.taskId,
         holdLedgerId: hold.id,
-      },
+        amount,
+        reason: input.reason,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
     };
 
-    const storedLedger = await this.repository.applyCreditLedgerEntry(
-      nextAccount,
-      ledger,
-    );
-    return { account: nextAccount, ledger: storedLedger };
+    const stored = await this.repository.captureHeldCredits({
+      ledgerEntry: ledger,
+      holdLedgerId: hold.id,
+      amount,
+    });
+    if (stored !== undefined) {
+      return stored;
+    }
+    await this.throwHoldCompletionFailure(input);
   }
 
   async releaseHeldCredits(
@@ -319,12 +339,24 @@ export class CreditService {
     validateRequired(input.holdLedgerId, "Hold ledger id");
     validateRequired(input.idempotencyKey, "Idempotency key");
 
-    const existing = await this.returnExistingTransition(input.idempotencyKey);
+    const fingerprint = createRequestFingerprint({
+      operation: "release_hold",
+      requestUserId: input.userId,
+      taskId: input.taskId,
+      holdLedgerId: input.holdLedgerId,
+      reason: input.reason,
+    });
+    const existing = await this.returnExistingTransition(
+      input.idempotencyKey,
+      "release",
+      fingerprint,
+    );
     if (existing !== undefined) {
       return existing;
     }
 
-    const { account, hold, amount } = await this.requireOpenHold(input);
+    const { hold, amount } = await this.requireOpenHold(input);
+    const account = await this.requireAccount(input.userId);
     if (account.frozenCredits < amount) {
       throw new CreditServiceError(
         "insufficient_credits",
@@ -333,34 +365,37 @@ export class CreditService {
     }
 
     const nowIso = this.currentDate().toISOString();
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      balance: account.balance + amount,
-      frozenCredits: account.frozenCredits - amount,
-      updatedAt: nowIso,
-    };
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
       userId: input.userId,
       taskId: input.taskId,
       entryType: "release",
       amount,
-      balanceAfter: nextAccount.balance,
-      frozenAfter: nextAccount.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: input.reason,
-      metadata: {
-        ...(input.metadata ?? {}),
+      metadata: requestMetadata(input.metadata, {
+        operation: "release_hold",
+        requestUserId: input.userId,
+        taskId: input.taskId,
         holdLedgerId: hold.id,
-      },
+        amount,
+        reason: input.reason,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
     };
 
-    const storedLedger = await this.repository.applyCreditLedgerEntry(
-      nextAccount,
-      ledger,
-    );
-    return { account: nextAccount, ledger: storedLedger };
+    const stored = await this.repository.releaseHeldCredits({
+      ledgerEntry: ledger,
+      holdLedgerId: hold.id,
+      amount,
+    });
+    if (stored !== undefined) {
+      return stored;
+    }
+    await this.throwHoldCompletionFailure(input);
   }
 
   async refundCapturedCredits(
@@ -373,36 +408,46 @@ export class CreditService {
     validateRequired(input.reason, "Reason");
     validateRequired(input.idempotencyKey, "Idempotency key");
 
-    const existing = await this.returnExistingTransition(input.idempotencyKey);
+    const fingerprint = createRequestFingerprint({
+      operation: "refund_capture",
+      requestUserId: input.userId,
+      taskId: input.taskId,
+      captureLedgerId: input.captureLedgerId,
+      actorUserId: input.actorUserId,
+      reason: input.reason,
+    });
+    const existing = await this.returnExistingTransition(
+      input.idempotencyKey,
+      "refund",
+      fingerprint,
+    );
     if (existing !== undefined) {
       return existing;
     }
 
     const capture = await this.requireCapture(input.captureLedgerId, input);
-    await this.assertCaptureNotRefunded(capture.id);
-    const account = await this.requireAccount(input.userId);
     const amount = Math.abs(capture.amount);
     const nowIso = this.currentDate().toISOString();
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      balance: account.balance + amount,
-      updatedAt: nowIso,
-    };
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
       userId: input.userId,
       taskId: input.taskId,
       entryType: "refund",
       amount,
-      balanceAfter: nextAccount.balance,
-      frozenAfter: nextAccount.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: input.reason,
-      metadata: {
-        ...(input.metadata ?? {}),
+      metadata: requestMetadata(input.metadata, {
+        operation: "refund_capture",
+        requestUserId: input.userId,
+        taskId: input.taskId,
         actorUserId: input.actorUserId,
         captureLedgerId: capture.id,
-      },
+        amount,
+        reason: input.reason,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
     };
     const auditLog: AdminAuditLogRecord = {
@@ -421,12 +466,16 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const storedLedger = await this.repository.applyCreditLedgerEntryWithAudit(
-      nextAccount,
-      ledger,
+    const stored = await this.repository.refundCapturedCreditsWithAudit({
+      ledgerEntry: ledger,
+      captureLedgerId: capture.id,
+      amount,
       auditLog,
-    );
-    return { account: nextAccount, ledger: storedLedger };
+    });
+    if (stored !== undefined) {
+      return stored;
+    }
+    await this.throwRefundFailure(capture.id);
   }
 
   async adjustCredits(
@@ -444,39 +493,40 @@ export class CreditService {
       );
     }
 
-    const existing = await this.returnExistingTransition(input.idempotencyKey);
+    const fingerprint = createRequestFingerprint({
+      operation: "adjust_credits",
+      requestUserId: input.userId,
+      actorUserId: input.actorUserId,
+      amount: input.amount,
+      reason: input.reason,
+    });
+    const existing = await this.returnExistingTransition(
+      input.idempotencyKey,
+      "adjustment",
+      fingerprint,
+    );
     if (existing !== undefined) {
       return existing;
     }
 
-    const account = await this.requireAccount(input.userId);
-    const nextBalance = account.balance + input.amount;
-    if (nextBalance < 0) {
-      throw new CreditServiceError(
-        "insufficient_credits",
-        "Credit adjustment would make balance negative",
-      );
-    }
-
     const nowIso = this.currentDate().toISOString();
-    const nextAccount: UserCreditAccountRecord = {
-      ...account,
-      balance: nextBalance,
-      updatedAt: nowIso,
-    };
     const ledger: CreditLedgerEntryRecord = {
       id: this.createId("credit_ledger"),
       userId: input.userId,
       entryType: "adjustment",
       amount: input.amount,
-      balanceAfter: nextBalance,
-      frozenAfter: nextAccount.frozenCredits,
+      balanceAfter: 0,
+      frozenAfter: 0,
       idempotencyKey: input.idempotencyKey,
       reason: input.reason,
-      metadata: {
-        ...(input.metadata ?? {}),
+      metadata: requestMetadata(input.metadata, {
+        operation: "adjust_credits",
+        requestUserId: input.userId,
         actorUserId: input.actorUserId,
-      },
+        amount: input.amount,
+        reason: input.reason,
+        requestFingerprint: fingerprint,
+      }),
       createdAt: nowIso,
     };
     const auditLog: AdminAuditLogRecord = {
@@ -494,22 +544,28 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const storedLedger = await this.repository.applyCreditLedgerEntryWithAudit(
-      nextAccount,
-      ledger,
+    const stored = await this.repository.adjustCreditsWithAudit({
+      ledgerEntry: ledger,
+      amount: input.amount,
       auditLog,
-    );
-    return { account: nextAccount, ledger: storedLedger };
+    });
+    if (stored !== undefined) {
+      return stored;
+    }
+    await this.throwAdjustmentFailure(input.userId, input.amount);
   }
 
   private async returnExistingTransition(
     idempotencyKey: string,
+    entryType: CreditLedgerEntryRecord["entryType"],
+    fingerprint: string,
   ): Promise<CreditTransitionResult | undefined> {
     const ledger = await this.findExistingLedger(idempotencyKey);
     if (ledger === undefined) {
       return undefined;
     }
 
+    this.assertIdempotentReplay(ledger, entryType, fingerprint);
     return { account: await this.requireAccount(ledger.userId), ledger };
   }
 
@@ -531,6 +587,22 @@ export class CreditService {
       );
     }
     return account;
+  }
+
+  private assertIdempotentReplay(
+    ledger: CreditLedgerEntryRecord,
+    entryType: CreditLedgerEntryRecord["entryType"],
+    fingerprint: string,
+  ): void {
+    if (
+      ledger.entryType !== entryType ||
+      ledger.metadata?.requestFingerprint !== fingerprint
+    ) {
+      throw new CreditServiceError(
+        "idempotency_conflict",
+        "Idempotency key conflicts with a different request",
+      );
+    }
   }
 
   private validateTaskAmountInput(input: HoldCreditsForTaskInput): void {
@@ -578,6 +650,96 @@ export class CreditService {
     };
   }
 
+  private async throwHoldFailure(input: HoldCreditsForTaskInput): Promise<never> {
+    const task = await this.repository.getCommercialTask(input.taskId);
+    if (!task || task.userId !== input.userId) {
+      throw new CreditServiceError("task_not_found", "Task not found");
+    }
+    if (task.creditHoldLedgerId !== undefined) {
+      throw new CreditServiceError(
+        "task_hold_conflict",
+        "Task already has a credit hold",
+      );
+    }
+    const account = await this.requireAccount(input.userId);
+    if (account.balance < input.amount) {
+      throw new CreditServiceError(
+        "insufficient_credits",
+        "Available credit balance is insufficient",
+      );
+    }
+    throw new CreditServiceError(
+      "invalid_credit_input",
+      "Credit hold could not be applied",
+    );
+  }
+
+  private async throwHoldCompletionFailure(input: {
+    userId: string;
+    taskId: string;
+    holdLedgerId: string;
+  }): Promise<never> {
+    const hold = await this.repository.getCreditLedgerEntry(input.holdLedgerId);
+    if (
+      !hold ||
+      hold.entryType !== "hold" ||
+      hold.userId !== input.userId ||
+      hold.taskId !== input.taskId
+    ) {
+      throw new CreditServiceError("hold_not_found", "Hold ledger entry not found");
+    }
+    const completed = await this.repository.findCreditLedgerEntryByMetadata(
+      "holdLedgerId",
+      hold.id,
+      ["capture", "release"],
+    );
+    if (completed !== undefined) {
+      throw new CreditServiceError(
+        "hold_already_completed",
+        "Hold has already been captured or released",
+      );
+    }
+    throw new CreditServiceError(
+      "insufficient_credits",
+      "Frozen credit balance is insufficient",
+    );
+  }
+
+  private async throwRefundFailure(captureLedgerId: string): Promise<never> {
+    const refund = await this.repository.findCreditLedgerEntryByMetadata(
+      "captureLedgerId",
+      captureLedgerId,
+      ["refund"],
+    );
+    if (refund !== undefined) {
+      throw new CreditServiceError(
+        "capture_already_refunded",
+        "Capture has already been refunded",
+      );
+    }
+    throw new CreditServiceError(
+      "invalid_credit_input",
+      "Credit refund could not be applied",
+    );
+  }
+
+  private async throwAdjustmentFailure(
+    userId: string,
+    amount: number,
+  ): Promise<never> {
+    const account = await this.requireAccount(userId);
+    if (account.balance + amount < 0) {
+      throw new CreditServiceError(
+        "insufficient_credits",
+        "Credit adjustment would make balance negative",
+      );
+    }
+    throw new CreditServiceError(
+      "invalid_credit_input",
+      "Credit adjustment could not be applied",
+    );
+  }
+
   private async requireCapture(
     captureLedgerId: string,
     input: { userId: string; taskId: string },
@@ -596,37 +758,6 @@ export class CreditService {
     }
 
     return capture;
-  }
-
-  private async assertCaptureNotRefunded(captureLedgerId: string): Promise<void> {
-    const refund = await this.repository.findCreditLedgerEntryByMetadata(
-      "captureLedgerId",
-      captureLedgerId,
-      ["refund"],
-    );
-    if (refund !== undefined) {
-      throw new CreditServiceError(
-        "capture_already_refunded",
-        "Capture has already been refunded",
-      );
-    }
-  }
-
-  private async attachHoldLedgerToTask(
-    taskId: string,
-    holdLedgerId: string,
-    updatedAt: string,
-  ): Promise<void> {
-    const task = await this.repository.getCommercialTask(taskId);
-    if (!task || task.creditHoldLedgerId !== undefined) {
-      return;
-    }
-
-    await this.repository.saveCommercialTask({
-      ...task,
-      creditHoldLedgerId: holdLedgerId,
-      updatedAt,
-    });
   }
 
   private assertRedeemable(code: {
@@ -702,4 +833,52 @@ function validateIntegerAmount(
       `${label} must be ${options.allowNegative ? "an integer" : "a positive integer"}`,
     );
   }
+}
+
+function requestMetadata(
+  metadata: JsonObject | undefined,
+  fields: JsonObject,
+): JsonObject {
+  return {
+    ...(metadata ?? {}),
+    ...Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    ),
+  };
+}
+
+function createRequestFingerprint(fields: JsonObject): string {
+  return JSON.stringify(sortJsonObject(stripUndefined(fields)));
+}
+
+function stripUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefined);
+  }
+  if (isPlainJsonObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, stripUndefined(item)]),
+    );
+  }
+  return value;
+}
+
+function sortJsonObject(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonObject);
+  }
+  if (isPlainJsonObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, sortJsonObject(value[key])]),
+    );
+  }
+  return value;
+}
+
+function isPlainJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

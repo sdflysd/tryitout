@@ -108,6 +108,47 @@ test("repeating redeem with same idempotency key returns existing result without
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 8);
 });
 
+test("reusing idempotency keys with different redeem requests is rejected", async () => {
+  const { repo, service, accessCodeService } = await createScenario();
+  const firstCode = await accessCodeService.createSingleAccessCode({
+    credits: 8,
+    features: [],
+  });
+  await repo.saveAccessCode({
+    id: "code_2",
+    batchId: "batch_2",
+    codeHash: hashAccessCode("TIO-WXYZ-ABCD-EF34", ACCESS_CODE_PEPPER),
+    codeMask: "TIO-****-****-EF34",
+    status: "active",
+    credits: 5,
+    features: [],
+    createdAt: CREATED_AT,
+  });
+
+  await service.redeemAccessCode({
+    userId: "user_1",
+    rawCode: firstCode.rawCode,
+    idempotencyKey: "redeem-key-1",
+  });
+
+  await assert.rejects(
+    service.redeemAccessCode({
+      userId: "user_2",
+      rawCode: firstCode.rawCode,
+      idempotencyKey: "redeem-key-1",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+  await assert.rejects(
+    service.redeemAccessCode({
+      userId: "user_1",
+      rawCode: "TIO-WXYZ-ABCD-EF34",
+      idempotencyKey: "redeem-key-1",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+});
+
 test("holding credits decreases available balance and increases frozen credits", async () => {
   const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
   await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
@@ -127,8 +168,50 @@ test("holding credits decreases available balance and increases frozen credits",
   assert.equal((await repo.getCommercialTask("task_1"))?.creditHoldLedgerId, result.ledger.id);
 });
 
+test("holding credits requires a matching unheld task and mutates nothing on task conflicts", async () => {
+  const missing = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await assert.rejects(
+    missing.service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "missing_task",
+      amount: 4,
+      idempotencyKey: "hold-key-1",
+    }),
+    (error) => hasServiceCode(error, "task_not_found"),
+  );
+  assert.equal((await missing.repo.getCreditAccount("user_1"))?.balance, 10);
+  assert.equal((await missing.repo.getCreditAccount("user_1"))?.frozenCredits, 0);
+
+  const mismatch = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await mismatch.repo.saveCommercialTask(makeTask({ userId: "user_2" }));
+  await assert.rejects(
+    mismatch.service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_1",
+      amount: 4,
+      idempotencyKey: "hold-key-1",
+    }),
+    (error) => hasServiceCode(error, "task_not_found"),
+  );
+  assert.equal((await mismatch.repo.getCreditAccount("user_1"))?.balance, 10);
+
+  const alreadyHeld = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await alreadyHeld.repo.saveCommercialTask(makeTask({ creditHoldLedgerId: "ledger_existing" }));
+  await assert.rejects(
+    alreadyHeld.service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_1",
+      amount: 4,
+      idempotencyKey: "hold-key-1",
+    }),
+    (error) => hasServiceCode(error, "task_hold_conflict"),
+  );
+  assert.equal((await alreadyHeld.repo.getCreditAccount("user_1"))?.balance, 10);
+});
+
 test("holding with insufficient credits is rejected", async () => {
-  const { service } = await createScenario({ balance: 3, totalRedeemed: 3 });
+  const { repo, service } = await createScenario({ balance: 3, totalRedeemed: 3 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
 
   await assert.rejects(
     service.holdCreditsForTask({
@@ -143,6 +226,7 @@ test("holding with insufficient credits is rejected", async () => {
 
 test("repeating hold with same idempotency key does not double freeze", async () => {
   const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const first = await service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -161,8 +245,62 @@ test("repeating hold with same idempotency key does not double freeze", async ()
   assert.equal((await repo.getCreditAccount("user_1"))?.frozenCredits, 4);
 });
 
+test("reusing transition idempotency keys with different request intent is rejected", async () => {
+  const { repo, service } = await createScenario({ balance: 20, totalRedeemed: 20 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
+  await repo.saveCommercialTask(makeTask({ id: "task_2", creditCost: 5 }));
+  const hold = await service.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+    reason: "task_queued",
+  });
+
+  await assert.rejects(
+    service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_2",
+      amount: 4,
+      idempotencyKey: "hold-key-1",
+      reason: "task_queued",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+  await assert.rejects(
+    service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_1",
+      amount: 5,
+      idempotencyKey: "hold-key-1",
+      reason: "task_queued",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+  await assert.rejects(
+    service.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_1",
+      amount: 4,
+      idempotencyKey: "hold-key-1",
+      reason: "different_reason",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+  await assert.rejects(
+    service.captureHeldCredits({
+      userId: "user_1",
+      taskId: "task_1",
+      holdLedgerId: hold.ledger.id,
+      idempotencyKey: "hold-key-1",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+});
+
 test("capturing a hold decreases frozen credits exactly once", async () => {
   const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const hold = await service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -193,6 +331,7 @@ test("capturing a hold decreases frozen credits exactly once", async () => {
 
 test("releasing a hold returns credits exactly once", async () => {
   const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const hold = await service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -212,6 +351,7 @@ test("releasing a hold returns credits exactly once", async () => {
     taskId: "task_1",
     holdLedgerId: hold.ledger.id,
     idempotencyKey: "release-key-1",
+    reason: "task_cancelled",
   });
 
   assert.equal(release.ledger.entryType, "release");
@@ -223,6 +363,7 @@ test("releasing a hold returns credits exactly once", async () => {
 
 test("capture and release reject holds already completed by the opposite transition", async () => {
   const captured = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await captured.repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const capturedHold = await captured.service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -246,6 +387,7 @@ test("capture and release reject holds already completed by the opposite transit
   );
 
   const released = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await released.repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const releasedHold = await released.service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -271,6 +413,7 @@ test("capture and release reject holds already completed by the opposite transit
 
 test("refunding a captured task adds credits with audit reason", async () => {
   const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
   const hold = await service.holdCreditsForTask({
     userId: "user_1",
     taskId: "task_1",
@@ -322,6 +465,63 @@ test("refunding a captured task adds credits with audit reason", async () => {
       createdAt: "2026-07-07T00:02:00.000Z",
     },
   ]);
+});
+
+test("refund idempotency validates capture, actor, and reason intent", async () => {
+  const { repo, service } = await createScenario({ balance: 20, totalRedeemed: 20 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
+  await repo.saveCommercialTask(makeTask({ id: "task_2", creditCost: 3 }));
+  const hold1 = await service.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+  });
+  const capture1 = await service.captureHeldCredits({
+    userId: "user_1",
+    taskId: "task_1",
+    holdLedgerId: hold1.ledger.id,
+    idempotencyKey: "capture-key-1",
+  });
+  const hold2 = await service.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_2",
+    amount: 3,
+    idempotencyKey: "hold-key-2",
+  });
+  const capture2 = await service.captureHeldCredits({
+    userId: "user_1",
+    taskId: "task_2",
+    holdLedgerId: hold2.ledger.id,
+    idempotencyKey: "capture-key-2",
+  });
+
+  await service.refundCapturedCredits({
+    userId: "user_1",
+    taskId: "task_1",
+    captureLedgerId: capture1.ledger.id,
+    actorUserId: "admin_1",
+    reason: "support_goodwill",
+    idempotencyKey: "refund-key-1",
+  });
+
+  for (const input of [
+    { captureLedgerId: capture2.ledger.id, actorUserId: "admin_1", reason: "support_goodwill" },
+    { captureLedgerId: capture1.ledger.id, actorUserId: "admin_2", reason: "support_goodwill" },
+    { captureLedgerId: capture1.ledger.id, actorUserId: "admin_1", reason: "different_reason" },
+  ]) {
+    await assert.rejects(
+      service.refundCapturedCredits({
+        userId: "user_1",
+        taskId: input.captureLedgerId === capture2.ledger.id ? "task_2" : "task_1",
+        captureLedgerId: input.captureLedgerId,
+        actorUserId: input.actorUserId,
+        reason: input.reason,
+        idempotencyKey: "refund-key-1",
+      }),
+      (error) => hasServiceCode(error, "idempotency_conflict"),
+    );
+  }
 });
 
 test("admin adjustment changes balance and records actor/reason", async () => {

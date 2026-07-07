@@ -17,6 +17,15 @@ import type {
   UserModelProviderRecord,
 } from "./types.js";
 
+export interface CreditLedgerTransitionResult {
+  account: UserCreditAccountRecord;
+  ledger: CreditLedgerEntryRecord;
+}
+
+export interface RedeemAccessCodeWithCreditLedgerResult extends CreditLedgerTransitionResult {
+  redemption: AccessCodeRedemptionRecord;
+}
+
 export interface CommercialRepository {
   saveUser(user: CommercialUserRecord): Promise<void>;
   getUser(userId: string): Promise<CommercialUserRecord | undefined>;
@@ -57,6 +66,32 @@ export interface CommercialRepository {
     entry: CreditLedgerEntryRecord,
     auditLog: AdminAuditLogRecord,
   ): Promise<CreditLedgerEntryRecord>;
+  holdCreditsForTask(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    amount: number;
+    taskUpdatedAt: string;
+  }): Promise<CreditLedgerTransitionResult | undefined>;
+  captureHeldCredits(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    holdLedgerId: string;
+    amount: number;
+  }): Promise<CreditLedgerTransitionResult | undefined>;
+  releaseHeldCredits(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    holdLedgerId: string;
+    amount: number;
+  }): Promise<CreditLedgerTransitionResult | undefined>;
+  refundCapturedCreditsWithAudit(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    captureLedgerId: string;
+    amount: number;
+    auditLog: AdminAuditLogRecord;
+  }): Promise<CreditLedgerTransitionResult | undefined>;
+  adjustCreditsWithAudit(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    amount: number;
+    auditLog: AdminAuditLogRecord;
+  }): Promise<CreditLedgerTransitionResult | undefined>;
 
   saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void>;
   createAccessCodeBatchWithCodes(
@@ -80,9 +115,8 @@ export interface CommercialRepository {
   redeemAccessCodeWithCreditLedger(
     code: AccessCodeRecord,
     redemption: AccessCodeRedemptionRecord,
-    account: UserCreditAccountRecord,
     ledgerEntry: CreditLedgerEntryRecord,
-  ): Promise<boolean>;
+  ): Promise<RedeemAccessCodeWithCreditLedgerResult | undefined>;
   findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
   ): Promise<AccessCodeRedemptionRecord | undefined>;
@@ -430,9 +464,8 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async redeemAccessCodeWithCreditLedger(
     code: AccessCodeRecord,
     redemption: AccessCodeRedemptionRecord,
-    account: UserCreditAccountRecord,
     ledgerEntry: CreditLedgerEntryRecord,
-  ): Promise<boolean> {
+  ): Promise<RedeemAccessCodeWithCreditLedgerResult | undefined> {
     if (redemption.accessCodeId !== code.id) {
       throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
     }
@@ -442,7 +475,9 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     if (redemption.creditLedgerId !== ledgerEntry.id) {
       throw new Error("access_code_redemptions.creditLedgerId must match credit_ledger.id");
     }
-    this.validateCreditLedgerAccount(account, ledgerEntry);
+    if (redemption.userId !== ledgerEntry.userId) {
+      throw new Error("access_code_redemptions.userId must match credit_ledger.userId");
+    }
 
     const existing = this.accessCodes.get(code.id);
     if (
@@ -451,7 +486,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       existing.redeemedAt !== undefined ||
       existing.disabledAt !== undefined
     ) {
-      return false;
+      return undefined;
     }
 
     assertUniqueById(
@@ -461,6 +496,19 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       "access_code_redemptions.accessCodeId",
     );
     this.assertCreditLedgerAppendable(ledgerEntry);
+    const account = this.requireExistingCreditAccount(ledgerEntry.userId);
+    const updatedAccount = {
+      ...account,
+      balance: account.balance + existing.credits,
+      totalRedeemed: account.totalRedeemed + existing.credits,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount: existing.credits,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+    };
 
     this.accessCodes.set(code.id, {
       ...existing,
@@ -468,10 +516,201 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       redeemedByUserId: code.redeemedByUserId ?? redemption.userId,
       redeemedAt: code.redeemedAt ?? redemption.redeemedAt,
     });
-    this.creditAccounts.set(account.userId, account);
-    this.creditLedger.push(ledgerEntry);
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
     this.accessCodeRedemptions.push(redemption);
-    return true;
+    return { account: updatedAccount, ledger: storedLedger, redemption };
+  }
+
+  async holdCreditsForTask(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    amount: number;
+    taskUpdatedAt: string;
+  }): Promise<CreditLedgerTransitionResult | undefined> {
+    const { ledgerEntry, amount } = input;
+    this.assertCreditLedgerAppendable(ledgerEntry);
+    const task = ledgerEntry.taskId
+      ? this.commercialTasks.get(ledgerEntry.taskId)
+      : undefined;
+    const account = this.creditAccounts.get(ledgerEntry.userId);
+    if (
+      !task ||
+      task.userId !== ledgerEntry.userId ||
+      task.creditHoldLedgerId !== undefined ||
+      !account ||
+      account.balance < amount
+    ) {
+      return undefined;
+    }
+
+    const updatedAccount = {
+      ...account,
+      balance: account.balance - amount,
+      frozenCredits: account.frozenCredits + amount,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount: -amount,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+    };
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
+    this.commercialTasks.set(task.id, {
+      ...task,
+      creditHoldLedgerId: storedLedger.id,
+      updatedAt: input.taskUpdatedAt,
+    });
+    return { account: updatedAccount, ledger: storedLedger };
+  }
+
+  async captureHeldCredits(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    holdLedgerId: string;
+    amount: number;
+  }): Promise<CreditLedgerTransitionResult | undefined> {
+    const { ledgerEntry, amount } = input;
+    this.assertCreditLedgerAppendable(ledgerEntry);
+    const hold = this.creditLedger.find((entry) => entry.id === input.holdLedgerId);
+    const account = this.creditAccounts.get(ledgerEntry.userId);
+    if (
+      !this.isMatchingOpenHold(hold, ledgerEntry) ||
+      !account ||
+      account.frozenCredits < amount
+    ) {
+      return undefined;
+    }
+
+    const updatedAccount = {
+      ...account,
+      frozenCredits: account.frozenCredits - amount,
+      totalCaptured: account.totalCaptured + amount,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount: -amount,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+      metadata: { ...(ledgerEntry.metadata ?? {}), holdLedgerId: input.holdLedgerId },
+    };
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
+    return { account: updatedAccount, ledger: storedLedger };
+  }
+
+  async releaseHeldCredits(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    holdLedgerId: string;
+    amount: number;
+  }): Promise<CreditLedgerTransitionResult | undefined> {
+    const { ledgerEntry, amount } = input;
+    this.assertCreditLedgerAppendable(ledgerEntry);
+    const hold = this.creditLedger.find((entry) => entry.id === input.holdLedgerId);
+    const account = this.creditAccounts.get(ledgerEntry.userId);
+    if (
+      !this.isMatchingOpenHold(hold, ledgerEntry) ||
+      !account ||
+      account.frozenCredits < amount
+    ) {
+      return undefined;
+    }
+
+    const updatedAccount = {
+      ...account,
+      balance: account.balance + amount,
+      frozenCredits: account.frozenCredits - amount,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+      metadata: { ...(ledgerEntry.metadata ?? {}), holdLedgerId: input.holdLedgerId },
+    };
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
+    return { account: updatedAccount, ledger: storedLedger };
+  }
+
+  async refundCapturedCreditsWithAudit(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    captureLedgerId: string;
+    amount: number;
+    auditLog: AdminAuditLogRecord;
+  }): Promise<CreditLedgerTransitionResult | undefined> {
+    const { ledgerEntry, amount, auditLog } = input;
+    this.assertCreditLedgerAppendable(ledgerEntry);
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+    const capture = this.creditLedger.find((entry) => entry.id === input.captureLedgerId);
+    const account = this.creditAccounts.get(ledgerEntry.userId);
+    if (
+      !capture ||
+      capture.entryType !== "capture" ||
+      capture.userId !== ledgerEntry.userId ||
+      capture.taskId !== ledgerEntry.taskId ||
+      this.creditLedger.some(
+        (entry) =>
+          entry.entryType === "refund" &&
+          entry.metadata?.captureLedgerId === input.captureLedgerId,
+      ) ||
+      !account
+    ) {
+      return undefined;
+    }
+
+    const updatedAccount = {
+      ...account,
+      balance: account.balance + amount,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+      metadata: { ...(ledgerEntry.metadata ?? {}), captureLedgerId: input.captureLedgerId },
+    };
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
+    this.auditLogs.push(auditLog);
+    return { account: updatedAccount, ledger: storedLedger };
+  }
+
+  async adjustCreditsWithAudit(input: {
+    ledgerEntry: CreditLedgerEntryRecord;
+    amount: number;
+    auditLog: AdminAuditLogRecord;
+  }): Promise<CreditLedgerTransitionResult | undefined> {
+    const { ledgerEntry, amount, auditLog } = input;
+    this.assertCreditLedgerAppendable(ledgerEntry);
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+    const account = this.creditAccounts.get(ledgerEntry.userId);
+    if (!account || account.balance + amount < 0) {
+      return undefined;
+    }
+
+    const updatedAccount = {
+      ...account,
+      balance: account.balance + amount,
+      updatedAt: ledgerEntry.createdAt,
+    };
+    const storedLedger = {
+      ...ledgerEntry,
+      amount,
+      balanceAfter: updatedAccount.balance,
+      frozenAfter: updatedAccount.frozenCredits,
+    };
+    this.creditAccounts.set(updatedAccount.userId, updatedAccount);
+    this.creditLedger.push(storedLedger);
+    this.auditLogs.push(auditLog);
+    return { account: updatedAccount, ledger: storedLedger };
   }
 
   async findAccessCodeRedemptionByCodeId(
@@ -691,6 +930,31 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     if (!this.creditAccounts.has(account.userId)) {
       throw new Error("user_credit_accounts.userId must exist");
     }
+  }
+
+  private requireExistingCreditAccount(userId: string): UserCreditAccountRecord {
+    const account = this.creditAccounts.get(userId);
+    if (!account) {
+      throw new Error("user_credit_accounts.userId must exist");
+    }
+    return account;
+  }
+
+  private isMatchingOpenHold(
+    hold: CreditLedgerEntryRecord | undefined,
+    entry: CreditLedgerEntryRecord,
+  ): boolean {
+    return (
+      hold !== undefined &&
+      hold.entryType === "hold" &&
+      hold.userId === entry.userId &&
+      hold.taskId === entry.taskId &&
+      !this.creditLedger.some(
+        (existing) =>
+          (existing.entryType === "capture" || existing.entryType === "release") &&
+          existing.metadata?.holdLedgerId === hold.id,
+      )
+    );
   }
 
   private assertCreditLedgerAppendable(entry: CreditLedgerEntryRecord): void {
