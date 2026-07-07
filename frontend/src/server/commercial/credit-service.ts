@@ -628,7 +628,20 @@ export class CreditService {
     write: () => Promise<RedeemAccessCodeResult | undefined>,
   ): Promise<RedeemAccessCodeResult | undefined> {
     try {
-      return await write();
+      const result = await write();
+      if (result !== undefined) {
+        return result;
+      }
+      const existing = await this.findExistingLedger(idempotencyKey);
+      if (existing !== undefined) {
+        return this.returnExistingRedeem(
+          existing,
+          userId,
+          accessCodeId,
+          fingerprint,
+        );
+      }
+      return undefined;
     } catch (error) {
       if (!isDuplicateIdempotencyError(error)) {
         throw error;
@@ -653,7 +666,16 @@ export class CreditService {
     write: () => Promise<T>,
   ): Promise<T | CreditTransitionResult> {
     try {
-      return await write();
+      const result = await write();
+      if (result !== undefined) {
+        return result;
+      }
+      const existing = await this.returnExistingTransition(
+        idempotencyKey,
+        entryType,
+        fingerprint,
+      );
+      return existing ?? result;
     } catch (error) {
       if (!isDuplicateIdempotencyError(error)) {
         throw error;

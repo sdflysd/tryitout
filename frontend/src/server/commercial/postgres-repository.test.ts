@@ -67,8 +67,104 @@ function createSequentialRowRepository(
   };
 }
 
+function createPoolTransactionRepository(
+  rowBatches: Array<Array<Record<string, unknown>>>,
+): {
+  poolQueries: QueryLog[];
+  acquiredQueries: QueryLog[];
+  readonly releases: number;
+  repo: PostgresCommercialRepository;
+} {
+  const poolQueries: QueryLog[] = [];
+  const acquiredQueries: QueryLog[] = [];
+  let releases = 0;
+  let index = 0;
+  const nextRows = <T = Record<string, unknown>>() => {
+    const rows = rowBatches[Math.min(index, rowBatches.length - 1)] ?? [];
+    index += 1;
+    return { rows: rows as T[] };
+  };
+  const acquiredClient = {
+    query: async <T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ) => {
+      acquiredQueries.push({ sql, params });
+      return nextRows<T>();
+    },
+    release: () => {
+      releases += 1;
+    },
+  };
+
+  return {
+    poolQueries,
+    acquiredQueries,
+    get releases() {
+      return releases;
+    },
+    repo: new PostgresCommercialRepository({
+      query: async <T = Record<string, unknown>>(
+        sql: string,
+        params?: unknown[],
+      ) => {
+        poolQueries.push({ sql, params });
+        return nextRows<T>();
+      },
+      connect: async () => acquiredClient,
+    }),
+  };
+}
+
 function parsedJsonParam(params: unknown[] | undefined, index: number): unknown {
   return JSON.parse(params?.[index] as string);
+}
+
+function rowsForHeldCreditQuery(
+  sql: string,
+  params?: unknown[],
+): Array<Record<string, unknown>> {
+  if (/^\s*begin\s*$/i.test(sql) || /^\s*commit\s*$/i.test(sql)) {
+    return [];
+  }
+  if (/from simulation_tasks/i.test(sql) && /for update/i.test(sql)) {
+    return [{ id: params?.[0], user_id: params?.[1] }];
+  }
+  if (/update user_credit_accounts/i.test(sql)) {
+    const amount = Number(params?.[1] ?? 0);
+    return [
+      {
+        account_user_id: params?.[0],
+        balance: String(10 - amount),
+        frozen_credits: String(amount),
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: params?.[2],
+      },
+    ];
+  }
+  if (/insert into credit_ledger/i.test(sql)) {
+    return [
+      {
+        id: params?.[0],
+        user_id: params?.[1],
+        task_id: params?.[2],
+        access_code_id: params?.[3],
+        entry_type: params?.[4],
+        amount: String(params?.[5]),
+        balance_after: String(params?.[6]),
+        frozen_after: String(params?.[7]),
+        idempotency_key: params?.[8],
+        reason: params?.[9],
+        metadata: JSON.parse(params?.[10] as string),
+        created_at: params?.[11],
+      },
+    ];
+  }
+  if (/update simulation_tasks/i.test(sql)) {
+    return [{ id: params?.[0] }];
+  }
+  return [];
 }
 
 test("postgres repository maps saveUser to users upsert", async () => {
@@ -246,67 +342,7 @@ test("postgres repository maps appendCreditLedgerEntry to credit_ledger insert",
   });
 });
 
-test("postgres repository applies credit ledger entries to accounts in one CTE query", async () => {
-  const { repo, queries } = createRowRepository([
-    {
-      id: "ledger_1",
-      user_id: "user_1",
-      task_id: "task_1",
-      access_code_id: null,
-      entry_type: "hold",
-      amount: "-3",
-      balance_after: "7",
-      frozen_after: "3",
-      idempotency_key: "hold_1",
-      reason: "task_queued",
-      metadata: { taskId: "task_1" },
-      created_at: "held",
-    },
-  ]);
-
-  const entry = await repo.applyCreditLedgerEntry(
-    {
-      userId: "user_1",
-      balance: 7,
-      frozenCredits: 3,
-      totalRedeemed: 10,
-      totalCaptured: 0,
-      updatedAt: "held",
-    },
-    {
-      id: "ledger_1",
-      userId: "user_1",
-      taskId: "task_1",
-      entryType: "hold",
-      amount: -3,
-      balanceAfter: 7,
-      frozenAfter: 3,
-      idempotencyKey: "hold_1",
-      reason: "task_queued",
-      metadata: { taskId: "task_1" },
-      createdAt: "held",
-    },
-  );
-
-  assert.equal(entry.id, "ledger_1");
-  assert.equal(queries.length, 1);
-  assert.match(queries[0].sql, /with updated_account as/i);
-  assert.match(queries[0].sql, /update user_credit_accounts/i);
-  assert.match(queries[0].sql, /insert into credit_ledger/i);
-  assert.match(queries[0].sql, /from updated_account/i);
-  assert.match(queries[0].sql, /returning\s+id, user_id/i);
-  assert.deepEqual(queries[0].params?.slice(0, 7), [
-    "user_1",
-    7,
-    3,
-    10,
-    0,
-    "held",
-    "ledger_1",
-  ]);
-});
-
-test("postgres repository applies credit ledger entries with audit in one CTE query", async () => {
+test("postgres repository adjusts credits with audit in one CTE query", async () => {
   const { repo, queries } = createRowRepository([
     {
       id: "ledger_1",
@@ -321,31 +357,30 @@ test("postgres repository applies credit ledger entries with audit in one CTE qu
       reason: "manual_correction",
       metadata: { actorUserId: "admin_1" },
       created_at: "adjusted",
+      account_user_id: "user_1",
+      balance: "7",
+      frozen_credits: "0",
+      total_redeemed: "10",
+      total_captured: "0",
+      updated_at: "adjusted",
     },
   ]);
 
-  const entry = await repo.applyCreditLedgerEntryWithAudit(
-    {
-      userId: "user_1",
-      balance: 7,
-      frozenCredits: 0,
-      totalRedeemed: 10,
-      totalCaptured: 0,
-      updatedAt: "adjusted",
-    },
-    {
+  const result = await repo.adjustCreditsWithAudit({
+    ledgerEntry: {
       id: "ledger_1",
       userId: "user_1",
       entryType: "adjustment",
       amount: -3,
-      balanceAfter: 7,
+      balanceAfter: 0,
       frozenAfter: 0,
       idempotencyKey: "adjust_1",
       reason: "manual_correction",
       metadata: { actorUserId: "admin_1" },
       createdAt: "adjusted",
     },
-    {
+    amount: -3,
+    auditLog: {
       id: "audit_1",
       actorUserId: "admin_1",
       action: "credits_adjusted",
@@ -354,15 +389,21 @@ test("postgres repository applies credit ledger entries with audit in one CTE qu
       metadata: { creditLedgerId: "ledger_1" },
       createdAt: "adjusted",
     },
-  );
+  });
 
-  assert.equal(entry.id, "ledger_1");
+  assert.equal(result?.ledger.id, "ledger_1");
+  assert.equal(result?.account.balance, 7);
   assert.equal(queries.length, 1);
   assert.match(queries[0].sql, /with updated_account as/i);
-  assert.match(queries[0].sql, /inserted_ledger as/i);
-  assert.match(queries[0].sql, /inserted_audit as/i);
+  assert.match(queries[0].sql, /update user_credit_accounts/i);
+  assert.match(queries[0].sql, /insert into credit_ledger/i);
   assert.match(queries[0].sql, /insert into admin_audit_logs/i);
-  assert.match(queries[0].sql, /from inserted_ledger/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "user_1",
+    -3,
+    "adjusted",
+    "ledger_1",
+  ]);
 });
 
 test("postgres repository redeems access code transactionally after locking code and account", async () => {
@@ -544,6 +585,226 @@ test("postgres repository holds credits transactionally after locking task", asy
   assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
 });
 
+test("postgres repository binds transaction queries to an acquired pool client", async () => {
+  const txRepo = createPoolTransactionRepository([
+    [],
+    [{ id: "task_1", user_id: "user_1" }],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "7",
+        frozen_credits: "3",
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: "held",
+      },
+    ],
+    [
+      {
+        id: "ledger_1",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "hold",
+        amount: "-3",
+        balance_after: "7",
+        frozen_after: "3",
+        idempotency_key: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        created_at: "held",
+      },
+    ],
+    [{ id: "task_1" }],
+    [],
+  ]);
+
+  await txRepo.repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "hold_1",
+      reason: "task_queued",
+      metadata: {},
+      createdAt: "held",
+    },
+    amount: 3,
+    taskUpdatedAt: "held",
+  });
+
+  assert.deepEqual(txRepo.poolQueries, []);
+  assert.equal(txRepo.acquiredQueries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(txRepo.acquiredQueries[1].sql, /from simulation_tasks/i);
+  assert.match(txRepo.acquiredQueries[2].sql, /update user_credit_accounts/i);
+  assert.match(txRepo.acquiredQueries[3].sql, /insert into credit_ledger/i);
+  assert.match(txRepo.acquiredQueries[4].sql, /update simulation_tasks/i);
+  assert.equal(txRepo.acquiredQueries.at(-1)?.sql.trim().toLowerCase(), "commit");
+  assert.equal(txRepo.releases, 1);
+});
+
+test("postgres repository releases acquired pool client after transaction rollback", async () => {
+  const txRepo = createPoolTransactionRepository([
+    [],
+    [{ id: "task_1", user_id: "user_1" }],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "7",
+        frozen_credits: "3",
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: "held",
+      },
+    ],
+    [
+      {
+        id: "ledger_1",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "hold",
+        amount: "-3",
+        balance_after: "7",
+        frozen_after: "3",
+        idempotency_key: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        created_at: "held",
+      },
+    ],
+    [],
+    [],
+  ]);
+
+  await assert.rejects(
+    txRepo.repo.holdCreditsForTask({
+      ledgerEntry: {
+        id: "ledger_1",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "hold",
+        amount: -3,
+        balanceAfter: 0,
+        frozenAfter: 0,
+        idempotencyKey: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        createdAt: "held",
+      },
+      amount: 3,
+      taskUpdatedAt: "held",
+    }),
+    /simulation_tasks\.creditHoldLedgerId/,
+  );
+
+  assert.deepEqual(txRepo.poolQueries, []);
+  assert.equal(txRepo.acquiredQueries[0].sql.trim().toLowerCase(), "begin");
+  assert.equal(txRepo.acquiredQueries.at(-1)?.sql.trim().toLowerCase(), "rollback");
+  assert.equal(txRepo.releases, 1);
+});
+
+test("postgres repository keeps overlapping transactions isolated by acquired client", async () => {
+  const poolQueries: QueryLog[] = [];
+  const clients: Array<{ id: number; queries: QueryLog[]; releases: number }> = [];
+  let releaseFirstTask!: () => void;
+  let markFirstTaskSelected!: () => void;
+  let pausedFirstTask = false;
+  const firstTaskSelected = new Promise<void>((resolve) => {
+    markFirstTaskSelected = resolve;
+  });
+  const firstTaskCanReturn = new Promise<void>((resolve) => {
+    releaseFirstTask = resolve;
+  });
+  const makeClient = (id: number) => ({
+    query: async <T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ) => {
+      clients[id - 1]!.queries.push({ sql, params });
+      if (
+        id === 1 &&
+        !pausedFirstTask &&
+        /from simulation_tasks/i.test(sql) &&
+        /for update/i.test(sql)
+      ) {
+        pausedFirstTask = true;
+        markFirstTaskSelected();
+        await firstTaskCanReturn;
+      }
+      return { rows: rowsForHeldCreditQuery(sql, params) as T[] };
+    },
+    release: () => {
+      clients[id - 1]!.releases += 1;
+    },
+  });
+  const repo = new PostgresCommercialRepository({
+    query: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      poolQueries.push({ sql, params });
+      return { rows: rowsForHeldCreditQuery(sql, params) as T[] };
+    },
+    connect: async () => {
+      const id = clients.length + 1;
+      clients.push({ id, queries: [], releases: 0 });
+      return makeClient(id);
+    },
+  });
+
+  const first = repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "ledger_1",
+      userId: "user_1",
+      taskId: "task_1",
+      entryType: "hold",
+      amount: -3,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "hold_1",
+      reason: "task_queued",
+      metadata: {},
+      createdAt: "held",
+    },
+    amount: 3,
+    taskUpdatedAt: "held",
+  });
+
+  await firstTaskSelected;
+  const second = await repo.holdCreditsForTask({
+    ledgerEntry: {
+      id: "ledger_2",
+      userId: "user_2",
+      taskId: "task_2",
+      entryType: "hold",
+      amount: -2,
+      balanceAfter: 0,
+      frozenAfter: 0,
+      idempotencyKey: "hold_2",
+      reason: "task_queued",
+      metadata: {},
+      createdAt: "held",
+    },
+    amount: 2,
+    taskUpdatedAt: "held",
+  });
+  assert.equal(second?.ledger.id, "ledger_2");
+  releaseFirstTask();
+  const firstResult = await first;
+  assert.equal(firstResult?.ledger.id, "ledger_1");
+
+  assert.deepEqual(poolQueries, []);
+  assert.equal(clients.length, 2);
+  assert.equal(clients[0]?.queries[0]?.sql.trim().toLowerCase(), "begin");
+  assert.equal(clients[1]?.queries[0]?.sql.trim().toLowerCase(), "begin");
+  assert.equal(clients[0]?.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+  assert.equal(clients[1]?.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+  assert.equal(clients[0]?.releases, 1);
+  assert.equal(clients[1]?.releases, 1);
+});
+
 test("postgres repository completes holds and refunds captures with locks inside transactions", async () => {
   const captureRepo = createSequentialRowRepository([
     [],
@@ -594,7 +855,7 @@ test("postgres repository completes holds and refunds captures with locks inside
       balanceAfter: 0,
       frozenAfter: 0,
       idempotencyKey: "capture_1",
-      metadata: { holdLedgerId: "hold_ledger" },
+      metadata: { holdLedgerId: "wrong_hold", source: "caller" },
       createdAt: "captured",
     },
     holdLedgerId: "hold_ledger",
@@ -609,6 +870,10 @@ test("postgres repository completes holds and refunds captures with locks inside
   assert.match(captureRepo.queries[3].sql, /frozen_credits = frozen_credits \+ \$\d+/i);
   assert.match(captureRepo.queries[3].sql, /total_captured = total_captured \+ \$\d+/i);
   assert.deepEqual(captureRepo.queries[3].params?.slice(1, 4), [0, -4, 4]);
+  assert.deepEqual(parsedJsonParam(captureRepo.queries[4].params, 10), {
+    holdLedgerId: "hold_ledger",
+    source: "caller",
+  });
   assert.equal(captureRepo.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
 
   const refundRepo = createSequentialRowRepository([
@@ -662,7 +927,7 @@ test("postgres repository completes holds and refunds captures with locks inside
       frozenAfter: 0,
       idempotencyKey: "refund_1",
       reason: "support_goodwill",
-      metadata: { captureLedgerId: "capture_ledger" },
+      metadata: { captureLedgerId: "wrong_capture", source: "caller" },
       createdAt: "refunded",
     },
     captureLedgerId: "capture_ledger",
@@ -685,8 +950,21 @@ test("postgres repository completes holds and refunds captures with locks inside
   assert.match(refundRepo.queries[2].sql, /metadata ->> 'captureLedgerId' = \$\d+/i);
   assert.match(refundRepo.queries[3].sql, /balance = balance \+ \$\d+/i);
   assert.match(refundRepo.queries[4].sql, /insert into credit_ledger/i);
+  assert.deepEqual(parsedJsonParam(refundRepo.queries[4].params, 10), {
+    captureLedgerId: "capture_ledger",
+    source: "caller",
+  });
   assert.match(refundRepo.queries[5].sql, /insert into admin_audit_logs/i);
   assert.equal(refundRepo.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+});
+
+test("postgres repository does not expose raw credit ledger apply APIs", () => {
+  const repo = new PostgresCommercialRepository({
+    query: async () => ({ rows: [] }),
+  });
+
+  assert.equal("applyCreditLedgerEntry" in repo, false);
+  assert.equal("applyCreditLedgerEntryWithAudit" in repo, false);
 });
 
 test("postgres repository rolls back transactional credit transitions on later failure", async () => {

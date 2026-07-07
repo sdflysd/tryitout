@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type {
   AccessCodeBatchRecord,
   AccessCodeRecord,
@@ -29,6 +31,11 @@ export interface QueryClient {
     sql: string,
     params?: unknown[],
   ): Promise<{ rows: T[] }>;
+  connect?(): Promise<AcquiredQueryClient>;
+}
+
+export interface AcquiredQueryClient extends QueryClient {
+  release(): void;
 }
 
 type DbValue =
@@ -43,22 +50,39 @@ type DbValue =
 type DbRow = Record<string, DbValue>;
 
 export class PostgresCommercialRepository implements CommercialRepository {
+  private readonly transactionContext = new AsyncLocalStorage<QueryClient>();
+
   constructor(private readonly client: QueryClient) {}
 
+  private async query<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: T[] }> {
+    return (this.transactionContext.getStore() ?? this.client).query<T>(sql, params);
+  }
+
   private async runInTransaction<T>(work: () => Promise<T>): Promise<T> {
-    await this.client.query("begin");
+    if (this.transactionContext.getStore() !== undefined) {
+      return work();
+    }
+
+    const acquiredClient = await this.client.connect?.();
+    const transactionClient = acquiredClient ?? this.client;
+    await transactionClient.query("begin");
     try {
-      const result = await work();
-      await this.client.query("commit");
+      const result = await this.transactionContext.run(transactionClient, work);
+      await transactionClient.query("commit");
       return result;
     } catch (error) {
-      await this.client.query("rollback");
+      await transactionClient.query("rollback");
       throw error;
+    } finally {
+      acquiredClient?.release();
     }
   }
 
   async saveUser(user: CommercialUserRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into users (
           id, email, email_normalized, password_hash, role, tier, status,
@@ -94,7 +118,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async getUser(userId: string): Promise<CommercialUserRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, email, email_normalized, password_hash, role, tier, status,
@@ -110,7 +134,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async findUserByEmail(
     email: string,
   ): Promise<CommercialUserRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, email, email_normalized, password_hash, role, tier, status,
@@ -127,7 +151,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     user: CommercialUserRecord,
     account: UserCreditAccountRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         with inserted_user as (
           insert into users (
@@ -166,7 +190,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async saveSession(session: CommercialSessionRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into user_sessions (
           id, user_id, token_hash, user_agent, ip_hash, expires_at, revoked_at,
@@ -198,7 +222,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async findSessionByTokenHash(
     tokenHash: string,
   ): Promise<CommercialSessionRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, token_hash, user_agent, ip_hash, expires_at, revoked_at,
@@ -212,7 +236,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async revokeUserSessions(userId: string, revokedAt: string): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         update user_sessions
         set revoked_at = $2
@@ -224,7 +248,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async saveCreditAccount(account: UserCreditAccountRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into user_credit_accounts (
           user_id, balance, frozen_credits, total_redeemed, total_captured,
@@ -252,7 +276,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getCreditAccount(
     userId: string,
   ): Promise<UserCreditAccountRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           user_id, balance, frozen_credits, total_redeemed, total_captured,
@@ -268,7 +292,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async appendCreditLedgerEntry(
     entry: CreditLedgerEntryRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into credit_ledger (
           id, user_id, task_id, access_code_id, entry_type, amount,
@@ -297,7 +321,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async findCreditLedgerEntryByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<CreditLedgerEntryRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, task_id, access_code_id, entry_type, amount,
@@ -314,7 +338,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getCreditLedgerEntry(
     ledgerEntryId: string,
   ): Promise<CreditLedgerEntryRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, task_id, access_code_id, entry_type, amount,
@@ -333,7 +357,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     metadataValue: string,
     entryTypes?: CreditLedgerEntryRecord["entryType"][],
   ): Promise<CreditLedgerEntryRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, task_id, access_code_id, entry_type, amount,
@@ -350,122 +374,6 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCreditLedgerEntry);
   }
 
-  async applyCreditLedgerEntry(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-  ): Promise<CreditLedgerEntryRecord> {
-    const { rows } = await this.client.query<DbRow>(
-      `
-        with updated_account as (
-          update user_credit_accounts
-          set
-            balance = $2,
-            frozen_credits = $3,
-            total_redeemed = $4,
-            total_captured = $5,
-            updated_at = $6
-          where user_id = $1
-          returning user_id
-        ),
-        inserted_ledger as (
-          insert into credit_ledger (
-            id, user_id, task_id, access_code_id, entry_type, amount,
-            balance_after, frozen_after, idempotency_key, reason, metadata,
-            created_at
-          )
-          select
-            $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18
-          from updated_account
-          returning
-            id, user_id, task_id, access_code_id, entry_type, amount,
-            balance_after, frozen_after, idempotency_key, reason, metadata,
-            created_at
-        )
-        select
-          id, user_id, task_id, access_code_id, entry_type, amount,
-          balance_after, frozen_after, idempotency_key, reason, metadata,
-          created_at
-        from inserted_ledger
-      `,
-      creditLedgerApplyParams(account, entry),
-    );
-
-    const inserted = rows[0];
-    if (!inserted) {
-      throw new Error("user_credit_accounts.user_id must exist");
-    }
-    return mapCreditLedgerEntry(inserted);
-  }
-
-  async applyCreditLedgerEntryWithAudit(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-    auditLog: AdminAuditLogRecord,
-  ): Promise<CreditLedgerEntryRecord> {
-    const { rows } = await this.client.query<DbRow>(
-      `
-        with updated_account as (
-          update user_credit_accounts
-          set
-            balance = $2,
-            frozen_credits = $3,
-            total_redeemed = $4,
-            total_captured = $5,
-            updated_at = $6
-          where user_id = $1
-          returning user_id
-        ),
-        inserted_ledger as (
-          insert into credit_ledger (
-            id, user_id, task_id, access_code_id, entry_type, amount,
-            balance_after, frozen_after, idempotency_key, reason, metadata,
-            created_at
-          )
-          select
-            $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18
-          from updated_account
-          returning
-            id, user_id, task_id, access_code_id, entry_type, amount,
-            balance_after, frozen_after, idempotency_key, reason, metadata,
-            created_at
-        ),
-        inserted_audit as (
-          insert into admin_audit_logs (
-            id, actor_user_id, action, target_type, target_id, metadata,
-            ip_hash, user_agent, created_at
-          )
-          select $19, $20, $21, $22, $23, $24::jsonb, $25, $26, $27
-          from inserted_ledger
-          returning id
-        )
-        select
-          id, user_id, task_id, access_code_id, entry_type, amount,
-          balance_after, frozen_after, idempotency_key, reason, metadata,
-          created_at
-        from inserted_ledger
-        where exists (select 1 from inserted_audit)
-      `,
-      [
-        ...creditLedgerApplyParams(account, entry),
-        auditLog.id,
-        auditLog.actorUserId ?? null,
-        auditLog.action,
-        auditLog.targetType,
-        auditLog.targetId ?? null,
-        toJsonb(auditLog.metadata),
-        auditLog.ipHash ?? null,
-        auditLog.userAgent ?? null,
-        auditLog.createdAt,
-      ],
-    );
-
-    const inserted = rows[0];
-    if (!inserted) {
-      throw new Error("user_credit_accounts.user_id must exist");
-    }
-    return mapCreditLedgerEntry(inserted);
-  }
-
   async holdCreditsForTask(input: {
     ledgerEntry: CreditLedgerEntryRecord;
     amount: number;
@@ -473,7 +381,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }): Promise<CreditLedgerTransitionResult | undefined> {
     const { ledgerEntry, amount } = input;
     return this.runInTransaction(async () => {
-      const taskRows = await this.client.query<DbRow>(
+      const taskRows = await this.query<DbRow>(
         `
           select id, user_id
           from simulation_tasks
@@ -488,7 +396,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const accountRows = await this.client.query<DbRow>(
+      const accountRows = await this.query<DbRow>(
         `
           update user_credit_accounts
           set
@@ -508,7 +416,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         throw new Error("user_credit_accounts.user_id must exist");
       }
 
-      const ledgerRows = await this.client.query<DbRow>(
+      const ledgerRows = await this.query<DbRow>(
         `
           insert into credit_ledger (
             id, user_id, task_id, access_code_id, entry_type, amount,
@@ -538,7 +446,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       );
       const ledger = mapCreditLedgerEntry(ledgerRows.rows[0]!);
 
-      const taskUpdateRows = await this.client.query<DbRow>(
+      const taskUpdateRows = await this.query<DbRow>(
         `
           update simulation_tasks
           set credit_hold_ledger_id = $2,
@@ -594,8 +502,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
     auditLog: AdminAuditLogRecord;
   }): Promise<CreditLedgerTransitionResult | undefined> {
     const { ledgerEntry, amount, auditLog } = input;
+    const ledgerMetadata = linkMetadata(ledgerEntry.metadata, {
+      captureLedgerId: input.captureLedgerId,
+    });
     return this.runInTransaction(async () => {
-      const captureRows = await this.client.query<DbRow>(
+      const captureRows = await this.query<DbRow>(
         `
           select id, user_id, task_id, amount
           from credit_ledger
@@ -612,7 +523,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const existingRefund = await this.client.query<DbRow>(
+      const existingRefund = await this.query<DbRow>(
         `
           select id
           from credit_ledger
@@ -626,7 +537,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const accountRows = await this.client.query<DbRow>(
+      const accountRows = await this.query<DbRow>(
         `
           update user_credit_accounts
           set
@@ -644,7 +555,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         throw new Error("user_credit_accounts.user_id must exist");
       }
 
-      const ledgerRows = await this.client.query<DbRow>(
+      const ledgerRows = await this.query<DbRow>(
         `
           insert into credit_ledger (
             id, user_id, task_id, access_code_id, entry_type, amount,
@@ -668,13 +579,13 @@ export class PostgresCommercialRepository implements CommercialRepository {
           account.frozenCredits,
           ledgerEntry.idempotencyKey,
           ledgerEntry.reason ?? null,
-          toJsonb(ledgerEntry.metadata ?? {}),
+          toJsonb(ledgerMetadata),
           ledgerEntry.createdAt,
         ],
       );
       const ledger = mapCreditLedgerEntry(ledgerRows.rows[0]!);
 
-      const auditRows = await this.client.query<DbRow>(
+      const auditRows = await this.query<DbRow>(
         `
           insert into admin_audit_logs (
             id, actor_user_id, action, target_type, target_id, metadata,
@@ -709,7 +620,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     auditLog: AdminAuditLogRecord;
   }): Promise<CreditLedgerTransitionResult | undefined> {
     const { ledgerEntry, amount, auditLog } = input;
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         with updated_account as (
           update user_credit_accounts
@@ -789,7 +700,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into access_code_batches (
           id, created_by_user_id, name, source, code_count, credits, tier,
@@ -837,7 +748,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   ): Promise<void> {
     validateAccessCodeBatchCodes(batch, codes);
 
-    await this.client.query(
+    await this.query(
       `
         with inserted_batch as (
           insert into access_code_batches (
@@ -907,7 +818,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getAccessCodeBatch(
     batchId: string,
   ): Promise<AccessCodeBatchRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, created_by_user_id, name, source, code_count, credits, tier,
@@ -921,7 +832,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async saveAccessCode(code: AccessCodeRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into access_codes (
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
@@ -965,7 +876,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async findAccessCodeByHash(
     codeHash: string,
   ): Promise<AccessCodeRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
@@ -981,7 +892,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getAccessCode(
     codeId: string,
   ): Promise<AccessCodeRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
@@ -995,7 +906,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
@@ -1012,7 +923,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async saveAccessCodeRedemption(
     redemption: AccessCodeRedemptionRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into access_code_redemptions (
           id, access_code_id, user_id, credit_ledger_id, credits, tier_granted,
@@ -1042,7 +953,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       throw new Error("access_code_redemptions.accessCodeId must match access_codes.id");
     }
 
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         with updated_code as (
           update access_codes
@@ -1112,7 +1023,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     }
 
     return this.runInTransaction(async () => {
-      const codeRows = await this.client.query<DbRow>(
+      const codeRows = await this.query<DbRow>(
         `
           select id, credits, tier, features
           from access_codes
@@ -1137,7 +1048,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       ) as AccessCodeRedemptionRecord["tierGranted"] | undefined;
       const codeFeatures = arrayField(lockedCode, "features", "access_codes");
 
-      await this.client.query(
+      await this.query(
         `
           update access_codes
           set
@@ -1149,7 +1060,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         [code.id, code.redeemedByUserId ?? redemption.userId, redemption.redeemedAt],
       );
 
-      const accountRows = await this.client.query<DbRow>(
+      const accountRows = await this.query<DbRow>(
         `
           update user_credit_accounts
           set
@@ -1168,7 +1079,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         throw new Error("user_credit_accounts.user_id must exist");
       }
 
-      const ledgerRows = await this.client.query<DbRow>(
+      const ledgerRows = await this.query<DbRow>(
         `
           insert into credit_ledger (
             id, user_id, task_id, access_code_id, entry_type, amount,
@@ -1198,7 +1109,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       );
       const ledger = mapCreditLedgerEntry(ledgerRows.rows[0]!);
 
-      const redemptionRows = await this.client.query<DbRow>(
+      const redemptionRows = await this.query<DbRow>(
         `
           insert into access_code_redemptions (
             id, access_code_id, user_id, credit_ledger_id, credits,
@@ -1235,7 +1146,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async findAccessCodeRedemptionByCodeId(
     accessCodeId: string,
   ): Promise<AccessCodeRedemptionRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, access_code_id, user_id, credit_ledger_id, credits, tier_granted,
@@ -1253,7 +1164,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     disabledAt: string,
     auditLog: AdminAuditLogRecord,
   ): Promise<AccessCodeRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         with updated_code as (
           update access_codes
@@ -1326,7 +1237,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     | { batch: AccessCodeBatchRecord; disabledCodeCount: number }
     | undefined
   > {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         with updated_batch as (
           update access_code_batches
@@ -1410,7 +1321,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async saveCommercialTask(
     task: CommercialSimulationTaskRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into simulation_tasks (
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
@@ -1467,7 +1378,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getCommercialTask(
     taskId: string,
   ): Promise<CommercialSimulationTaskRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
@@ -1485,7 +1396,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async appendSimulationTaskRun(
     run: SimulationTaskRunRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into simulation_task_runs (
           id, task_id, worker_id, attempt, status, error_code, started_at,
@@ -1510,7 +1421,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async listSimulationTaskRuns(
     taskId: string,
   ): Promise<SimulationTaskRunRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, task_id, worker_id, attempt, status, error_code, started_at,
@@ -1527,7 +1438,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async appendSimulationStepRunCost(
     run: SimulationStepRunCostRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into simulation_step_runs (
           id, task_run_id, task_id, stage_index, step_name, round_index,
@@ -1571,7 +1482,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async listSimulationStepRunCosts(
     taskId: string,
   ): Promise<SimulationStepRunCostRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, task_run_id, task_id, stage_index, step_name, round_index,
@@ -1591,7 +1502,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async saveCommercialReport(
     report: CommercialSimulationReportRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into simulation_reports (
           id, task_id, user_id, public_report, deep_report, share_card,
@@ -1630,7 +1541,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getCommercialReportByTaskId(
     taskId: string,
   ): Promise<CommercialSimulationReportRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, task_id, user_id, public_report, deep_report, share_card,
@@ -1644,7 +1555,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into analytics_events (
           id, user_id, task_id, session_id, event_type, source, properties,
@@ -1666,7 +1577,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async listAnalyticsEvents(): Promise<AnalyticsEventRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, task_id, session_id, event_type, source, properties,
@@ -1679,7 +1590,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into user_feedback (
           id, user_id, task_id, report_id, rating, feedback_type, comment,
@@ -1703,7 +1614,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
 
   async listUserFeedback(userId?: string): Promise<UserFeedbackRecord[]> {
     const params = userId === undefined ? undefined : [userId];
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, task_id, report_id, rating, feedback_type, comment,
@@ -1720,7 +1631,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async saveUserModelProvider(
     provider: UserModelProviderRecord,
   ): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into user_model_providers (
           id, user_id, provider, display_name, base_url, encrypted_api_key,
@@ -1772,7 +1683,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async listUserModelProviders(
     userId: string,
   ): Promise<UserModelProviderRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, user_id, provider, display_name, base_url, encrypted_api_key,
@@ -1788,7 +1699,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async saveSystemSetting(setting: SystemSettingRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into system_settings (
           key, value, description, updated_by_user_id, created_at, updated_at
@@ -1815,7 +1726,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   async getSystemSetting(
     key: string,
   ): Promise<SystemSettingRecord | undefined> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           key, value, description, updated_by_user_id, created_at, updated_at
@@ -1828,7 +1739,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async appendAdminAuditLog(log: AdminAuditLogRecord): Promise<void> {
-    await this.client.query(
+    await this.query(
       `
         insert into admin_audit_logs (
           id, actor_user_id, action, target_type, target_id, metadata, ip_hash,
@@ -1851,7 +1762,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
   }
 
   async listAdminAuditLogs(): Promise<AdminAuditLogRecord[]> {
-    const { rows } = await this.client.query<DbRow>(
+    const { rows } = await this.query<DbRow>(
       `
         select
           id, actor_user_id, action, target_type, target_id, metadata, ip_hash,
@@ -1874,8 +1785,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
     completionTypes: CreditLedgerEntryRecord["entryType"][];
   }): Promise<CreditLedgerTransitionResult | undefined> {
     const { ledgerEntry } = input;
+    const ledgerMetadata = linkMetadata(ledgerEntry.metadata, {
+      holdLedgerId: input.holdLedgerId,
+    });
     return this.runInTransaction(async () => {
-      const holdRows = await this.client.query<DbRow>(
+      const holdRows = await this.query<DbRow>(
         `
           select id, user_id, task_id, amount
           from credit_ledger
@@ -1892,7 +1806,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const completedRows = await this.client.query<DbRow>(
+      const completedRows = await this.query<DbRow>(
         `
           select id
           from credit_ledger
@@ -1906,7 +1820,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const accountRows = await this.client.query<DbRow>(
+      const accountRows = await this.query<DbRow>(
         `
           update user_credit_accounts
           set
@@ -1934,7 +1848,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         return undefined;
       }
 
-      const ledgerRows = await this.client.query<DbRow>(
+      const ledgerRows = await this.query<DbRow>(
         `
           insert into credit_ledger (
             id, user_id, task_id, access_code_id, entry_type, amount,
@@ -1958,7 +1872,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           account.frozenCredits,
           ledgerEntry.idempotencyKey,
           ledgerEntry.reason ?? null,
-          toJsonb(ledgerEntry.metadata ?? {}),
+          toJsonb(ledgerMetadata),
           ledgerEntry.createdAt,
         ],
       );
@@ -1981,30 +1895,14 @@ function nullableJsonb(value: unknown | undefined): string | null {
   return value === undefined ? null : toJsonb(value);
 }
 
-function creditLedgerApplyParams(
-  account: UserCreditAccountRecord,
-  entry: CreditLedgerEntryRecord,
-): unknown[] {
-  return [
-    account.userId,
-    account.balance,
-    account.frozenCredits,
-    account.totalRedeemed,
-    account.totalCaptured,
-    account.updatedAt,
-    entry.id,
-    entry.userId,
-    entry.taskId ?? null,
-    entry.accessCodeId ?? null,
-    entry.entryType,
-    entry.amount,
-    entry.balanceAfter,
-    entry.frozenAfter ?? 0,
-    entry.idempotencyKey,
-    entry.reason ?? null,
-    toJsonb(entry.metadata ?? {}),
-    entry.createdAt,
-  ];
+function linkMetadata(
+  metadata: CreditLedgerEntryRecord["metadata"],
+  linkage: JsonObject,
+): JsonObject {
+  return {
+    ...(metadata ?? {}),
+    ...linkage,
+  };
 }
 
 function toAccessCodeJson(code: AccessCodeRecord): JsonObject {

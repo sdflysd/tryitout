@@ -325,6 +325,14 @@ CREATE TABLE admin_audit_logs (
 
 CREATE INDEX user_sessions_user_id_idx ON user_sessions(user_id);
 CREATE INDEX credit_ledger_user_id_idx ON credit_ledger(user_id);
+CREATE UNIQUE INDEX credit_ledger_hold_completion_unique_idx
+  ON credit_ledger ((metadata ->> 'holdLedgerId'))
+  WHERE entry_type IN ('capture', 'release')
+    AND metadata ? 'holdLedgerId';
+CREATE UNIQUE INDEX credit_ledger_refund_capture_unique_idx
+  ON credit_ledger ((metadata ->> 'captureLedgerId'))
+  WHERE entry_type = 'refund'
+    AND metadata ? 'captureLedgerId';
 CREATE INDEX access_codes_batch_id_idx ON access_codes(batch_id);
 CREATE INDEX access_code_redemptions_user_id_idx ON access_code_redemptions(user_id);
 CREATE INDEX simulation_tasks_status_idx ON simulation_tasks(status);

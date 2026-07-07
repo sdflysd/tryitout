@@ -187,45 +187,11 @@ test("repository rejects duplicate credit ledger idempotency keys", async () => 
   );
 });
 
-test("repository atomically applies a credit ledger entry to an account", async () => {
+test("repository does not expose raw credit ledger apply APIs", () => {
   const repo = new InMemoryCommercialRepository();
-  await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
 
-  const entry = await repo.applyCreditLedgerEntry(
-    {
-      userId: "user_1",
-      balance: 7,
-      frozenCredits: 3,
-      totalRedeemed: 10,
-      totalCaptured: 0,
-      updatedAt: "held",
-    },
-    {
-      id: "ledger_1",
-      userId: "user_1",
-      taskId: "task_1",
-      entryType: "hold",
-      amount: -3,
-      balanceAfter: 7,
-      frozenAfter: 3,
-      idempotencyKey: "hold_1",
-      createdAt: "held",
-    },
-  );
-
-  assert.equal(entry.id, "ledger_1");
-  assert.deepEqual(await repo.getCreditAccount("user_1"), {
-    userId: "user_1",
-    balance: 7,
-    frozenCredits: 3,
-    totalRedeemed: 10,
-    totalCaptured: 0,
-    updatedAt: "held",
-  });
-  assert.equal(
-    (await repo.findCreditLedgerEntryByIdempotencyKey("hold_1"))?.id,
-    "ledger_1",
-  );
+  assert.equal("applyCreditLedgerEntry" in repo, false);
+  assert.equal("applyCreditLedgerEntryWithAudit" in repo, false);
 });
 
 test("repository credit transitions use the current account instead of stale absolute snapshots", async () => {
@@ -286,9 +252,10 @@ test("repository holdCreditsForTask validates task before mutating account", asy
   );
 });
 
-test("repository applyCreditLedgerEntry validates uniqueness before mutating account", async () => {
+test("repository holdCreditsForTask validates uniqueness before mutating account", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
+  await repo.saveCommercialTask(makeTask({ creditCost: 3 }));
   await repo.appendCreditLedgerEntry({
     id: "ledger_existing",
     userId: "user_1",
@@ -300,16 +267,8 @@ test("repository applyCreditLedgerEntry validates uniqueness before mutating acc
   });
 
   await assert.rejects(
-    repo.applyCreditLedgerEntry(
-      {
-        userId: "user_1",
-        balance: 7,
-        frozenCredits: 3,
-        totalRedeemed: 10,
-        totalCaptured: 0,
-        updatedAt: "held",
-      },
-      {
+    repo.holdCreditsForTask({
+      ledgerEntry: {
         id: "ledger_1",
         userId: "user_1",
         taskId: "task_1",
@@ -320,7 +279,9 @@ test("repository applyCreditLedgerEntry validates uniqueness before mutating acc
         idempotencyKey: "hold_1",
         createdAt: "held",
       },
-    ),
+      amount: 3,
+      taskUpdatedAt: "held",
+    }),
     /credit_ledger\.idempotencyKey/,
   );
 
@@ -358,13 +319,17 @@ test("repository completes holds and refunds captures exactly once", async () =>
       balanceAfter: 0,
       frozenAfter: 0,
       idempotencyKey: "capture_1",
-      metadata: { holdLedgerId: "hold_ledger" },
+      metadata: { holdLedgerId: "wrong_hold", source: "caller" },
       createdAt: "captured",
     },
     holdLedgerId: "hold_ledger",
     amount: 4,
   });
   assert.equal(capture?.ledger.id, "capture_ledger");
+  assert.deepEqual(capture?.ledger.metadata, {
+    holdLedgerId: "hold_ledger",
+    source: "caller",
+  });
   assert.equal(
     await repo.releaseHeldCredits({
       ledgerEntry: {
@@ -395,7 +360,7 @@ test("repository completes holds and refunds captures exactly once", async () =>
       balanceAfter: 0,
       frozenAfter: 0,
       idempotencyKey: "refund_1",
-      metadata: { captureLedgerId: "capture_ledger" },
+      metadata: { captureLedgerId: "wrong_capture", source: "caller" },
       createdAt: "refunded",
     },
     captureLedgerId: "capture_ledger",
@@ -411,6 +376,10 @@ test("repository completes holds and refunds captures exactly once", async () =>
     },
   });
   assert.equal(refund?.ledger.id, "refund_ledger");
+  assert.deepEqual(refund?.ledger.metadata, {
+    captureLedgerId: "capture_ledger",
+    source: "caller",
+  });
   assert.equal(
     await repo.refundCapturedCreditsWithAudit({
       ledgerEntry: {
@@ -441,20 +410,12 @@ test("repository completes holds and refunds captures exactly once", async () =>
   );
 });
 
-test("repository atomically applies a credit ledger entry with audit log", async () => {
+test("repository atomically adjusts credits with audit log", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCreditAccount(makeCreditAccount("user_1", { balance: 10 }));
 
-  const entry = await repo.applyCreditLedgerEntryWithAudit(
-    {
-      userId: "user_1",
-      balance: 7,
-      frozenCredits: 0,
-      totalRedeemed: 10,
-      totalCaptured: 0,
-      updatedAt: "adjusted",
-    },
-    {
+  const result = await repo.adjustCreditsWithAudit({
+    ledgerEntry: {
       id: "ledger_1",
       userId: "user_1",
       entryType: "adjustment",
@@ -465,7 +426,8 @@ test("repository atomically applies a credit ledger entry with audit log", async
       reason: "manual_correction",
       createdAt: "adjusted",
     },
-    {
+    amount: -3,
+    auditLog: {
       id: "audit_1",
       actorUserId: "admin_1",
       action: "credits_adjusted",
@@ -474,9 +436,9 @@ test("repository atomically applies a credit ledger entry with audit log", async
       metadata: { creditLedgerId: "ledger_1" },
       createdAt: "adjusted",
     },
-  );
+  });
 
-  assert.equal(entry.id, "ledger_1");
+  assert.equal(result?.ledger.id, "ledger_1");
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 7);
   assert.equal((await repo.listAdminAuditLogs())[0]?.id, "audit_1");
 });

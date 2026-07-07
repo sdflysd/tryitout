@@ -9,6 +9,7 @@ import type {
   CommercialSimulationTaskRecord,
   CommercialUserRecord,
   CreditLedgerEntryRecord,
+  JsonObject,
   SimulationStepRunCostRecord,
   SimulationTaskRunRecord,
   SystemSettingRecord,
@@ -57,15 +58,6 @@ export interface CommercialRepository {
     metadataValue: string,
     entryTypes?: CreditLedgerEntryRecord["entryType"][],
   ): Promise<CreditLedgerEntryRecord | undefined>;
-  applyCreditLedgerEntry(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-  ): Promise<CreditLedgerEntryRecord>;
-  applyCreditLedgerEntryWithAudit(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-    auditLog: AdminAuditLogRecord,
-  ): Promise<CreditLedgerEntryRecord>;
   holdCreditsForTask(input: {
     ledgerEntry: CreditLedgerEntryRecord;
     amount: number;
@@ -309,35 +301,6 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
       return entry.metadata?.[metadataKey] === metadataValue;
     });
-  }
-
-  async applyCreditLedgerEntry(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-  ): Promise<CreditLedgerEntryRecord> {
-    this.validateCreditLedgerAccount(account, entry);
-    this.assertCreditLedgerAppendable(entry);
-
-    this.creditAccounts.set(account.userId, account);
-    this.creditLedger.push(entry);
-    return entry;
-  }
-
-  async applyCreditLedgerEntryWithAudit(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-    auditLog: AdminAuditLogRecord,
-  ): Promise<CreditLedgerEntryRecord> {
-    this.validateCreditLedgerAccount(account, entry);
-    this.assertCreditLedgerAppendable(entry);
-    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
-      throw new Error("admin_audit_logs.id must be unique");
-    }
-
-    this.creditAccounts.set(account.userId, account);
-    this.creditLedger.push(entry);
-    this.auditLogs.push(auditLog);
-    return entry;
   }
 
   async saveAccessCodeBatch(batch: AccessCodeBatchRecord): Promise<void> {
@@ -593,7 +556,9 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       amount: -amount,
       balanceAfter: updatedAccount.balance,
       frozenAfter: updatedAccount.frozenCredits,
-      metadata: { ...(ledgerEntry.metadata ?? {}), holdLedgerId: input.holdLedgerId },
+      metadata: linkMetadata(ledgerEntry.metadata, {
+        holdLedgerId: input.holdLedgerId,
+      }),
     };
     this.creditAccounts.set(updatedAccount.userId, updatedAccount);
     this.creditLedger.push(storedLedger);
@@ -628,7 +593,9 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       amount,
       balanceAfter: updatedAccount.balance,
       frozenAfter: updatedAccount.frozenCredits,
-      metadata: { ...(ledgerEntry.metadata ?? {}), holdLedgerId: input.holdLedgerId },
+      metadata: linkMetadata(ledgerEntry.metadata, {
+        holdLedgerId: input.holdLedgerId,
+      }),
     };
     this.creditAccounts.set(updatedAccount.userId, updatedAccount);
     this.creditLedger.push(storedLedger);
@@ -673,7 +640,9 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       amount,
       balanceAfter: updatedAccount.balance,
       frozenAfter: updatedAccount.frozenCredits,
-      metadata: { ...(ledgerEntry.metadata ?? {}), captureLedgerId: input.captureLedgerId },
+      metadata: linkMetadata(ledgerEntry.metadata, {
+        captureLedgerId: input.captureLedgerId,
+      }),
     };
     this.creditAccounts.set(updatedAccount.userId, updatedAccount);
     this.creditLedger.push(storedLedger);
@@ -920,18 +889,6 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return [...this.auditLogs];
   }
 
-  private validateCreditLedgerAccount(
-    account: UserCreditAccountRecord,
-    entry: CreditLedgerEntryRecord,
-  ): void {
-    if (account.userId !== entry.userId) {
-      throw new Error("credit_ledger.userId must match user_credit_accounts.userId");
-    }
-    if (!this.creditAccounts.has(account.userId)) {
-      throw new Error("user_credit_accounts.userId must exist");
-    }
-  }
-
   private requireExistingCreditAccount(userId: string): UserCreditAccountRecord {
     const account = this.creditAccounts.get(userId);
     if (!account) {
@@ -1019,6 +976,16 @@ function appendById<T extends { id: string }>(
   }
 
   items.push(item);
+}
+
+function linkMetadata(
+  metadata: CreditLedgerEntryRecord["metadata"],
+  linkage: JsonObject,
+): JsonObject {
+  return {
+    ...(metadata ?? {}),
+    ...linkage,
+  };
 }
 
 function assertUniqueById<T extends { id: string }>(

@@ -11,6 +11,7 @@ import {
   InMemoryCommercialRepository,
 } from "./repository.js";
 import type {
+  AccessCodeRecord,
   CommercialSimulationTaskRecord,
   CreditLedgerEntryRecord,
   UserCreditAccountRecord,
@@ -106,6 +107,35 @@ test("repeating redeem with same idempotency key returns existing result without
   });
 
   assert.equal(second.ledger.id, first.ledger.id);
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 8);
+});
+
+test("redeem idempotency replays when concurrent writer returns undefined after code is consumed", async () => {
+  const { repo, service, accessCodeService } = await createScenario();
+  const created = await accessCodeService.createSingleAccessCode({
+    credits: 8,
+    features: [],
+  });
+  const first = await service.redeemAccessCode({
+    userId: "user_1",
+    rawCode: created.rawCode,
+    idempotencyKey: "redeem-key-1",
+  });
+  const racingService = createCreditService(
+    new UndefinedRedeemReplayRepository(repo, {
+      ...created.record,
+      status: "active",
+    }),
+  );
+
+  const replay = await racingService.redeemAccessCode({
+    userId: "user_1",
+    rawCode: created.rawCode,
+    idempotencyKey: "redeem-key-1",
+  });
+
+  assert.equal(replay.ledger.id, first.ledger.id);
+  assert.equal(replay.redemption.id, first.redemption.id);
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 8);
 });
 
@@ -244,6 +274,33 @@ test("repeating hold with same idempotency key does not double freeze", async ()
   assert.equal(second.ledger.id, first.ledger.id);
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 6);
   assert.equal((await repo.getCreditAccount("user_1"))?.frozenCredits, 4);
+});
+
+test("hold idempotency replays when concurrent writer returns undefined after task is held", async () => {
+  const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
+  const first = await service.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+    reason: "task_queued",
+  });
+  const racingService = createCreditService(
+    new UndefinedHoldReplayRepository(repo),
+  );
+
+  const replay = await racingService.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+    reason: "task_queued",
+  });
+
+  assert.equal(replay.ledger.id, first.ledger.id);
+  assert.equal(replay.account.balance, 6);
+  assert.equal(replay.account.frozenCredits, 4);
 });
 
 test("reusing transition idempotency keys with different request intent is rejected", async () => {
@@ -774,5 +831,76 @@ class DuplicateIdempotencyRepository extends InMemoryCommercialRepository {
     userId: string,
   ): Promise<UserCreditAccountRecord | undefined> {
     return this.backing.getCreditAccount(userId);
+  }
+}
+
+class UndefinedRedeemReplayRepository extends InMemoryCommercialRepository {
+  private writerReturnedUndefined = false;
+
+  constructor(
+    private readonly backing: InMemoryCommercialRepository,
+    private readonly activeCodeSnapshot: AccessCodeRecord,
+  ) {
+    super();
+  }
+
+  override async findAccessCodeByHash(): Promise<AccessCodeRecord | undefined> {
+    return this.activeCodeSnapshot;
+  }
+
+  override async redeemAccessCodeWithCreditLedger(): Promise<undefined> {
+    this.writerReturnedUndefined = true;
+    return undefined;
+  }
+
+  override async findCreditLedgerEntryByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    if (!this.writerReturnedUndefined) {
+      return undefined;
+    }
+    return this.backing.findCreditLedgerEntryByIdempotencyKey(idempotencyKey);
+  }
+
+  override async findAccessCodeRedemptionByCodeId(accessCodeId: string) {
+    return this.backing.findAccessCodeRedemptionByCodeId(accessCodeId);
+  }
+
+  override async getCreditAccount(
+    userId: string,
+  ): Promise<UserCreditAccountRecord | undefined> {
+    return this.backing.getCreditAccount(userId);
+  }
+}
+
+class UndefinedHoldReplayRepository extends InMemoryCommercialRepository {
+  private writerReturnedUndefined = false;
+
+  constructor(private readonly backing: InMemoryCommercialRepository) {
+    super();
+  }
+
+  override async holdCreditsForTask(): Promise<undefined> {
+    this.writerReturnedUndefined = true;
+    return undefined;
+  }
+
+  override async findCreditLedgerEntryByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    if (!this.writerReturnedUndefined) {
+      return undefined;
+    }
+    return this.backing.findCreditLedgerEntryByIdempotencyKey(idempotencyKey);
+  }
+
+  override async getCreditAccount(
+    userId: string,
+  ): Promise<UserCreditAccountRecord | undefined> {
+    return this.backing.getCreditAccount(userId);
+  }
+
+  override async getCommercialTask(taskId: string) {
+    return this.backing.getCommercialTask(taskId);
   }
 }
