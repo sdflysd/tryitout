@@ -43,6 +43,30 @@ function createRowRepository(
   };
 }
 
+function createSequentialRowRepository(
+  rowBatches: Array<Array<Record<string, unknown>>>,
+): {
+  queries: QueryLog[];
+  repo: PostgresCommercialRepository;
+} {
+  const queries: QueryLog[] = [];
+  let index = 0;
+  return {
+    queries,
+    repo: new PostgresCommercialRepository({
+      query: async <T = Record<string, unknown>>(
+        sql: string,
+        params?: unknown[],
+      ) => {
+        queries.push({ sql, params });
+        const rows = rowBatches[Math.min(index, rowBatches.length - 1)] ?? [];
+        index += 1;
+        return { rows: rows as T[] };
+      },
+    }),
+  };
+}
+
 function parsedJsonParam(params: unknown[] | undefined, index: number): unknown {
   return JSON.parse(params?.[index] as string);
 }
@@ -341,37 +365,58 @@ test("postgres repository applies credit ledger entries with audit in one CTE qu
   assert.match(queries[0].sql, /from inserted_ledger/i);
 });
 
-test("postgres repository redeems access code with credit ledger and account in one CTE query", async () => {
-  const { repo, queries } = createRowRepository([
-    {
-      account_user_id: "user_1",
-      balance: "10",
-      frozen_credits: "0",
-      total_redeemed: "10",
-      total_captured: "0",
-      updated_at: "redeemed",
-      id: "ledger_1",
-      user_id: "user_1",
-      task_id: null,
-      access_code_id: "code_1",
-      entry_type: "redeem",
-      amount: "10",
-      balance_after: "10",
-      frozen_after: "0",
-      idempotency_key: "redeem_1",
-      reason: null,
-      metadata: { source: "code" },
-      created_at: "redeemed",
-      redemption_id: "redemption_1",
-      redemption_access_code_id: "code_1",
-      redemption_user_id: "user_1",
-      redemption_credit_ledger_id: "ledger_1",
-      redemption_credits: "10",
-      redemption_tier_granted: "pro",
-      redemption_features_granted: ["deep_mode"],
-      redemption_redeemed_at: "redeemed",
-      redemption_metadata: { source: "code" },
-    },
+test("postgres repository redeems access code transactionally after locking code and account", async () => {
+  const { repo, queries } = createSequentialRowRepository([
+    [],
+    [
+      {
+        id: "code_1",
+        credits: "10",
+        tier: "pro",
+        features: ["deep_mode"],
+      },
+    ],
+    [],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "10",
+        frozen_credits: "0",
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: "redeemed",
+      },
+    ],
+    [
+      {
+        id: "ledger_1",
+        user_id: "user_1",
+        task_id: null,
+        access_code_id: "code_1",
+        entry_type: "redeem",
+        amount: "10",
+        balance_after: "10",
+        frozen_after: "0",
+        idempotency_key: "redeem_1",
+        reason: null,
+        metadata: { source: "code" },
+        created_at: "redeemed",
+      },
+    ],
+    [
+      {
+        redemption_id: "redemption_1",
+        redemption_access_code_id: "code_1",
+        redemption_user_id: "user_1",
+        redemption_credit_ledger_id: "ledger_1",
+        redemption_credits: "10",
+        redemption_tier_granted: "pro",
+        redemption_features_granted: ["deep_mode"],
+        redemption_redeemed_at: "redeemed",
+        redemption_metadata: { source: "code" },
+      },
+    ],
+    [],
   ]);
 
   const redeemed = await repo.redeemAccessCodeWithCreditLedger(
@@ -416,51 +461,52 @@ test("postgres repository redeems access code with credit ledger and account in 
   assert.equal(redeemed?.ledger.id, "ledger_1");
   assert.equal(redeemed?.account.balance, 10);
   assert.equal(redeemed?.redemption.creditLedgerId, "ledger_1");
-  assert.equal(queries.length, 1);
-  assert.match(queries[0].sql, /with updated_code as/i);
-  assert.match(queries[0].sql, /update access_codes/i);
-  assert.match(queries[0].sql, /updated_account as/i);
-  assert.match(queries[0].sql, /update user_credit_accounts/i);
-  assert.match(queries[0].sql, /inserted_ledger as/i);
-  assert.match(queries[0].sql, /insert into credit_ledger/i);
-  assert.match(queries[0].sql, /inserted_redemption as/i);
-  assert.match(queries[0].sql, /insert into access_code_redemptions/i);
-  assert.match(queries[0].sql, /from updated_code/i);
-  assert.match(queries[0].sql, /join inserted_redemption/i);
-  assert.match(queries[0].sql, /balance = balance \+ updated_code\.credits/i);
-  assert.match(queries[0].sql, /total_redeemed = total_redeemed \+ updated_code\.credits/i);
-  assert.deepEqual(queries[0].params?.slice(0, 4), [
-    "code_1",
-    "user_1",
-    "redeemed",
-    "redeemed",
-  ]);
-  assert.equal(queries[0].params?.[2], "redeemed");
-  assert.notEqual(queries[0].params?.[2], "stale-code-redeemed-at");
+  assert.equal(queries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(queries[1].sql, /from access_codes/i);
+  assert.match(queries[1].sql, /for update/i);
+  assert.match(queries[2].sql, /update access_codes/i);
+  assert.match(queries[3].sql, /update user_credit_accounts/i);
+  assert.match(queries[3].sql, /balance = balance \+ \$\d+/i);
+  assert.match(queries[3].sql, /total_redeemed = total_redeemed \+ \$\d+/i);
+  assert.match(queries[4].sql, /insert into credit_ledger/i);
+  assert.match(queries[5].sql, /insert into access_code_redemptions/i);
+  assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+  assert.equal(queries[2].params?.[2], "redeemed");
+  assert.notEqual(queries[2].params?.[2], "stale-code-redeemed-at");
 });
 
-test("postgres repository holds credits for tasks with DB-side deltas and task link in one CTE", async () => {
-  const { repo, queries } = createRowRepository([
-    {
-      account_user_id: "user_1",
-      balance: "7",
-      frozen_credits: "3",
-      total_redeemed: "10",
-      total_captured: "0",
-      updated_at: "held",
-      id: "ledger_1",
-      user_id: "user_1",
-      task_id: "task_1",
-      access_code_id: null,
-      entry_type: "hold",
-      amount: "-3",
-      balance_after: "7",
-      frozen_after: "3",
-      idempotency_key: "hold_1",
-      reason: "task_queued",
-      metadata: {},
-      created_at: "held",
-    },
+test("postgres repository holds credits transactionally after locking task", async () => {
+  const { repo, queries } = createSequentialRowRepository([
+    [],
+    [{ id: "task_1", user_id: "user_1" }],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "7",
+        frozen_credits: "3",
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: "held",
+      },
+    ],
+    [
+      {
+        id: "ledger_1",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "hold",
+        amount: "-3",
+        balance_after: "7",
+        frozen_after: "3",
+        idempotency_key: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        created_at: "held",
+      },
+    ],
+    [{ id: "task_1" }],
+    [],
   ]);
 
   const result = await repo.holdCreditsForTask({
@@ -483,40 +529,60 @@ test("postgres repository holds credits for tasks with DB-side deltas and task l
 
   assert.equal(result?.account.balance, 7);
   assert.equal(result?.ledger.balanceAfter, 7);
-  assert.match(queries[0].sql, /with target_task as/i);
-  assert.match(queries[0].sql, /update user_credit_accounts/i);
-  assert.match(queries[0].sql, /balance = balance - \$\d+/i);
-  assert.match(queries[0].sql, /frozen_credits = frozen_credits \+ \$\d+/i);
-  assert.match(queries[0].sql, /user_credit_accounts\.user_id = \$\d+[\s\S]*balance >= \$\d+/i);
-  assert.match(queries[0].sql, /update simulation_tasks/i);
-  assert.match(queries[0].sql, /credit_hold_ledger_id = inserted_ledger\.id/i);
-  assert.match(queries[0].sql, /credit_hold_ledger_id is null/i);
-  assert.match(queries[0].sql, /from target_task/i);
-  assert.match(queries[0].sql, /join updated_task/i);
+  assert.equal(queries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(queries[1].sql, /from simulation_tasks/i);
+  assert.match(queries[1].sql, /credit_hold_ledger_id is null/i);
+  assert.match(queries[1].sql, /for update/i);
+  assert.match(queries[2].sql, /update user_credit_accounts/i);
+  assert.match(queries[2].sql, /balance = balance - \$\d+/i);
+  assert.match(queries[2].sql, /frozen_credits = frozen_credits \+ \$\d+/i);
+  assert.match(queries[2].sql, /balance >= \$\d+/i);
+  assert.match(queries[3].sql, /insert into credit_ledger/i);
+  assert.match(queries[4].sql, /update simulation_tasks/i);
+  assert.match(queries[4].sql, /credit_hold_ledger_id = \$\d+/i);
+  assert.match(queries[4].sql, /credit_hold_ledger_id is null/i);
+  assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
 });
 
-test("postgres repository completes holds and refunds captures with not-exists CTE guards", async () => {
-  const captureRepo = createRowRepository([
-    {
-      account_user_id: "user_1",
-      balance: "6",
-      frozen_credits: "0",
-      total_redeemed: "10",
-      total_captured: "4",
-      updated_at: "captured",
-      id: "capture_ledger",
-      user_id: "user_1",
-      task_id: "task_1",
-      access_code_id: null,
-      entry_type: "capture",
-      amount: "-4",
-      balance_after: "6",
-      frozen_after: "0",
-      idempotency_key: "capture_1",
-      reason: null,
-      metadata: { holdLedgerId: "hold_ledger" },
-      created_at: "captured",
-    },
+test("postgres repository completes holds and refunds captures with locks inside transactions", async () => {
+  const captureRepo = createSequentialRowRepository([
+    [],
+    [
+      {
+        id: "hold_ledger",
+        user_id: "user_1",
+        task_id: "task_1",
+        amount: "-4",
+      },
+    ],
+    [],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "6",
+        frozen_credits: "0",
+        total_redeemed: "10",
+        total_captured: "4",
+        updated_at: "captured",
+      },
+    ],
+    [
+      {
+        id: "capture_ledger",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "capture",
+        amount: "-4",
+        balance_after: "6",
+        frozen_after: "0",
+        idempotency_key: "capture_1",
+        reason: null,
+        metadata: { holdLedgerId: "hold_ledger" },
+        created_at: "captured",
+      },
+    ],
+    [],
   ]);
   await captureRepo.repo.captureHeldCredits({
     ledgerEntry: {
@@ -535,33 +601,55 @@ test("postgres repository completes holds and refunds captures with not-exists C
     amount: 4,
   });
 
-  assert.match(captureRepo.queries[0].sql, /not exists[\s\S]*entry_type = any\(\$[\d]+::text\[\]\)/i);
-  assert.match(captureRepo.queries[0].sql, /metadata ->> 'holdLedgerId' = \$\d+/i);
-  assert.match(captureRepo.queries[0].sql, /frozen_credits = frozen_credits \+ \$\d+/i);
-  assert.deepEqual(captureRepo.queries[0].params?.slice(4, 7), [0, -4, 4]);
-  assert.match(captureRepo.queries[0].sql, /total_captured = total_captured \+ \$\d+/i);
+  assert.equal(captureRepo.queries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(captureRepo.queries[1].sql, /from credit_ledger/i);
+  assert.match(captureRepo.queries[1].sql, /entry_type = 'hold'/i);
+  assert.match(captureRepo.queries[1].sql, /for update/i);
+  assert.match(captureRepo.queries[2].sql, /metadata ->> 'holdLedgerId' = \$\d+/i);
+  assert.match(captureRepo.queries[3].sql, /frozen_credits = frozen_credits \+ \$\d+/i);
+  assert.match(captureRepo.queries[3].sql, /total_captured = total_captured \+ \$\d+/i);
+  assert.deepEqual(captureRepo.queries[3].params?.slice(1, 4), [0, -4, 4]);
+  assert.equal(captureRepo.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
 
-  const refundRepo = createRowRepository([
-    {
-      account_user_id: "user_1",
-      balance: "10",
-      frozen_credits: "0",
-      total_redeemed: "10",
-      total_captured: "4",
-      updated_at: "refunded",
-      id: "refund_ledger",
-      user_id: "user_1",
-      task_id: "task_1",
-      access_code_id: null,
-      entry_type: "refund",
-      amount: "4",
-      balance_after: "10",
-      frozen_after: "0",
-      idempotency_key: "refund_1",
-      reason: "support_goodwill",
-      metadata: { captureLedgerId: "capture_ledger" },
-      created_at: "refunded",
-    },
+  const refundRepo = createSequentialRowRepository([
+    [],
+    [
+      {
+        id: "capture_ledger",
+        user_id: "user_1",
+        task_id: "task_1",
+        amount: "-4",
+      },
+    ],
+    [],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "10",
+        frozen_credits: "0",
+        total_redeemed: "10",
+        total_captured: "4",
+        updated_at: "refunded",
+      },
+    ],
+    [
+      {
+        id: "refund_ledger",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "refund",
+        amount: "4",
+        balance_after: "10",
+        frozen_after: "0",
+        idempotency_key: "refund_1",
+        reason: "support_goodwill",
+        metadata: { captureLedgerId: "capture_ledger" },
+        created_at: "refunded",
+      },
+    ],
+    [{ id: "audit_1" }],
+    [],
   ]);
   await refundRepo.repo.refundCapturedCreditsWithAudit({
     ledgerEntry: {
@@ -590,9 +678,73 @@ test("postgres repository completes holds and refunds captures with not-exists C
     },
   });
 
-  assert.match(refundRepo.queries[0].sql, /not exists[\s\S]*metadata ->> 'captureLedgerId' = \$\d+/i);
-  assert.match(refundRepo.queries[0].sql, /balance = balance \+ \$\d+/i);
-  assert.match(refundRepo.queries[0].sql, /inserted_audit as/i);
+  assert.equal(refundRepo.queries[0].sql.trim().toLowerCase(), "begin");
+  assert.match(refundRepo.queries[1].sql, /from credit_ledger/i);
+  assert.match(refundRepo.queries[1].sql, /entry_type = 'capture'/i);
+  assert.match(refundRepo.queries[1].sql, /for update/i);
+  assert.match(refundRepo.queries[2].sql, /metadata ->> 'captureLedgerId' = \$\d+/i);
+  assert.match(refundRepo.queries[3].sql, /balance = balance \+ \$\d+/i);
+  assert.match(refundRepo.queries[4].sql, /insert into credit_ledger/i);
+  assert.match(refundRepo.queries[5].sql, /insert into admin_audit_logs/i);
+  assert.equal(refundRepo.queries.at(-1)?.sql.trim().toLowerCase(), "commit");
+});
+
+test("postgres repository rolls back transactional credit transitions on later failure", async () => {
+  const { repo, queries } = createSequentialRowRepository([
+    [],
+    [{ id: "task_1", user_id: "user_1" }],
+    [
+      {
+        account_user_id: "user_1",
+        balance: "7",
+        frozen_credits: "3",
+        total_redeemed: "10",
+        total_captured: "0",
+        updated_at: "held",
+      },
+    ],
+    [
+      {
+        id: "ledger_1",
+        user_id: "user_1",
+        task_id: "task_1",
+        access_code_id: null,
+        entry_type: "hold",
+        amount: "-3",
+        balance_after: "7",
+        frozen_after: "3",
+        idempotency_key: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        created_at: "held",
+      },
+    ],
+    [],
+  ]);
+
+  await assert.rejects(
+    repo.holdCreditsForTask({
+      ledgerEntry: {
+        id: "ledger_1",
+        userId: "user_1",
+        taskId: "task_1",
+        entryType: "hold",
+        amount: -3,
+        balanceAfter: 0,
+        frozenAfter: 0,
+        idempotencyKey: "hold_1",
+        reason: "task_queued",
+        metadata: {},
+        createdAt: "held",
+      },
+      amount: 3,
+      taskUpdatedAt: "held",
+    }),
+    /simulation_tasks\.creditHoldLedgerId/,
+  );
+
+  assert.equal(queries[0].sql.trim().toLowerCase(), "begin");
+  assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "rollback");
 });
 
 test("postgres repository maps getCommercialTask row to record", async () => {

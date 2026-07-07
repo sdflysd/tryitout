@@ -12,6 +12,7 @@ import {
 } from "./repository.js";
 import type {
   CommercialSimulationTaskRecord,
+  CreditLedgerEntryRecord,
   UserCreditAccountRecord,
 } from "./types.js";
 
@@ -292,6 +293,73 @@ test("reusing transition idempotency keys with different request intent is rejec
       userId: "user_1",
       taskId: "task_1",
       holdLedgerId: hold.ledger.id,
+      idempotencyKey: "hold-key-1",
+    }),
+    (error) => hasServiceCode(error, "idempotency_conflict"),
+  );
+});
+
+test("duplicate idempotency race returns existing matching hold result", async () => {
+  const { repo, service } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.saveCommercialTask(makeTask({ creditCost: 4 }));
+  const first = await service.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+    reason: "task_queued",
+  });
+  const racingRepo = new DuplicateIdempotencyRepository(
+    repo,
+    "credit_ledger.idempotencyKey must be unique",
+  );
+  const racingService = createCreditService(racingRepo);
+
+  const retry = await racingService.holdCreditsForTask({
+    userId: "user_1",
+    taskId: "task_1",
+    amount: 4,
+    idempotencyKey: "hold-key-1",
+    reason: "task_queued",
+  });
+
+  assert.equal(retry.ledger.id, first.ledger.id);
+  assert.equal(retry.account.balance, 6);
+  assert.equal(racingRepo.holdCalls, 1);
+});
+
+test("duplicate idempotency race with conflicting stored ledger is rejected", async () => {
+  const { repo } = await createScenario({ balance: 10, totalRedeemed: 10 });
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_existing",
+    userId: "user_1",
+    taskId: "task_2",
+    entryType: "hold",
+    amount: -4,
+    balanceAfter: 6,
+    frozenAfter: 4,
+    idempotencyKey: "hold-key-1",
+    metadata: {
+      operation: "hold_task_credits",
+      requestUserId: "user_1",
+      taskId: "task_2",
+      amount: 4,
+      requestFingerprint: "different",
+    },
+    createdAt: CREATED_AT,
+  });
+  const racingService = createCreditService(
+    new DuplicateIdempotencyRepository(
+      repo,
+      'duplicate key value violates unique constraint "credit_ledger_idempotency_key_key"',
+    ),
+  );
+
+  await assert.rejects(
+    racingService.holdCreditsForTask({
+      userId: "user_1",
+      taskId: "task_1",
+      amount: 4,
       idempotencyKey: "hold-key-1",
     }),
     (error) => hasServiceCode(error, "idempotency_conflict"),
@@ -620,6 +688,21 @@ async function createScenario(
   return { repo, service, accessCodeService };
 }
 
+function createCreditService(
+  repo: InMemoryCommercialRepository,
+  options: { nowValues?: string[] } = {},
+): CreditService {
+  const ids = new TestIds();
+  const now = new TestClock(options.nowValues ?? NOW_VALUES);
+  return new CreditService({
+    repository: repo,
+    accessCodePepper: ACCESS_CODE_PEPPER,
+    createId: (prefix = "id") => ids.create(prefix),
+    hashAccessCode: hashAccessCode,
+    now: () => now.next(),
+  });
+}
+
 function makeTask(
   overrides: Partial<CommercialSimulationTaskRecord> = {},
 ): CommercialSimulationTaskRecord {
@@ -660,5 +743,36 @@ class TestClock {
     const value = this.values[Math.min(this.index, this.values.length - 1)]!;
     this.index += 1;
     return value;
+  }
+}
+
+class DuplicateIdempotencyRepository extends InMemoryCommercialRepository {
+  holdCalls = 0;
+
+  constructor(
+    private readonly backing: InMemoryCommercialRepository,
+    private readonly duplicateMessage: string,
+  ) {
+    super();
+  }
+
+  override async holdCreditsForTask(): Promise<never> {
+    this.holdCalls += 1;
+    throw new Error(this.duplicateMessage);
+  }
+
+  override async findCreditLedgerEntryByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CreditLedgerEntryRecord | undefined> {
+    if (this.holdCalls === 0) {
+      return undefined;
+    }
+    return this.backing.findCreditLedgerEntryByIdempotencyKey(idempotencyKey);
+  }
+
+  override async getCreditAccount(
+    userId: string,
+  ): Promise<UserCreditAccountRecord | undefined> {
+    return this.backing.getCreditAccount(userId);
   }
 }

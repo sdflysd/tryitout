@@ -142,18 +142,12 @@ export class CreditService {
     });
     const existingLedger = await this.findExistingLedger(input.idempotencyKey);
     if (existingLedger !== undefined) {
-      this.assertIdempotentReplay(existingLedger, "redeem", fingerprint);
-      const account = await this.requireAccount(input.userId);
-      const redemption = await this.repository.findAccessCodeRedemptionByCodeId(
+      return this.returnExistingRedeem(
+        existingLedger,
+        input.userId,
         code.id,
+        fingerprint,
       );
-      if (!redemption || redemption.userId !== input.userId) {
-        throw new CreditServiceError(
-          "idempotency_conflict",
-          "Idempotency key conflicts with a different request",
-        );
-      }
-      return { account, ledger: existingLedger, redemption };
     }
     const nowDate = this.currentDate();
     this.assertRedeemable(code, nowDate);
@@ -190,15 +184,22 @@ export class CreditService {
       metadata: input.metadata ?? {},
     };
 
-    const redeemed = await this.repository.redeemAccessCodeWithCreditLedger(
-      {
-        ...code,
-        status: "redeemed",
-        redeemedByUserId: input.userId,
-        redeemedAt: nowIso,
-      },
-      redemption,
-      ledger,
+    const redeemed = await this.writeRedeemWithIdempotencyRecovery(
+      input.idempotencyKey,
+      input.userId,
+      code.id,
+      fingerprint,
+      async () =>
+        this.repository.redeemAccessCodeWithCreditLedger(
+          {
+            ...code,
+            status: "redeemed",
+            redeemedByUserId: input.userId,
+            redeemedAt: nowIso,
+          },
+          redemption,
+          ledger,
+        ),
     );
     if (!redeemed) {
       throw new CreditServiceError(
@@ -253,11 +254,17 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const stored = await this.repository.holdCreditsForTask({
-      ledgerEntry: ledger,
-      amount: input.amount,
-      taskUpdatedAt: nowIso,
-    });
+    const stored = await this.writeWithIdempotencyRecovery(
+      input.idempotencyKey,
+      "hold",
+      fingerprint,
+      async () =>
+        this.repository.holdCreditsForTask({
+          ledgerEntry: ledger,
+          amount: input.amount,
+          taskUpdatedAt: nowIso,
+        }),
+    );
     if (stored !== undefined) {
       return stored;
     }
@@ -320,11 +327,17 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const stored = await this.repository.captureHeldCredits({
-      ledgerEntry: ledger,
-      holdLedgerId: hold.id,
-      amount,
-    });
+    const stored = await this.writeWithIdempotencyRecovery(
+      input.idempotencyKey,
+      "capture",
+      fingerprint,
+      async () =>
+        this.repository.captureHeldCredits({
+          ledgerEntry: ledger,
+          holdLedgerId: hold.id,
+          amount,
+        }),
+    );
     if (stored !== undefined) {
       return stored;
     }
@@ -387,11 +400,17 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const stored = await this.repository.releaseHeldCredits({
-      ledgerEntry: ledger,
-      holdLedgerId: hold.id,
-      amount,
-    });
+    const stored = await this.writeWithIdempotencyRecovery(
+      input.idempotencyKey,
+      "release",
+      fingerprint,
+      async () =>
+        this.repository.releaseHeldCredits({
+          ledgerEntry: ledger,
+          holdLedgerId: hold.id,
+          amount,
+        }),
+    );
     if (stored !== undefined) {
       return stored;
     }
@@ -466,12 +485,18 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const stored = await this.repository.refundCapturedCreditsWithAudit({
-      ledgerEntry: ledger,
-      captureLedgerId: capture.id,
-      amount,
-      auditLog,
-    });
+    const stored = await this.writeWithIdempotencyRecovery(
+      input.idempotencyKey,
+      "refund",
+      fingerprint,
+      async () =>
+        this.repository.refundCapturedCreditsWithAudit({
+          ledgerEntry: ledger,
+          captureLedgerId: capture.id,
+          amount,
+          auditLog,
+        }),
+    );
     if (stored !== undefined) {
       return stored;
     }
@@ -544,11 +569,17 @@ export class CreditService {
       createdAt: nowIso,
     };
 
-    const stored = await this.repository.adjustCreditsWithAudit({
-      ledgerEntry: ledger,
-      amount: input.amount,
-      auditLog,
-    });
+    const stored = await this.writeWithIdempotencyRecovery(
+      input.idempotencyKey,
+      "adjustment",
+      fingerprint,
+      async () =>
+        this.repository.adjustCreditsWithAudit({
+          ledgerEntry: ledger,
+          amount: input.amount,
+          auditLog,
+        }),
+    );
     if (stored !== undefined) {
       return stored;
     }
@@ -567,6 +598,76 @@ export class CreditService {
 
     this.assertIdempotentReplay(ledger, entryType, fingerprint);
     return { account: await this.requireAccount(ledger.userId), ledger };
+  }
+
+  private async returnExistingRedeem(
+    ledger: CreditLedgerEntryRecord,
+    userId: string,
+    accessCodeId: string,
+    fingerprint: string,
+  ): Promise<RedeemAccessCodeResult> {
+    this.assertIdempotentReplay(ledger, "redeem", fingerprint);
+    const account = await this.requireAccount(userId);
+    const redemption = await this.repository.findAccessCodeRedemptionByCodeId(
+      accessCodeId,
+    );
+    if (!redemption || redemption.userId !== userId) {
+      throw new CreditServiceError(
+        "idempotency_conflict",
+        "Idempotency key conflicts with a different request",
+      );
+    }
+    return { account, ledger, redemption };
+  }
+
+  private async writeRedeemWithIdempotencyRecovery(
+    idempotencyKey: string,
+    userId: string,
+    accessCodeId: string,
+    fingerprint: string,
+    write: () => Promise<RedeemAccessCodeResult | undefined>,
+  ): Promise<RedeemAccessCodeResult | undefined> {
+    try {
+      return await write();
+    } catch (error) {
+      if (!isDuplicateIdempotencyError(error)) {
+        throw error;
+      }
+      const existing = await this.findExistingLedger(idempotencyKey);
+      if (existing !== undefined) {
+        return this.returnExistingRedeem(
+          existing,
+          userId,
+          accessCodeId,
+          fingerprint,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async writeWithIdempotencyRecovery<T extends CreditTransitionResult | undefined>(
+    idempotencyKey: string,
+    entryType: CreditLedgerEntryRecord["entryType"],
+    fingerprint: string,
+    write: () => Promise<T>,
+  ): Promise<T | CreditTransitionResult> {
+    try {
+      return await write();
+    } catch (error) {
+      if (!isDuplicateIdempotencyError(error)) {
+        throw error;
+      }
+      const existing = await this.returnExistingTransition(
+        idempotencyKey,
+        entryType,
+        fingerprint,
+      );
+      if (existing !== undefined) {
+        return existing;
+      }
+      throw error;
+    }
   }
 
   private async findExistingLedger(
@@ -881,4 +982,43 @@ function sortJsonObject(value: unknown): unknown {
 
 function isPlainJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDuplicateIdempotencyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const lowerMessage = message.toLowerCase();
+  const code = isObjectWithStringProperty(error, "code")
+    ? error.code.toLowerCase()
+    : undefined;
+  const constraint = isObjectWithStringProperty(error, "constraint")
+    ? error.constraint.toLowerCase()
+    : undefined;
+
+  const constraintNamesCreditLedgerIdempotency =
+    constraint?.includes("credit_ledger") === true &&
+    constraint.includes("idempotency");
+  const postgresUniqueIdempotency =
+    code === "23505" &&
+    (lowerMessage.includes("idempotency") ||
+      constraint?.includes("idempotency") === true);
+
+  return (
+    lowerMessage.includes("credit_ledger.idempotencykey") ||
+    lowerMessage.includes("credit_ledger_idempotency") ||
+    lowerMessage.includes("idempotency_key") ||
+    constraintNamesCreditLedgerIdempotency ||
+    postgresUniqueIdempotency
+  );
+}
+
+function isObjectWithStringProperty<T extends string>(
+  value: unknown,
+  property: T,
+): value is Record<T, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    property in value &&
+    typeof (value as Record<T, unknown>)[property] === "string"
+  );
 }
