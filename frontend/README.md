@@ -31,11 +31,20 @@ Supported provider modes:
 
 ```bash
 npm run dev      # Start the local app server
+npm run worker   # Start the commercial worker entrypoint
 npm run lint     # Type-check
 npm test         # Run tests
 npm run build    # Build frontend and server
 npm start        # Run built server
+npm run seed:admin             # Seed an owner/admin in commercial mode
+npm run export:access-codes    # Safely export creation-time raw access codes
 ```
+
+## Commercial Operations
+
+Commercial mode is enabled with `COMMERCIAL_MODE_ENABLED=true` and requires Postgres, Redis, session/access-code secrets, and a base64 32-byte `USER_SECRET_ENCRYPTION_KEY`.
+
+Read the production runbook before deploying paid usage: [`docs/operations/commercial-platform-runbook.md`](../docs/operations/commercial-platform-runbook.md).
 
 ## Agent Runtime
 
