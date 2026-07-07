@@ -263,3 +263,143 @@ test("repository allows updating the same id with a unique value", async () => {
     }),
   );
 });
+
+test("repository rejects duplicate primary ids on append-only records", async () => {
+  const repo = new InMemoryCommercialRepository();
+
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_1",
+    userId: "user_1",
+    entryType: "redeem",
+    amount: 10,
+    balanceAfter: 10,
+    idempotencyKey: "redeem_1",
+    createdAt: "now",
+  });
+  await assert.rejects(
+    repo.appendCreditLedgerEntry({
+      id: "ledger_1",
+      userId: "user_1",
+      entryType: "adjustment",
+      amount: 5,
+      balanceAfter: 15,
+      idempotencyKey: "adjust_1",
+      createdAt: "later",
+    }),
+    /credit_ledger\.id/,
+  );
+
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    featuresGranted: [],
+    redeemedAt: "now",
+    metadata: {},
+  });
+  await assert.rejects(
+    repo.saveAccessCodeRedemption({
+      id: "redemption_1",
+      accessCodeId: "code_2",
+      userId: "user_2",
+      credits: 10,
+      featuresGranted: [],
+      redeemedAt: "later",
+      metadata: {},
+    }),
+    /access_code_redemptions\.id/,
+  );
+
+  await repo.appendSimulationTaskRun({
+    id: "run_1",
+    taskId: "task_1",
+    status: "running",
+    startedAt: "now",
+  });
+  await assert.rejects(
+    repo.appendSimulationTaskRun({
+      id: "run_1",
+      taskId: "task_1",
+      status: "completed",
+      startedAt: "later",
+      completedAt: "later",
+    }),
+    /simulation_task_runs\.id/,
+  );
+
+  await repo.appendSimulationStepRunCost({
+    id: "step_1",
+    taskId: "task_1",
+    stepName: "generate_report",
+    status: "started",
+    startedAt: "now",
+  });
+  await assert.rejects(
+    repo.appendSimulationStepRunCost({
+      id: "step_1",
+      taskId: "task_1",
+      stepName: "generate_report",
+      status: "completed",
+      startedAt: "later",
+      completedAt: "later",
+    }),
+    /simulation_step_runs\.id/,
+  );
+
+  await repo.appendAnalyticsEvent({
+    id: "event_1",
+    eventType: "task_started",
+    properties: {},
+    occurredAt: "now",
+  });
+  await assert.rejects(
+    repo.appendAnalyticsEvent({
+      id: "event_1",
+      eventType: "task_completed",
+      properties: {},
+      occurredAt: "later",
+    }),
+    /analytics_events\.id/,
+  );
+
+  await repo.appendUserFeedback({
+    id: "feedback_1",
+    userId: "user_1",
+    rating: 5,
+    metadata: {},
+    createdAt: "now",
+  });
+  await assert.rejects(
+    repo.appendUserFeedback({
+      id: "feedback_1",
+      userId: "user_1",
+      rating: 1,
+      metadata: {},
+      createdAt: "later",
+    }),
+    /user_feedback\.id/,
+  );
+
+  await repo.appendAdminAuditLog({
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "user_credit_adjusted",
+    targetType: "user",
+    targetId: "user_1",
+    metadata: {},
+    createdAt: "now",
+  });
+  await assert.rejects(
+    repo.appendAdminAuditLog({
+      id: "audit_1",
+      actorUserId: "admin_1",
+      action: "task_cancelled",
+      targetType: "task",
+      targetId: "task_1",
+      metadata: {},
+      createdAt: "later",
+    }),
+    /admin_audit_logs\.id/,
+  );
+});

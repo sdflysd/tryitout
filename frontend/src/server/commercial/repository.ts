@@ -157,7 +157,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       (existing) => existing.idempotencyKey === entry.idempotencyKey,
       "credit_ledger.idempotencyKey",
     );
-    upsertById(this.creditLedger, entry);
+    appendById(this.creditLedger, entry, "credit_ledger.id");
   }
 
   async findCreditLedgerEntryByIdempotencyKey(
@@ -205,7 +205,11 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       (existing) => existing.accessCodeId === redemption.accessCodeId,
       "access_code_redemptions.accessCodeId",
     );
-    upsertById(this.accessCodeRedemptions, redemption);
+    appendById(
+      this.accessCodeRedemptions,
+      redemption,
+      "access_code_redemptions.id",
+    );
   }
 
   async findAccessCodeRedemptionByCodeId(
@@ -237,7 +241,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async appendSimulationTaskRun(run: SimulationTaskRunRecord): Promise<void> {
-    upsertById(this.taskRuns, run);
+    appendById(this.taskRuns, run, "simulation_task_runs.id");
   }
 
   async listSimulationTaskRuns(
@@ -249,7 +253,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   async appendSimulationStepRunCost(
     run: SimulationStepRunCostRecord,
   ): Promise<void> {
-    upsertById(this.stepRunCosts, run);
+    appendById(this.stepRunCosts, run, "simulation_step_runs.id");
   }
 
   async listSimulationStepRunCosts(
@@ -277,7 +281,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async appendAnalyticsEvent(event: AnalyticsEventRecord): Promise<void> {
-    upsertById(this.analyticsEvents, event);
+    appendById(this.analyticsEvents, event, "analytics_events.id");
   }
 
   async listAnalyticsEvents(): Promise<AnalyticsEventRecord[]> {
@@ -285,7 +289,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async appendUserFeedback(feedback: UserFeedbackRecord): Promise<void> {
-    upsertById(this.feedback, feedback);
+    appendById(this.feedback, feedback, "user_feedback.id");
   }
 
   async listUserFeedback(userId?: string): Promise<UserFeedbackRecord[]> {
@@ -327,7 +331,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async appendAdminAuditLog(log: AdminAuditLogRecord): Promise<void> {
-    upsertById(this.auditLogs, log);
+    appendById(this.auditLogs, log, "admin_audit_logs.id");
   }
 
   async listAdminAuditLogs(): Promise<AdminAuditLogRecord[]> {
@@ -347,6 +351,18 @@ function upsertById<T extends { id: string }>(items: T[], item: T): void {
   }
 
   items[index] = item;
+}
+
+function appendById<T extends { id: string }>(
+  items: T[],
+  item: T,
+  constraintName: string,
+): void {
+  if (items.some((existing) => existing.id === item.id)) {
+    throw new Error(`${constraintName} must be unique`);
+  }
+
+  items.push(item);
 }
 
 function assertUniqueById<T extends { id: string }>(
