@@ -160,7 +160,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
     await this.client.query(
       `INSERT INTO users (
         id, email, password_hash, tier, features, is_admin, disabled_at, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
       ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         password_hash = EXCLUDED.password_hash,
@@ -174,7 +174,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         user.email,
         user.passwordHash,
         user.tier,
-        user.features,
+        JSON.stringify(user.features),
         user.isAdmin,
         user.disabledAt ?? null,
         user.createdAt,
@@ -299,7 +299,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `INSERT INTO access_codes (
         id, code_hash, masked_code, status, credit_amount, tier, features, expires_at,
         redeemed_by_user_id, redeemed_at, disabled_at, created_by_admin_user_id, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (id) DO UPDATE SET
         status = EXCLUDED.status,
         redeemed_by_user_id = EXCLUDED.redeemed_by_user_id,
@@ -313,7 +313,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         accessCode.status,
         accessCode.creditAmount,
         accessCode.tier,
-        accessCode.features,
+        JSON.stringify(accessCode.features),
         accessCode.expiresAt ?? null,
         accessCode.redeemedByUserId ?? null,
         accessCode.redeemedAt ?? null,

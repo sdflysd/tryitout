@@ -37,17 +37,53 @@ test("saveUser performs an upsert with expected params", async () => {
   });
 
   assert.match(client.calls[0].sql, /INSERT INTO users/i);
+  assert.match(client.calls[0].sql, /\$5::jsonb/i);
   assert.match(client.calls[0].sql, /ON CONFLICT \(id\) DO UPDATE/i);
   assert.deepEqual(client.calls[0].params, [
     "user_1",
     "founder@tryitout.ai",
     "hash",
     "pro",
-    ["custom_model_provider"],
+    JSON.stringify(["custom_model_provider"]),
     true,
     null,
     now,
     now,
+  ]);
+});
+
+test("saveAccessCode serializes feature arrays as jsonb", async () => {
+  const client = new FakeQueryClient();
+  const repository = new PostgresCommercialRepository(client);
+
+  await repository.saveAccessCode({
+    id: "code_1",
+    codeHash: "hash",
+    maskedCode: "TIO-****-2026",
+    status: "active",
+    creditAmount: 30,
+    tier: "pro",
+    features: ["custom_model_provider"],
+    expiresAt: undefined,
+    redeemedByUserId: undefined,
+    redeemedAt: undefined,
+    disabledAt: undefined,
+    createdByAdminUserId: "admin_1",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  assert.match(client.calls[0].sql, /INSERT INTO access_codes/i);
+  assert.match(client.calls[0].sql, /\$7::jsonb/i);
+  assert.deepEqual(client.calls[0].params?.slice(0, 8), [
+    "code_1",
+    "hash",
+    "TIO-****-2026",
+    "active",
+    30,
+    "pro",
+    JSON.stringify(["custom_model_provider"]),
+    null,
   ]);
 });
 
