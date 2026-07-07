@@ -207,3 +207,23 @@ test("deep mode toggle explains unavailable server capability", () => {
   assert.match(html, /服务端未启用深度 Agent 模式/);
   assert.match(html, /disabled=""/);
 });
+
+test("commercial mode shows the credit cost and disables start when credits are insufficient", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      commercialMode
+      requiredCredits={3}
+      availableCredits={1}
+    />,
+  );
+
+  assert.match(html, /Cost: 3 credits/);
+  assert.match(html, /Available: 1/);
+  assert.match(html, /Insufficient credits/);
+  assert.match(html, /btn-trigger-simulation[^>]*disabled=""/);
+});

@@ -38,6 +38,78 @@ test("createSimulationTask posts to durable task endpoint", async () => {
   assert.equal((calls[0] as { init: RequestInit }).init.method, "POST");
 });
 
+test("createSimulationTask sends commercial credentials and idempotency metadata when provided", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init ?? {} });
+    return new Response(
+      JSON.stringify({
+        task: {
+          id: "commercial_task_1",
+          userId: "user_1",
+          scenarioType: "side_hustle",
+          interactionMode: "enabled",
+          providerMode: "platform",
+          status: "queued",
+          creditCost: 3,
+          idempotencyKey: "simulation_request_1",
+          createdAt: "2026-07-07T00:00:00.000Z",
+          updatedAt: "2026-07-07T00:00:00.000Z",
+        },
+        account: {
+          userId: "user_1",
+          balance: 7,
+          frozenCredits: 3,
+          totalRedeemed: 10,
+          totalCaptured: 0,
+          updatedAt: "2026-07-07T00:00:00.000Z",
+        },
+        holdLedger: {
+          id: "ledger_1",
+          userId: "user_1",
+          taskId: "commercial_task_1",
+          entryType: "hold",
+          amount: -3,
+          balanceAfter: 7,
+          frozenAfter: 3,
+          idempotencyKey: "simulation_request_1:hold",
+          createdAt: "2026-07-07T00:00:00.000Z",
+        },
+      }),
+      { status: 202 },
+    );
+  };
+
+  const result = await createSimulationTask(
+    {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "AI 简历优化",
+      },
+      interactionMode: "enabled",
+      providerMode: "platform",
+      idempotencyKey: "simulation_request_1",
+      priority: 7,
+      queueWeight: 2,
+    },
+    fetchImpl as typeof fetch,
+  );
+
+  assert.equal(result.simulationId, "commercial_task_1");
+  assert.equal(calls[0]?.init.credentials, "include");
+  assert.deepEqual(JSON.parse(calls[0]?.init.body as string), {
+    userInput: {
+      type: "side_hustle",
+      projectIdea: "AI 简历优化",
+    },
+    interactionMode: "enabled",
+    providerMode: "platform",
+    idempotencyKey: "simulation_request_1",
+    priority: 7,
+    queueWeight: 2,
+  });
+});
+
 test("getSimulationTaskStatus fetches status endpoint", async () => {
   const fetchImpl = async () =>
     new Response(
@@ -55,6 +127,67 @@ test("getSimulationTaskStatus fetches status endpoint", async () => {
 
   const result = await getSimulationTaskStatus("sim_1", fetchImpl as typeof fetch);
   assert.equal(result.progressPercent, 50);
+});
+
+test("getSimulationTaskStatus normalizes commercial task status responses", async () => {
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        task: {
+          id: "commercial_task_1",
+          userId: "user_1",
+          scenarioType: "life_choice",
+          interactionMode: "enabled",
+          providerMode: "platform",
+          status: "running",
+          creditCost: 3,
+          createdAt: "2026-07-07T00:00:00.000Z",
+          updatedAt: "2026-07-07T00:05:00.000Z",
+        },
+      }),
+      { status: 200 },
+    );
+
+  const result = await getSimulationTaskStatus("commercial_task_1", fetchImpl as typeof fetch);
+
+  assert.deepEqual(result, {
+    simulationId: "commercial_task_1",
+    scenarioType: "life_choice",
+    mode: "enabled",
+    status: "running",
+    progressPercent: 50,
+    recoverable: false,
+    updatedAt: "2026-07-07T00:05:00.000Z",
+  });
+}
+);
+
+test("getSimulationTaskReport normalizes commercial report responses", async () => {
+  const report = makeReport("commercial_task_1");
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        report: {
+          id: "report_1",
+          taskId: "commercial_task_1",
+          userId: "user_1",
+          publicReport: report,
+          unlocked: true,
+          createdAt: "2026-07-07T00:10:00.000Z",
+          updatedAt: "2026-07-07T00:10:00.000Z",
+        },
+      }),
+      { status: 200 },
+    );
+
+  const result = await getSimulationTaskReport(
+    "commercial_task_1",
+    fetchImpl as typeof fetch,
+  );
+
+  assert.equal(result.simulationId, "commercial_task_1");
+  assert.equal(result.status, "completed");
+  assert.equal(result.report?.id, "commercial_task_1");
 });
 
 test("resume, cancel, and report clients call durable task endpoints", async () => {

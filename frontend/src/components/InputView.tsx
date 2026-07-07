@@ -39,6 +39,10 @@ interface InputViewProps {
   onDeepAgentModeChange?: (enabled: boolean) => void;
   runtimeCapabilities?: AgentRuntimeCapabilities;
   language?: Language;
+  commercialMode?: boolean;
+  requiredCredits?: number;
+  availableCredits?: number;
+  frozenCredits?: number;
 }
 
 interface InputViewInitialState {
@@ -489,6 +493,10 @@ export default function InputView({
   onDeepAgentModeChange,
   runtimeCapabilities,
   language = DEFAULT_LANGUAGE,
+  commercialMode = false,
+  requiredCredits = 0,
+  availableCredits = 0,
+  frozenCredits = 0,
 }: InputViewProps) {
   // Side Hustle States
   const [projectIdea, setProjectIdea] = useState("");
@@ -530,6 +538,8 @@ export default function InputView({
     ? getDeepModeDisabledCopy(runtimeCapabilities.reason, language)
     : deepModeCopy.description;
   const privacySafetyCopy = getPrivacySafetyCopy(language);
+  const insufficientCredits =
+    commercialMode && requiredCredits > 0 && availableCredits < requiredCredits;
 
   useEffect(() => {
     if (!initialInput) return;
@@ -700,6 +710,14 @@ export default function InputView({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (insufficientCredits) {
+      setError(isEnglish
+        ? "Insufficient credits. Redeem an access code or ask support to top up before starting this simulation."
+        : "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
 
     if (simulationType === "side_hustle") {
       if (!projectIdea || projectIdea.trim().length < 15) {
@@ -1647,6 +1665,25 @@ export default function InputView({
 
         {/* Submit Action */}
         <div id="form-actions" className="pt-4 space-y-4">
+          {commercialMode && (
+            <div className={`flex flex-col gap-2 border p-3 text-xs sm:flex-row sm:items-center sm:justify-between ${
+              insufficientCredits
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em]">
+                  Commercial credits
+                </span>
+                <span className="font-black">Cost: {requiredCredits} credits</span>
+              </div>
+              <div className="flex flex-wrap gap-3 font-mono text-[11px] font-bold">
+                <span>Available: {availableCredits}</span>
+                <span>Frozen: {frozenCredits}</span>
+                {insufficientCredits && <span>Insufficient credits</span>}
+              </div>
+            </div>
+          )}
           <label className="flex items-start gap-3 bg-gray-50 border border-gray-150 rounded-2xl p-4 cursor-pointer">
             <input
               type="checkbox"
@@ -1663,9 +1700,9 @@ export default function InputView({
           <button
             id="btn-trigger-simulation"
             type="submit"
-            disabled={isGenerating}
+            disabled={isGenerating || insufficientCredits}
             className={`w-full inline-flex items-center justify-center gap-2.5 text-white font-bold px-8 py-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-155 active:scale-98 cursor-pointer text-base ${
-              isGenerating ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
+              isGenerating || insufficientCredits ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
             }`}
           >
             <Play className="w-5 h-5 fill-white" />

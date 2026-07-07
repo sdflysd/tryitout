@@ -27,6 +27,15 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
+test("app shell reserves a commercial account panel without replacing demo flow", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(<App />);
+
+  assert.match(html, /account-panel/);
+  assert.match(html, /Commercial account/);
+  assert.match(html, /Multi-Agent Sandbox/);
+});
+
 test("admin path renders the commercial admin shell", async () => {
   const { default: App } = await import("./App.js");
   const originalLocation = globalThis.location;

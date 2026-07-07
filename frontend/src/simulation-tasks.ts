@@ -14,31 +14,42 @@ export async function createSimulationTask(
   request: CreateSimulationTaskRequest,
   fetchImpl: typeof fetch = fetch,
 ): Promise<CreateSimulationTaskResponse> {
-  return readJsonResponse(
+  const body = await readJsonResponse<unknown>(
     await fetchImpl("/api/simulation-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(request),
     }),
   );
+
+  return normalizeCreateSimulationTaskResponse(body);
 }
 
 export async function getSimulationTaskStatus(
   simulationId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SimulationTaskStatusResponse> {
-  return readJsonResponse(
-    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/status`),
+  const body = await readJsonResponse<unknown>(
+    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/status`, {
+      credentials: "include",
+    }),
   );
+
+  return normalizeSimulationTaskStatusResponse(body);
 }
 
 export async function getSimulationTaskReport(
   simulationId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SimulationReportResponse> {
-  return readJsonResponse(
-    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/report`),
+  const body = await readJsonResponse<unknown>(
+    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/report`, {
+      credentials: "include",
+    }),
   );
+
+  return normalizeSimulationReportResponse(simulationId, body);
 }
 
 export async function resumeSimulationTask(
@@ -48,6 +59,7 @@ export async function resumeSimulationTask(
   return readJsonResponse(
     await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/resume`, {
       method: "POST",
+      credentials: "include",
     }),
   );
 }
@@ -59,6 +71,7 @@ export async function cancelSimulationTask(
   return readJsonResponse(
     await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}/cancel`, {
       method: "POST",
+      credentials: "include",
     }),
   );
 }
@@ -202,4 +215,114 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 
   return body as T;
+}
+
+function normalizeCreateSimulationTaskResponse(
+  body: unknown,
+): CreateSimulationTaskResponse {
+  if (isObject(body) && typeof body.simulationId === "string") {
+    return body as unknown as CreateSimulationTaskResponse;
+  }
+  const task = isObject(body) && isObject(body.task) ? body.task : undefined;
+  if (task && typeof task.id === "string") {
+    return {
+      simulationId: task.id,
+      status: normalizeTaskStatus(task.status),
+    };
+  }
+
+  return body as CreateSimulationTaskResponse;
+}
+
+function normalizeSimulationTaskStatusResponse(
+  body: unknown,
+): SimulationTaskStatusResponse {
+  if (isObject(body) && typeof body.simulationId === "string") {
+    return body as unknown as SimulationTaskStatusResponse;
+  }
+  const task = isObject(body) && isObject(body.task) ? body.task : undefined;
+  if (task && typeof task.id === "string") {
+    return {
+      simulationId: task.id,
+      scenarioType: normalizeScenarioType(task.scenarioType),
+      mode: task.interactionMode === "enabled" ? "enabled" : "legacy",
+      status: normalizeTaskStatus(task.status),
+      progressPercent: getCommercialTaskProgressPercent(task.status),
+      recoverable: false,
+      ...(typeof task.errorCode === "string" ? { errorCode: task.errorCode } : {}),
+      updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : new Date().toISOString(),
+    };
+  }
+
+  return body as SimulationTaskStatusResponse;
+}
+
+function normalizeSimulationReportResponse(
+  simulationId: string,
+  body: unknown,
+): SimulationReportResponse {
+  if (isObject(body) && typeof body.simulationId === "string") {
+    return body as unknown as SimulationReportResponse;
+  }
+  const report = isObject(body) && isObject(body.report) ? body.report : undefined;
+  if (report && typeof report.taskId === "string") {
+    const publicReport = report.publicReport;
+    if (publicReport !== undefined) {
+      return {
+        simulationId: report.taskId,
+        status: "completed",
+        report: publicReport as SimulationApiResponse,
+      };
+    }
+    return {
+      simulationId: report.taskId,
+      status: "failed",
+      error: "simulation report not ready",
+    };
+  }
+
+  return body as SimulationReportResponse;
+}
+
+function normalizeScenarioType(value: unknown): SimulationTaskStatusResponse["scenarioType"] {
+  return value === "dating" || value === "life_choice" ? value : "side_hustle";
+}
+
+function normalizeTaskStatus(value: unknown): CreateSimulationTaskResponse["status"] {
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "paused" ||
+    value === "recoverable_failed" ||
+    value === "failed" ||
+    value === "completed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  if (value === "refunded") {
+    return "cancelled";
+  }
+
+  return "queued";
+}
+
+function getCommercialTaskProgressPercent(status: unknown): number {
+  switch (status) {
+    case "queued":
+      return 5;
+    case "running":
+      return 50;
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "refunded":
+      return 100;
+    default:
+      return 0;
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

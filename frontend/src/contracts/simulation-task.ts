@@ -5,6 +5,7 @@ import type {
   SimulationType,
   UserInput,
 } from "../types.js";
+import type { ProviderMode } from "./commercial.js";
 
 export const SIMULATION_TASK_STATUSES = [
   "queued",
@@ -22,6 +23,10 @@ export type SimulationExecutionMode = InteractionMode;
 export interface CreateSimulationTaskRequest {
   userInput: UserInput;
   interactionMode?: SimulationExecutionMode;
+  providerMode?: ProviderMode;
+  priority?: number;
+  queueWeight?: number;
+  idempotencyKey?: string;
 }
 
 export interface CreateSimulationTaskResponse {

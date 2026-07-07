@@ -3,7 +3,22 @@ import { motion, AnimatePresence } from "motion/react";
 import { Flame, Sparkles } from "lucide-react";
 import AdminApp from "./admin/AdminApp";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
+import {
+  CommercialClientError,
+  fetchCommercialCredits,
+  fetchCommercialMe,
+  loginCommercialUser,
+  logoutCommercialUser,
+  redeemAccessCode,
+  registerCommercialUser,
+  type CommercialCreditAccountDto,
+  type CommercialCredentialsDto,
+  type CommercialUserDto,
+  type RedeemAccessCodeInputDto,
+} from "./commercial-client";
+import { getSimulationCreditCost } from "./contracts/commercial";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
+import AccountPanel from "./components/AccountPanel";
 import HomeView from "./components/HomeView";
 import InputView from "./components/InputView";
 import SimulationProgress from "./components/SimulationProgress";
@@ -97,6 +112,20 @@ export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidat
   };
 }
 
+export function buildCommercialTaskIdempotencyKey(now = Date.now()): string {
+  const random =
+    globalThis.crypto?.randomUUID?.() ??
+    Math.random().toString(36).slice(2, 12);
+  return `simulation_${now}_${random}`;
+}
+
+function getCommercialErrorMessage(error: unknown): string {
+  if (error instanceof CommercialClientError) {
+    return error.message;
+  }
+  return error instanceof Error ? error.message : "Commercial account request failed.";
+}
+
 export default function App() {
   if (globalThis.location?.pathname.startsWith("/admin")) {
     return <AdminApp />;
@@ -116,6 +145,14 @@ export default function App() {
   const [deepAgentMode, setDeepAgentMode] = useState(false);
   const [deepModeNotice, setDeepModeNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<AgentRuntimeCapabilities | undefined>(undefined);
+  const [commercialUser, setCommercialUser] = useState<CommercialUserDto | undefined>(undefined);
+  const [commercialAccount, setCommercialAccount] = useState<CommercialCreditAccountDto | undefined>(undefined);
+  const [commercialAvailable, setCommercialAvailable] = useState(
+    () => typeof globalThis.window === "undefined",
+  );
+  const [commercialBusy, setCommercialBusy] = useState(false);
+  const [commercialStatus, setCommercialStatus] = useState("");
+  const [commercialError, setCommercialError] = useState("");
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
@@ -166,6 +203,45 @@ export default function App() {
     };
   }, []);
 
+  const refreshCommercialAccount = async () => {
+    const me = await fetchCommercialMe();
+    const credits = await fetchCommercialCredits();
+    setCommercialAvailable(true);
+    setCommercialUser(me.user);
+    setCommercialAccount(credits.account);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCommercialMe()
+      .then(async (me) => {
+        if (cancelled) return;
+        setCommercialAvailable(true);
+        setCommercialUser(me.user);
+        const credits = await fetchCommercialCredits();
+        if (cancelled) return;
+        setCommercialAccount(credits.account);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error instanceof CommercialClientError && error.status === 404) {
+          setCommercialAvailable(false);
+          return;
+        }
+        if (error instanceof CommercialClientError && error.status === 401) {
+          setCommercialAvailable(true);
+          setCommercialUser(undefined);
+          setCommercialAccount(undefined);
+          return;
+        }
+        setCommercialAvailable(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Save to history helper
   const saveToHistory = (newSim: Simulation) => {
     try {
@@ -199,6 +275,25 @@ export default function App() {
     scrollToTopForViewChange();
     const startedAt = Date.now();
     const deepModeRequested = deepAgentMode;
+    const interactionMode = deepModeRequested ? "enabled" : "legacy";
+    const requiredCredits = getSimulationCreditCost({
+      interactionMode,
+      providerMode: "platform",
+    });
+    if (commercialAvailable && commercialUser === undefined) {
+      setErrorMsg("请先登录商业账号或注册后再启动付费推演。");
+      setIsGenerating(false);
+      setView("input");
+      scrollToTopForViewChange();
+      return;
+    }
+    if (commercialAvailable && (commercialAccount?.balance ?? 0) < requiredCredits) {
+      setErrorMsg("当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。");
+      setIsGenerating(false);
+      setView("input");
+      scrollToTopForViewChange();
+      return;
+    }
     setActiveSimulationRequest({
       userInput,
       deepModeRequested,
@@ -219,11 +314,20 @@ export default function App() {
 
     try {
       const data = await runSimulationTaskUntilComplete(
-        buildSimulationRequestBody(userInput, { deepAgentMode: deepModeRequested }),
+        {
+          ...buildSimulationRequestBody(userInput, { deepAgentMode: deepModeRequested }),
+          providerMode: "platform" as const,
+          idempotencyKey: buildCommercialTaskIdempotencyKey(startedAt),
+        },
         {
           onProgress: setProgressEvent,
         },
       );
+      if (commercialUser) {
+        void fetchCommercialCredits()
+          .then(({ account }) => setCommercialAccount(account))
+          .catch(() => undefined);
+      }
       handleSimulationCompleted(data, userInput, {
         startedAt,
         deepModeRequested,
@@ -393,6 +497,67 @@ export default function App() {
     void handleStartSimulation(input);
   };
 
+  const handleCommercialLogin = async (input: CommercialCredentialsDto) => {
+    setCommercialBusy(true);
+    setCommercialError("");
+    setCommercialStatus("Signing in...");
+    try {
+      await loginCommercialUser(input);
+      await refreshCommercialAccount();
+      setCommercialStatus("Signed in. Credits loaded.");
+    } catch (error) {
+      setCommercialError(getCommercialErrorMessage(error));
+    } finally {
+      setCommercialBusy(false);
+    }
+  };
+
+  const handleCommercialRegister = async (input: CommercialCredentialsDto) => {
+    setCommercialBusy(true);
+    setCommercialError("");
+    setCommercialStatus("Creating account...");
+    try {
+      await registerCommercialUser(input);
+      await loginCommercialUser(input);
+      await refreshCommercialAccount();
+      setCommercialStatus("Account created. Credits loaded.");
+    } catch (error) {
+      setCommercialError(getCommercialErrorMessage(error));
+    } finally {
+      setCommercialBusy(false);
+    }
+  };
+
+  const handleCommercialLogout = async () => {
+    setCommercialBusy(true);
+    setCommercialError("");
+    try {
+      await logoutCommercialUser();
+      setCommercialUser(undefined);
+      setCommercialAccount(undefined);
+      setCommercialStatus("Signed out.");
+    } catch (error) {
+      setCommercialError(getCommercialErrorMessage(error));
+    } finally {
+      setCommercialBusy(false);
+    }
+  };
+
+  const handleCommercialRedeem = async (input: RedeemAccessCodeInputDto) => {
+    setCommercialBusy(true);
+    setCommercialError("");
+    setCommercialStatus("Redeeming access code...");
+    try {
+      const result = await redeemAccessCode(input);
+      setCommercialAccount(result.account);
+      setCommercialStatus(`Redeemed ${result.redemption.credits} credits.`);
+    } catch (error) {
+      setCommercialError(getCommercialErrorMessage(error));
+    } finally {
+      setCommercialBusy(false);
+    }
+  };
+
   const handleOpenShareCard = () => {
     if (currentSimulation) {
       void postValidationEvent(buildShareCardOpenedEvent(currentSimulation));
@@ -406,6 +571,12 @@ export default function App() {
     setView("home");
     scrollToTopForViewChange();
   };
+
+  const requiredCredits = getSimulationCreditCost({
+    interactionMode: deepAgentMode ? "enabled" : "legacy",
+    providerMode: "platform",
+  });
+  const commercialMode = commercialAvailable;
 
   return (
     <div id="app-root-container" className="min-h-screen flex flex-col bg-[#050711] text-[#f8fafc]">
@@ -447,6 +618,21 @@ export default function App() {
 
       {/* Main Container */}
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
+        {commercialAvailable && (
+          <div className="mx-auto max-w-4xl px-4 pb-4">
+            <AccountPanel
+              user={commercialUser}
+              account={commercialAccount}
+              busy={commercialBusy}
+              statusMessage={commercialStatus}
+              errorMessage={commercialError}
+              onLogin={handleCommercialLogin}
+              onRegister={handleCommercialRegister}
+              onLogout={handleCommercialLogout}
+              onRedeem={handleCommercialRedeem}
+            />
+          </div>
+        )}
         <AnimatePresence mode="wait">
           {view === "home" && (
             <motion.div
@@ -499,6 +685,10 @@ export default function App() {
                 onDeepAgentModeChange={setDeepAgentMode}
                 runtimeCapabilities={runtimeCapabilities}
                 language={language}
+                commercialMode={commercialMode}
+                requiredCredits={requiredCredits}
+                availableCredits={commercialAccount?.balance ?? 0}
+                frozenCredits={commercialAccount?.frozenCredits ?? 0}
               />
             </motion.div>
           )}
