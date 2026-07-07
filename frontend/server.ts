@@ -19,6 +19,7 @@ import {
   isCommercialModeEnabled,
   resolveCommercialSimulationRoute,
 } from "./src/server/commercial/commercial-mode-routing.js";
+import { registerCommercialAdminRoutes } from "./src/server/commercial/commercial-express-routes.js";
 import {
   createCommercialServices,
   type CommercialRuntimeServices,
@@ -251,6 +252,13 @@ app.get("/api/credits", async (req, res) => {
     sessionToken: getSessionToken(req),
   });
   sendCommercialApiResponse(res, result);
+});
+
+registerCommercialAdminRoutes({
+  app,
+  requireCommercialServices,
+  getSessionToken,
+  sendCommercialApiResponse,
 });
 
 async function runDurableCompatibilityTask(simulationId: string): Promise<void> {
