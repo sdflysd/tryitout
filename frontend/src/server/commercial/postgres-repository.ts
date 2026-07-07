@@ -124,7 +124,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           user_id, balance, frozen_credits, total_redeemed, total_captured,
           updated_at
         )
-        select $12, $13, $14, $15, $16, $17
+        select id, $12, $13, $14, $15, $16
         from inserted_user
       `,
       [
@@ -139,7 +139,6 @@ export class PostgresCommercialRepository implements CommercialRepository {
         user.lastLoginAt ?? null,
         user.createdAt,
         user.updatedAt,
-        account.userId,
         account.balance,
         account.frozenCredits,
         account.totalRedeemed,

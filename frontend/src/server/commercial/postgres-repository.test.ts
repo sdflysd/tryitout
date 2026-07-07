@@ -163,6 +163,10 @@ test("postgres repository creates user with credit account in one atomic query",
   assert.match(queries[0].sql, /with inserted_user as/i);
   assert.match(queries[0].sql, /insert into users/i);
   assert.match(queries[0].sql, /insert into user_credit_accounts/i);
+  assert.match(
+    queries[0].sql,
+    /select id, \$12, \$13, \$14, \$15, \$16\s+from inserted_user/i,
+  );
   assert.doesNotMatch(queries[0].sql, /on conflict/i);
   assert.deepEqual(queries[0].params?.slice(0, 4), [
     "user_1",
@@ -171,7 +175,6 @@ test("postgres repository creates user with credit account in one atomic query",
     "hash",
   ]);
   assert.deepEqual(queries[0].params?.slice(11), [
-    "user_1",
     0,
     0,
     0,
