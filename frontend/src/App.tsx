@@ -24,7 +24,6 @@ import InputView from "./components/InputView";
 import SimulationProgress from "./components/SimulationProgress";
 import ReportView from "./components/ReportView";
 import ShareCard from "./components/ShareCard";
-import AdminDashboard from "./components/admin/AdminDashboard";
 import {
   DEFAULT_LANGUAGE,
   LANGUAGE_STORAGE_KEY,
@@ -33,18 +32,6 @@ import {
   getNextLanguage,
   parseStoredLanguage,
 } from "./language";
-import {
-  getSimulationCreditCost,
-} from "./contracts/commercial";
-import {
-  getCommercialCredits,
-  getCommercialUser,
-  loginCommercialUser,
-  logoutCommercialUser,
-  redeemCommercialAccessCode,
-  registerCommercialUser,
-  type CommercialUser,
-} from "./commercial-client";
 import { buildSimulationRequestBody } from "./simulation-request";
 import {
   buildSimulationCompletedEvent,
@@ -66,12 +53,6 @@ import { postValidationEvent } from "./validation-events";
 import type { ClientValidationEvent } from "./validation-events";
 
 type ViewState = "home" | "input" | "generating" | "report";
-
-interface AppProps {
-  commercialMode?: boolean;
-  initialCommercialUser?: CommercialUser;
-  initialCreditBalance?: number;
-}
 
 export const HISTORY_STORAGE_KEY = "money_simulator_history";
 export const LAST_INPUT_DRAFT_STORAGE_KEY = "money_simulator_last_input_draft";
@@ -179,14 +160,6 @@ export default function App() {
   const [commercialStatus, setCommercialStatus] = useState("");
   const [commercialError, setCommercialError] = useState("");
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
-  const [commercialUser, setCommercialUser] = useState<CommercialUser | undefined>(initialCommercialUser);
-  const [creditBalance, setCreditBalance] = useState(initialCreditBalance);
-  const [commercialEmail, setCommercialEmail] = useState("");
-  const [commercialPassword, setCommercialPassword] = useState("");
-  const [accessCode, setAccessCode] = useState("");
-  const [commercialMessage, setCommercialMessage] = useState("");
-  const [commercialAuthMode, setCommercialAuthMode] = useState<"login" | "register">("login");
-  const [showCommercialAuth, setShowCommercialAuth] = useState(false);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
     deepModeRequested: boolean;
@@ -212,27 +185,6 @@ export default function App() {
       console.error("Failed to load history from localStorage:", e);
     }
   }, []);
-
-  useEffect(() => {
-    if (!commercialMode) return;
-
-    let cancelled = false;
-    void refreshCommercialAccount()
-      .catch(() => undefined);
-
-    async function refreshCommercialAccount() {
-      const userResult = await getCommercialUser();
-      if (cancelled) return;
-      setCommercialUser(userResult.user);
-      const credits = await getCommercialCredits();
-      if (cancelled) return;
-      setCreditBalance(credits.balance);
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [commercialMode]);
 
   useEffect(() => {
     try {
@@ -546,16 +498,6 @@ export default function App() {
   };
 
   const handleSubmitSimulation = (input: UserInput) => {
-    if (commercialMode && !commercialUser) {
-      setCommercialMessage(getCommercialLoginRequiredMessage());
-      setCommercialAuthMode("login");
-      setShowCommercialAuth(true);
-      return;
-    }
-    if (commercialMode && creditBalance < requiredCredits) {
-      setErrorMsg("insufficient_credits");
-      return;
-    }
     setSelectedType(input.type);
     setTemplateInput(input);
     void handleStartSimulation(input);
@@ -710,102 +652,7 @@ export default function App() {
         </div>
       </header>
 
-      {commercialMode && !commercialUser && showCommercialAuth && (
-        <CommercialAuthScreen
-          email={commercialEmail}
-          password={commercialPassword}
-          message={commercialMessage}
-          mode={commercialAuthMode}
-          onEmailChange={setCommercialEmail}
-          onPasswordChange={setCommercialPassword}
-          onModeChange={(mode) => {
-            setCommercialAuthMode(mode);
-            setCommercialMessage("");
-          }}
-          onSubmit={(mode) => void handleCommercialAuth(mode)}
-        />
-      )}
-
-      {commercialMode && !commercialUser && !showCommercialAuth && (
-        <section className="border-b border-white/10 bg-[#0a0f1f] px-4 py-3 text-white" aria-label="访客商用入口">
-          <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-xs font-semibold text-white/62">
-              可先浏览示例与页面；开始使用沙盘时需要登录。
-            </div>
-            <button
-              id="commercial-login-entry"
-              type="button"
-              onClick={() => {
-                setCommercialAuthMode("login");
-                setCommercialMessage("");
-                setShowCommercialAuth(true);
-              }}
-              className="inline-flex min-h-9 w-fit items-center gap-2 rounded-md border border-amber-300/30 bg-amber-300 px-3 text-xs font-black text-slate-950 transition-colors hover:bg-amber-200"
-            >
-              <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>登录</span>
-            </button>
-          </div>
-        </section>
-      )}
-
-      {commercialMode && commercialUser && (
-        <section
-          id="commercial-account-bar"
-          className="border-b border-white/10 bg-[#0a0f1f] px-4 py-3 text-white"
-          aria-label="商用账号"
-        >
-          <div className="mx-auto grid max-w-6xl gap-3 md:grid-cols-[1fr_auto] md:items-center">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-              <div className="inline-flex items-center gap-2 text-xs font-black text-white/80">
-                <WalletCards className="h-4 w-4 text-emerald-300" />
-                <span>当前账号</span>
-              </div>
-              <span className="inline-flex w-fit items-center gap-1 rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">
-                积分余额：{creditBalance}
-              </span>
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/66">
-                <span>{commercialUser.email}</span>
-                <button
-                  type="button"
-                  onClick={() => void handleCommercialLogout()}
-                  className="inline-flex min-h-9 items-center gap-1 rounded-md border border-white/12 bg-white/7 px-2 text-white/70 transition-colors hover:bg-white/12"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>退出</span>
-                </button>
-              </div>
-            </div>
-            <form onSubmit={handleRedeemAccessCode} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="inline-flex items-center gap-2 text-xs font-black text-white/72" htmlFor="commercial-access-code">
-                <KeyRound className="h-4 w-4 text-amber-300" />
-                <span>兑换码</span>
-              </label>
-              <input
-                id="commercial-access-code"
-                value={accessCode}
-                onChange={(event) => setAccessCode(event.target.value)}
-                placeholder="TIO-XXXX-XXXX-XXXX"
-                className="h-9 min-w-0 rounded-md border border-white/12 bg-white px-3 text-xs font-semibold text-slate-950 placeholder:text-slate-400"
-              />
-              <button
-                type="submit"
-                className="h-9 rounded-md bg-emerald-400 px-3 text-xs font-black text-emerald-950 transition-colors hover:bg-emerald-300"
-              >
-                兑换
-              </button>
-            </form>
-            {commercialMessage && (
-              <div className="text-xs font-semibold text-amber-100" aria-live="polite">
-                {commercialMessage}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
       {/* Main Container */}
-      {(!commercialMode || commercialUser || !showCommercialAuth) && (
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
         {authMode && (
           <CommercialAuthPage
@@ -830,26 +677,22 @@ export default function App() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
-              {commercialUser?.isAdmin ? (
-                <AdminDashboard adminEmail={commercialUser.email} />
-              ) : (
-                <HomeView
-                  onStart={(type) => {
-                    setSelectedType(type);
-                    setTemplateIdea("");
-                    setTemplateInput(undefined);
-                    setView("input");
-                    scrollToTopForViewChange();
-                  }}
-                  onSelectHistory={handleSelectHistory}
-                  historyList={historyList}
-                  onSelectTemplate={handleLoadTemplate}
-                  lastInputDraft={lastInputDraft}
-                  onContinueDraft={handleEditInput}
-                  onDeleteHistory={handleDeleteHistory}
-                  language={language}
-                />
-              )}
+              <HomeView
+                onStart={(type) => {
+                  setSelectedType(type);
+                  setTemplateIdea("");
+                  setTemplateInput(undefined);
+                  setView("input");
+                  scrollToTopForViewChange();
+                }}
+                onSelectHistory={handleSelectHistory}
+                historyList={historyList}
+                onSelectTemplate={handleLoadTemplate}
+                lastInputDraft={lastInputDraft}
+                onContinueDraft={handleEditInput}
+                onDeleteHistory={handleDeleteHistory}
+                language={language}
+              />
             </motion.div>
           )}
 
@@ -943,7 +786,6 @@ export default function App() {
           )}
         </AnimatePresence>}
       </main>
-      )}
 
       {/* Share Poster Modal Overlay */}
       <AnimatePresence>

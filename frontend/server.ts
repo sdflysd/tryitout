@@ -14,20 +14,6 @@ import {
 } from "./src/server/ai/provider-config.js";
 import { resolveAgentRuntimeCapabilities } from "./src/server/agent-runtime/capabilities.js";
 import { buildRuntimeDiagnostics } from "./src/server/agent-runtime/diagnostics.js";
-import {
-  extractCommercialSessionToken,
-  isCommercialModeEnabled,
-  resolveCommercialSimulationRoute,
-} from "./src/server/commercial/commercial-mode-routing.js";
-import { registerCommercialAdminRoutes } from "./src/server/commercial/commercial-express-routes.js";
-import {
-  createCommercialServices,
-  type CommercialRuntimeServices,
-} from "./src/server/commercial/commercial-services.js";
-import type {
-  CommercialApiCookie,
-  CommercialApiResponse,
-} from "./src/server/commercial/commercial-api.js";
 import { resolveInteractionMode } from "./src/server/interaction-mode.js";
 import { handleLifeChoiceStructureRequest } from "./src/server/life-choice-structure-api.js";
 import {
@@ -214,56 +200,6 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/agent-runtime/capabilities", (req, res) => {
   res.json(resolveAgentRuntimeCapabilities());
-});
-
-app.post("/api/auth/register", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.register({
-    body: req.body,
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-app.post("/api/auth/login", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.login({
-    body: req.body,
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-app.post("/api/auth/logout", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.logout({
-    sessionToken: getSessionToken(req),
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-app.get("/api/me", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.me({
-    sessionToken: getSessionToken(req),
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-app.post("/api/credits/redeem", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.redeemAccessCode({
-    body: req.body,
-    sessionToken: getSessionToken(req),
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-app.get("/api/credits", async (req, res) => {
-  const result = await requireCommercialServices().apiHandlers.getCredits({
-    sessionToken: getSessionToken(req),
-  });
-  sendCommercialApiResponse(res, result);
-});
-
-registerCommercialAdminRoutes({
-  app,
-  requireCommercialServices,
-  getSessionToken,
-  sendCommercialApiResponse,
 });
 
 async function runDurableCompatibilityTask(simulationId: string): Promise<void> {
@@ -487,10 +423,6 @@ app.get("/api/simulation-tasks/:id/status", async (req, res) => {
 });
 
 app.post("/api/simulation-tasks/:id/resume", async (req, res) => {
-  if (commercialModeEnabled) {
-    return res.status(410).json({ error: "commercial_retry_required" });
-  }
-
   const result = await handleResumeSimulationTaskRequest(req.params.id, {
     service: taskService,
   });
@@ -544,21 +476,6 @@ app.get("/api/simulation-tasks/:id/report", async (req, res) => {
     service: taskService,
   });
   res.status(result.status).json(result.body);
-});
-
-app.post("/api/simulation-tasks/:id/report/feedback", async (req, res) => {
-  if (!commercialModeEnabled) {
-    return res.status(410).json({ error: "commercial_feedback_required" });
-  }
-
-  const result = await requireCommercialServices().apiHandlers.handleReportFeedbackRequest({
-    body: {
-      ...(req.body as object),
-      taskId: req.params.id,
-    },
-    sessionToken: getSessionToken(req),
-  });
-  return sendCommercialApiResponse(res, result);
 });
 
 app.get("/api/admin/simulation-tasks/:id/cost-summary", async (req, res) => {

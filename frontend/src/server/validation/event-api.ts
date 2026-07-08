@@ -1,9 +1,5 @@
 import { appendValidationEvent, sanitizeValidationEvent } from "./event-store.js";
 import type { ValidationEvent } from "./event-store.js";
-import {
-  analyticsRecordToValidationEvent,
-  type AnalyticsService,
-} from "../commercial/analytics-service.js";
 
 interface Deps {
   appendEvent?: (event: unknown) => Promise<ValidationEvent>;
