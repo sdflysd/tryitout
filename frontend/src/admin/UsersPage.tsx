@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  useEffect,
   useState,
   type FormEvent,
 } from "react";
@@ -12,24 +13,31 @@ import {
 
 import {
   adjustAdminUserCredits,
+  fetchAdminUsers,
   type AdminUserRowDto,
 } from "./admin-client.js";
 
 interface UsersPageProps {
   users?: AdminUserRowDto[];
+  fetchUsers?: () => Promise<AdminUserRowDto[]>;
 }
 
 const EMPTY_USERS: AdminUserRowDto[] = [];
 
-export default function UsersPage({ users = EMPTY_USERS }: UsersPageProps) {
-  const [rows, setRows] = useState<AdminUserRowDto[]>(users);
+export default function UsersPage({
+  users,
+  fetchUsers = fetchAdminUsers,
+}: UsersPageProps) {
+  const [rows, setRows] = useState<AdminUserRowDto[]>(users ?? EMPTY_USERS);
+  const [isLoading, setIsLoading] = useState(users === undefined);
+  const [loadError, setLoadError] = useState("");
   const [adjustment, setAdjustment] = useState({
     amount: 0,
     idempotencyKey: "",
     reason: "",
   });
   const [statusMessage, setStatusMessage] = useState("");
-  const [selectedUserId, setSelectedUserId] = useState(users[0]?.id ?? "");
+  const [selectedUserId, setSelectedUserId] = useState(users?.[0]?.id ?? "");
   const selectedUser = rows.find((user) => user.id === selectedUserId) ?? rows[0];
   const activeUsers = rows.filter((user) => user.status === "active").length;
   const disabledUsers = rows.filter((user) => user.status === "disabled").length;
@@ -43,6 +51,39 @@ export default function UsersPage({ users = EMPTY_USERS }: UsersPageProps) {
     (total, user) => total + user.failedTaskCount,
     0,
   );
+
+  useEffect(() => {
+    if (users !== undefined) {
+      setRows(users);
+      setIsLoading(false);
+      setLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    void fetchUsers()
+      .then((nextUsers) => {
+        if (!cancelled) {
+          setRows(nextUsers);
+          setLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load commercial users");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchUsers, users]);
 
   const handleAdjustCredits = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -73,6 +114,12 @@ export default function UsersPage({ users = EMPTY_USERS }: UsersPageProps) {
 
   return (
     <div className="space-y-5">
+      {(isLoading || loadError) && (
+        <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
+          {isLoading ? "Loading commercial users" : loadError}
+        </section>
+      )}
+
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="User operations metrics">
         <Metric title="Active Users" value={activeUsers} detail={`${disabledUsers} disabled`} tone="emerald" />
         <Metric title="Available Credits" value={totalAvailable} detail={`${totalFrozen} frozen`} tone="cyan" />

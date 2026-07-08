@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import TasksPage from "./TasksPage.js";
+import { fetchAdminTasks } from "./admin-client.js";
 import type { AdminTaskRowDto } from "./admin-client.js";
 
 test("TasksPage renders task operations table and task detail timeline", () => {
@@ -28,6 +29,27 @@ test("TasksPage renders task operations table and task detail timeline", () => {
   ]) {
     assert.match(html, new RegExp(text));
   }
+});
+
+test("TasksPage renders a live loading state before fetched tasks arrive", () => {
+  const html = renderToStaticMarkup(
+    <TasksPage fetchTasks={async () => [makeTask()]} />,
+  );
+
+  assert.match(html, /Loading commercial tasks/);
+});
+
+test("admin client fetches task operations rows with credentials", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const tasks = await fetchAdminTasks((async (input, init) => {
+    calls.push({ input, init });
+    return jsonResponse({ tasks: [makeTask()] });
+  }) as typeof fetch);
+
+  assert.equal(tasks[0]?.id, "task_1");
+  assert.equal(tasks[0]?.workerId, "worker_a");
+  assert.equal(calls[0]?.input, "/api/admin/tasks");
+  assert.equal(calls[0]?.init?.credentials, "include");
 });
 
 function makeTask(): AdminTaskRowDto {
@@ -62,4 +84,11 @@ function makeTask(): AdminTaskRowDto {
       },
     ],
   };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }

@@ -13,14 +13,22 @@ import {
   handleCreateAdminAccessCodeBatchRequest,
   handleCreateCommercialTaskRequest,
   handleDisableAdminAccessCodeBatchRequest,
+  handleGetAdminCostSummaryRequest,
+  handleGetAdminCreditOperationsRequest,
+  handleGetAdminFeedbackRequest,
   handleGetAdminOverviewRequest,
+  handleGetAdminQueueRequest,
+  handleGetAdminSettingsRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleDeleteModelProviderRequest,
   handleGetModelProviderRequest,
+  handleListAdminAccessCodeBatchesRequest,
   handleListAdminAuditLogsRequest,
+  handleListAdminTasksRequest,
+  handleListAdminUsersRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
@@ -333,6 +341,162 @@ test("admin overview rejects non-admin sessions and returns operating metrics to
   assert.equal(overview.body.overview.users.total, 2);
   assert.equal(overview.body.overview.users.active, 2);
   assert.equal(overview.body.overview.credits.totalBalance, 0);
+});
+
+test("admin read endpoints reject non-admin sessions and return real safe operations data", async () => {
+  const deps = makeDeps();
+  const userSession = await loginUser(deps);
+  const adminSession = await loginAdmin(deps);
+  await registerUser(deps, "customer@example.test");
+  const customer = await deps.repository.findUserByEmail("customer@example.test");
+  assert.ok(customer);
+  await deps.repository.saveAccessCodeBatch({
+    id: "batch_existing",
+    createdByUserId: "user_1",
+    name: "Existing campaign",
+    source: "sales",
+    codeCount: 1,
+    credits: 7,
+    features: ["priority_queue"],
+    metadata: {},
+    createdAt: CREATED_AT,
+  });
+  await deps.repository.saveAccessCode({
+    id: "code_existing",
+    batchId: "batch_existing",
+    codeHash: "do-not-leak",
+    codeMask: "TIO-****-****-SAFE",
+    status: "active",
+    credits: 7,
+    features: ["priority_queue"],
+    createdAt: CREATED_AT,
+  });
+  await deps.repository.saveCommercialTask({
+    id: "task_admin",
+    userId: customer.id,
+    scenarioType: "life_choice",
+    interactionMode: "enabled",
+    providerMode: "platform",
+    status: "failed",
+    creditCost: 3,
+    queuedAt: CREATED_AT,
+    startedAt: "2026-07-07T00:01:00.000Z",
+    completedAt: "2026-07-07T00:02:00.000Z",
+    errorCode: "model_timeout",
+    createdAt: CREATED_AT,
+    updatedAt: "2026-07-07T00:02:00.000Z",
+  });
+  await deps.repository.saveCommercialTask({
+    id: "task_queued",
+    userId: customer.id,
+    scenarioType: "life_choice",
+    interactionMode: "enabled",
+    providerMode: "platform",
+    status: "queued",
+    creditCost: 3,
+    queuedAt: "2026-07-06T23:59:00.000Z",
+    createdAt: "2026-07-06T23:59:00.000Z",
+    updatedAt: "2026-07-06T23:59:00.000Z",
+  });
+  await deps.repository.appendSimulationTaskRun({
+    id: "run_admin",
+    taskId: "task_admin",
+    workerId: "worker_api",
+    status: "failed",
+    startedAt: "2026-07-07T00:01:00.000Z",
+    completedAt: "2026-07-07T00:02:00.000Z",
+  });
+  await deps.repository.appendSimulationStepRunCost({
+    id: "cost_admin",
+    taskRunId: "run_admin",
+    taskId: "task_admin",
+    stepName: "generate_report",
+    provider: "openai",
+    modelId: "gpt-5-mini",
+    totalTokens: 1200,
+    estimatedCost: 0.12,
+    status: "failed",
+    startedAt: "2026-07-07T00:01:10.000Z",
+  });
+  await deps.repository.appendUserFeedback({
+    id: "feedback_admin",
+    userId: customer.id,
+    taskId: "task_admin",
+    rating: 5,
+    feedbackType: "quality",
+    comment: "clear",
+    metadata: {},
+    createdAt: "2026-07-07T00:03:00.000Z",
+  });
+  await deps.repository.saveSystemSetting({
+    key: "queue.paused",
+    value: false,
+    description: "Pause commercial queue",
+    updatedByUserId: "user_1",
+    createdAt: CREATED_AT,
+    updatedAt: "2026-07-07T00:04:00.000Z",
+  });
+
+  const nonAdmin = request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: userSession } });
+  assert.equal((await handleListAdminUsersRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleListAdminAccessCodeBatchesRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleListAdminTasksRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleGetAdminCreditOperationsRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleGetAdminCostSummaryRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleGetAdminQueueRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleGetAdminFeedbackRequest(nonAdmin, deps)).status, 403);
+  assert.equal((await handleGetAdminSettingsRequest(nonAdmin, deps)).status, 403);
+
+  const adminRequest = request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession } });
+  const users = await handleListAdminUsersRequest(adminRequest, deps);
+  const batches = await handleListAdminAccessCodeBatchesRequest(adminRequest, deps);
+  const tasks = await handleListAdminTasksRequest(adminRequest, deps);
+  const credits = await handleGetAdminCreditOperationsRequest(adminRequest, deps);
+  const costs = await handleGetAdminCostSummaryRequest(adminRequest, deps);
+  const queue = await handleGetAdminQueueRequest(adminRequest, deps);
+  const feedback = await handleGetAdminFeedbackRequest(adminRequest, deps);
+  const settings = await handleGetAdminSettingsRequest(adminRequest, deps);
+
+  assert.equal(users.status, 200);
+  assert.equal("users" in users.body, true);
+  if (!("users" in users.body)) return;
+  assert.equal(users.body.users.items.some((user) => user.email === "customer@example.test"), true);
+
+  assert.equal(batches.status, 200);
+  assert.equal("batches" in batches.body, true);
+  if (!("batches" in batches.body)) return;
+  assert.equal(batches.body.batches[0]?.name, "Existing campaign");
+  assert.equal(JSON.stringify(batches.body).includes("do-not-leak"), false);
+
+  assert.equal(tasks.status, 200);
+  assert.equal("tasks" in tasks.body, true);
+  if (!("tasks" in tasks.body)) return;
+  assert.equal(tasks.body.tasks[0]?.workerId, "worker_api");
+
+  assert.equal(credits.status, 200);
+  assert.equal("credits" in credits.body, true);
+  if (!("credits" in credits.body)) return;
+  assert.equal(credits.body.credits.accounts.some((account) => account.userEmail === "customer@example.test"), true);
+
+  assert.equal(costs.status, 200);
+  assert.equal("summary" in costs.body, true);
+  if (!("summary" in costs.body)) return;
+  assert.equal(costs.body.summary.totalEstimatedCost, 0.12);
+
+  assert.equal(queue.status, 200);
+  assert.equal("queue" in queue.body, true);
+  if (!("queue" in queue.body)) return;
+  assert.equal(queue.body.queue.backlog, 1);
+
+  assert.equal(feedback.status, 200);
+  assert.equal("feedback" in feedback.body, true);
+  if (!("feedback" in feedback.body)) return;
+  assert.equal(feedback.body.feedback.summary.averageRating, 5);
+
+  assert.equal(settings.status, 200);
+  assert.equal("settings" in settings.body, true);
+  if (!("settings" in settings.body)) return;
+  assert.equal(settings.body.settings.items.find((item) => item.key === "queue.paused")?.configured, true);
 });
 
 test("admin can create a single copyable access code without exposing stored hashes", async () => {

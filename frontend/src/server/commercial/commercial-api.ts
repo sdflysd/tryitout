@@ -412,6 +412,159 @@ export async function handleGetAdminOverviewRequest(
   }
 }
 
+export async function handleListAdminUsersRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ users: Awaited<ReturnType<CommercialAdminService["listUsers"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { users: await deps.adminService.listUsers() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminAccessCodeBatchesRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ batches: Awaited<ReturnType<CommercialAdminService["listAccessCodeBatches"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { batches: await deps.adminService.listAccessCodeBatches() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminTasksRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ tasks: Awaited<ReturnType<CommercialAdminService["listTasks"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { tasks: await deps.adminService.listTasks() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleGetAdminCreditOperationsRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ credits: Awaited<ReturnType<CommercialAdminService["getCreditOperations"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { credits: await deps.adminService.getCreditOperations() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleGetAdminCostSummaryRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ summary: Awaited<ReturnType<CommercialAdminService["getCostSummary"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { summary: await deps.adminService.getCostSummary() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleGetAdminQueueRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ queue: Awaited<ReturnType<CommercialAdminService["getOverview"]>>["queue"] } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const overview = await deps.adminService.getOverview();
+    return {
+      status: 200,
+      body: { queue: overview.queue },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleGetAdminFeedbackRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ feedback: Awaited<ReturnType<CommercialAdminService["getFeedback"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { feedback: await deps.adminService.getFeedback() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleGetAdminSettingsRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ settings: Awaited<ReturnType<CommercialAdminService["getSettings"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { settings: await deps.adminService.getSettings() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
 export async function handleCreateAdminAccessCodeBatchRequest(
   request: CommercialApiRequest,
   deps: CommercialApiDeps,

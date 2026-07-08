@@ -4,7 +4,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import UsersPage from "./UsersPage.js";
-import { adjustAdminUserCredits } from "./admin-client.js";
+import {
+  adjustAdminUserCredits,
+  type AdminCreditOperationsDto,
+  fetchAdminCreditOperations,
+  fetchAdminUsers,
+} from "./admin-client.js";
 import type { AdminUserRowDto } from "./admin-client.js";
 
 test("UsersPage renders user, credit, redemption, task, and activity controls", () => {
@@ -27,6 +32,14 @@ test("UsersPage renders user, credit, redemption, task, and activity controls", 
   ]) {
     assert.match(html, new RegExp(text));
   }
+});
+
+test("UsersPage renders a live loading state before fetched users arrive", () => {
+  const html = renderToStaticMarkup(
+    <UsersPage fetchUsers={async () => [makeUser()]} />,
+  );
+
+  assert.match(html, /Loading commercial users/);
 });
 
 test("admin client adjusts user credits through the admin endpoint", async () => {
@@ -82,6 +95,76 @@ test("admin client adjusts user credits through the admin endpoint", async () =>
   });
 });
 
+test("admin client fetches users and credit operations with credentials", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    if (String(input).endsWith("/credits")) {
+      return jsonResponse({
+        credits: {
+          accounts: [
+            {
+              userId: "user_1",
+              userEmail: "alice@example.test",
+              balance: 42,
+              frozenCredits: 3,
+              totalRedeemed: 50,
+              totalCaptured: 8,
+              updatedAt: "2026-07-07T00:00:00.000Z",
+            },
+          ],
+          ledger: [],
+        },
+      });
+    }
+    return jsonResponse({
+      users: {
+        total: 1,
+        items: [
+          {
+            id: "user_1",
+            email: "alice@example.test",
+            emailNormalized: "alice@example.test",
+            role: "user",
+            tier: "pro",
+            status: "active",
+            features: ["priority_queue"],
+            createdAt: "2026-07-07T00:00:00.000Z",
+            updatedAt: "2026-07-07T00:00:00.000Z",
+            creditAccount: {
+              balance: 42,
+              frozenCredits: 3,
+              totalRedeemed: 50,
+              totalCaptured: 8,
+              updatedAt: "2026-07-07T00:00:00.000Z",
+            },
+            taskSummary: {
+              total: 2,
+              completed: 1,
+              failed: 1,
+              active: 0,
+            },
+          },
+        ],
+      },
+    });
+  };
+
+  const users = await fetchAdminUsers(fetchImpl as typeof fetch);
+  const credits = await fetchAdminCreditOperations(fetchImpl as typeof fetch);
+
+  assert.equal(users[0]?.email, "alice@example.test");
+  assert.equal(users[0]?.availableCredits, 42);
+  assert.equal(credits.accounts[0]?.balance, 42);
+  assert.deepEqual(
+    calls.map((call) => ({ input: call.input, credentials: call.init?.credentials })),
+    [
+      { input: "/api/admin/users", credentials: "include" },
+      { input: "/api/admin/credits", credentials: "include" },
+    ],
+  );
+});
+
 function makeUser(): AdminUserRowDto {
   return {
     id: "user_1",
@@ -95,6 +178,13 @@ function makeUser(): AdminUserRowDto {
     completedTaskCount: 8,
     failedTaskCount: 2,
     recentActivityAt: "2026-07-07T00:10:00.000Z",
+  };
+}
+
+function makeCreditOperations(): AdminCreditOperationsDto {
+  return {
+    accounts: [],
+    ledger: [],
   };
 }
 

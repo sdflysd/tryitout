@@ -4,7 +4,14 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import AdminApp from "./AdminApp.js";
-import { AdminClientError, fetchAdminOverview } from "./admin-client.js";
+import {
+  AdminClientError,
+  fetchAdminAuditLogs,
+  fetchAdminFeedback,
+  fetchAdminOverview,
+  fetchAdminQueue,
+  fetchAdminSettings,
+} from "./admin-client.js";
 import type { AdminOverviewDto } from "./admin-client.js";
 
 test("AdminApp renders platform operations navigation", () => {
@@ -100,6 +107,25 @@ test("AdminApp can render the cost operations view", () => {
   assert.match(html, /Success \/ Failure/);
 });
 
+test("AdminApp renders dedicated operations pages instead of reusing overview", () => {
+  const expectations: Array<{ view: Parameters<typeof AdminApp>[0]["initialView"]; marker: RegExp }> = [
+    { view: "Credits", marker: /Credit Ledger/ },
+    { view: "Queue", marker: /Queue Operations/ },
+    { view: "Feedback", marker: /Feedback Operations/ },
+    { view: "Settings", marker: /Settings Operations/ },
+    { view: "Audit Logs", marker: /Audit Trail/ },
+  ];
+
+  for (const expectation of expectations) {
+    const html = renderToStaticMarkup(
+      <AdminApp overview={makeOverview()} initialView={expectation.view} />,
+    );
+
+    assert.match(html, expectation.marker);
+    assert.doesNotMatch(html, /Recent Failures/);
+  }
+});
+
 test("admin client fetches overview with credentials included", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
@@ -121,6 +147,81 @@ test("admin client fetches overview with credentials included", async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.input, "/api/admin/overview");
   assert.equal(calls[0]?.init?.credentials, "include");
+});
+
+test("admin client fetches queue, feedback, settings, and audit logs with credentials", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    const url = String(input);
+    if (url.endsWith("/queue")) {
+      return jsonResponse({ queue: makeOverview().queue });
+    }
+    if (url.endsWith("/feedback")) {
+      return jsonResponse({
+        feedback: {
+          summary: { total: 1, averageRating: 5, withComments: 1 },
+          items: [
+            {
+              id: "feedback_1",
+              userEmail: "alice@example.test",
+              rating: 5,
+              comment: "useful",
+              metadata: {},
+              createdAt: "2026-07-07T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    }
+    if (url.endsWith("/settings")) {
+      return jsonResponse({
+        settings: {
+          items: [
+            {
+              key: "queue.paused",
+              value: false,
+              description: "Pause commercial queue",
+              configured: true,
+              updatedAt: "2026-07-07T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    }
+    return jsonResponse({
+      auditLogs: [
+        {
+          id: "audit_1",
+          actorUserId: "admin_1",
+          action: "credits_adjusted",
+          targetType: "user",
+          targetId: "user_1",
+          metadata: {},
+          createdAt: "2026-07-07T00:00:00.000Z",
+        },
+      ],
+    });
+  };
+
+  const queue = await fetchAdminQueue(fetchImpl as typeof fetch);
+  const feedback = await fetchAdminFeedback(fetchImpl as typeof fetch);
+  const settings = await fetchAdminSettings(fetchImpl as typeof fetch);
+  const auditLogs = await fetchAdminAuditLogs(fetchImpl as typeof fetch);
+
+  assert.equal(queue.backlog, 12);
+  assert.equal(feedback.summary.total, 1);
+  assert.equal(settings.items[0]?.key, "queue.paused");
+  assert.equal(auditLogs[0]?.action, "credits_adjusted");
+  assert.deepEqual(
+    calls.map((call) => ({ input: call.input, credentials: call.init?.credentials })),
+    [
+      { input: "/api/admin/queue", credentials: "include" },
+      { input: "/api/admin/feedback", credentials: "include" },
+      { input: "/api/admin/settings", credentials: "include" },
+      { input: "/api/admin/audit-logs", credentials: "include" },
+    ],
+  );
 });
 
 function makeOverview(): AdminOverviewDto {
@@ -171,4 +272,11 @@ function makeOverview(): AdminOverviewDto {
       expired: 0,
     },
   };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }
