@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, LogIn, Sparkles, UserRound } from "lucide-react";
+import { CreditCard, Flame, LogIn, ShieldCheck, Sparkles, UserRound, UserPlus } from "lucide-react";
 import AdminApp from "./admin/AdminApp";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import {
@@ -127,7 +127,13 @@ function getCommercialErrorMessage(error: unknown): string {
 }
 
 export default function App() {
-  if (globalThis.location?.pathname.startsWith("/admin")) {
+  const pathname = globalThis.location?.pathname ?? "/";
+  const authMode =
+    pathname.startsWith("/register") ? "register"
+      : pathname.startsWith("/login") ? "login"
+        : undefined;
+
+  if (pathname.startsWith("/admin")) {
     return <AdminApp />;
   }
 
@@ -153,9 +159,6 @@ export default function App() {
   const [commercialBusy, setCommercialBusy] = useState(false);
   const [commercialStatus, setCommercialStatus] = useState("");
   const [commercialError, setCommercialError] = useState("");
-  const [accountPanelOpen, setAccountPanelOpen] = useState(
-    () => typeof globalThis.window === "undefined",
-  );
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
@@ -507,7 +510,6 @@ export default function App() {
     try {
       await loginCommercialUser(input);
       await refreshCommercialAccount();
-      setAccountPanelOpen(true);
       setCommercialStatus("Signed in. Credits loaded.");
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
@@ -524,7 +526,6 @@ export default function App() {
       await registerCommercialUser(input);
       await loginCommercialUser(input);
       await refreshCommercialAccount();
-      setAccountPanelOpen(true);
       setCommercialStatus("Account created. Credits loaded.");
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
@@ -582,21 +583,17 @@ export default function App() {
     providerMode: "platform",
   });
   const commercialMode = commercialAvailable;
-  const shouldShowAccountPanel = accountPanelOpen || Boolean(commercialUser);
-  const accountEntryLabel = commercialUser ? "账号" : "登录/注册";
-  const accountEntryAriaLabel = commercialUser
-    ? "打开商业账号面板"
-    : "打开商业账号登录";
 
   return (
     <div id="app-root-container" className="min-h-screen flex flex-col bg-[#050711] text-[#f8fafc]">
       {/* Header */}
       <header id="app-global-header" className="sticky top-0 z-40 border-b border-white/10 bg-[#050711]/92 px-6 py-4 text-white backdrop-blur-md">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div 
+          <a
             id="brand-logo-container"
-            onClick={handleRestart}
             className="flex items-center gap-2.5 cursor-pointer"
+            href="/"
+            onClick={authMode ? undefined : handleRestart}
           >
             <div className="w-9 h-9 bg-white/8 border border-white/10 rounded-xl flex items-center justify-center text-white shadow-md">
               <Flame className="w-5 h-5 fill-amber-400 text-amber-400 animate-pulse" />
@@ -605,28 +602,42 @@ export default function App() {
               <span className="block font-black text-sm tracking-tight text-white leading-none">tryitout</span>
               <span className="block text-[9px] font-bold text-amber-600 tracking-wider uppercase mt-1">试一下</span>
             </div>
-          </div>
+          </a>
 
           <div className="flex items-center gap-2 text-xs font-semibold text-white/60 sm:gap-3">
             <span className="hidden md:inline-flex items-center gap-1 bg-white/6 border border-white/10 text-white/58 px-2.5 py-1 rounded-md text-3xs font-mono">
               <Sparkles className="w-3 h-3 text-amber-500" />
               <span>Multi-Agent Sandbox</span>
             </span>
-            <button
-              id="btn-open-commercial-account"
-              type="button"
-              onClick={() => setAccountPanelOpen((open) => !open)}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-black text-cyan-100 transition-colors hover:border-cyan-200/40 hover:bg-cyan-200/15 cursor-pointer"
-              aria-label={accountEntryAriaLabel}
-              title={accountEntryAriaLabel}
-            >
-              {commercialUser ? (
+            {commercialUser ? (
+              <a
+                id="link-commercial-account"
+                href="/login"
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-black text-cyan-100 transition-colors hover:border-cyan-200/40 hover:bg-cyan-200/15"
+              >
                 <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
-              ) : (
-                <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              <span>{accountEntryLabel}</span>
-            </button>
+                <span>账号</span>
+              </a>
+            ) : (
+              <>
+                <a
+                  id="link-commercial-login"
+                  href="/login"
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-black text-cyan-100 transition-colors hover:border-cyan-200/40 hover:bg-cyan-200/15"
+                >
+                  <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>登录</span>
+                </a>
+                <a
+                  id="link-commercial-register"
+                  href="/register"
+                  className="hidden h-9 items-center justify-center gap-1.5 rounded-xl border border-white/12 bg-white/7 px-3 text-xs font-black text-white/72 transition-colors hover:border-amber-200/40 hover:bg-amber-200/10 hover:text-amber-100 sm:inline-flex"
+                >
+                  <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>注册</span>
+                </a>
+              </>
+            )}
             <button
               id="btn-toggle-language"
               type="button"
@@ -643,22 +654,21 @@ export default function App() {
 
       {/* Main Container */}
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
-        {shouldShowAccountPanel && (
-          <div className="mx-auto max-w-4xl px-4 pb-4">
-            <AccountPanel
-              user={commercialUser}
-              account={commercialAccount}
-              busy={commercialBusy}
-              statusMessage={commercialStatus}
-              errorMessage={commercialError}
-              onLogin={handleCommercialLogin}
-              onRegister={handleCommercialRegister}
-              onLogout={handleCommercialLogout}
-              onRedeem={handleCommercialRedeem}
-            />
-          </div>
+        {authMode && (
+          <CommercialAuthPage
+            mode={authMode}
+            user={commercialUser}
+            account={commercialAccount}
+            busy={commercialBusy}
+            statusMessage={commercialStatus}
+            errorMessage={commercialError}
+            onLogin={handleCommercialLogin}
+            onRegister={handleCommercialRegister}
+            onLogout={handleCommercialLogout}
+            onRedeem={handleCommercialRedeem}
+          />
         )}
-        <AnimatePresence mode="wait">
+        {!authMode && <AnimatePresence mode="wait">
           {view === "home" && (
             <motion.div
               key="home"
@@ -774,7 +784,7 @@ export default function App() {
               />
             </motion.div>
           )}
-        </AnimatePresence>
+        </AnimatePresence>}
       </main>
 
       {/* Share Poster Modal Overlay */}
@@ -787,5 +797,117 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function CommercialAuthPage({
+  mode,
+  user,
+  account,
+  busy,
+  statusMessage,
+  errorMessage,
+  onLogin,
+  onRegister,
+  onLogout,
+  onRedeem,
+}: {
+  mode: "login" | "register";
+  user?: CommercialUserDto;
+  account?: CommercialCreditAccountDto;
+  busy: boolean;
+  statusMessage: string;
+  errorMessage: string;
+  onLogin: (input: CommercialCredentialsDto) => Promise<void> | void;
+  onRegister: (input: CommercialCredentialsDto) => Promise<void> | void;
+  onLogout: () => Promise<void> | void;
+  onRedeem: (input: RedeemAccessCodeInputDto) => Promise<void> | void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const isRegister = mode === "register";
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const input = { email: email.trim(), password };
+    if (isRegister) {
+      await onRegister(input);
+    } else {
+      await onLogin(input);
+    }
+  };
+
+  return (
+    <section
+      id={isRegister ? "auth-page-register" : "auth-page-login"}
+      className="mx-auto grid min-h-[calc(100vh-8rem)] max-w-4xl place-items-center px-4 py-8"
+    >
+      <div className="w-full max-w-md border border-white/10 bg-white/[0.055] p-5 text-white shadow-lg shadow-black/10 backdrop-blur-md">
+        {user ? (
+          <AccountPanel
+            user={user}
+            account={account}
+            busy={busy}
+            statusMessage={statusMessage}
+            errorMessage={errorMessage}
+            onLogout={onLogout}
+            onRedeem={onRedeem}
+          />
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <UserRound className="h-4 w-4 text-cyan-200" aria-hidden="true" />
+              <h1 className="text-sm font-black text-white">Commercial account</h1>
+            </div>
+            <form onSubmit={(event) => void handleSubmit(event)} className="mt-4 grid gap-3">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="min-h-10 w-full rounded-md border border-white/10 bg-black/20 px-3 text-sm font-semibold text-white outline-none placeholder:text-white/30 focus:border-cyan-200/40 focus:ring-2 focus:ring-cyan-200/10"
+                  placeholder="buyer@example.com"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Password</span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="min-h-10 w-full rounded-md border border-white/10 bg-black/20 px-3 text-sm font-semibold text-white outline-none placeholder:text-white/30 focus:border-cyan-200/40 focus:ring-2 focus:ring-cyan-200/10"
+                  placeholder="commercial-secret"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busy}
+                className="mt-1 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-cyan-200 px-4 text-xs font-black text-slate-950 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-white/40"
+              >
+                {isRegister ? (
+                  <CreditCard className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                )}
+                {isRegister ? "Create account" : "Sign in"}
+              </button>
+            </form>
+
+            <div className="mt-4 flex items-center justify-between gap-3 text-xs font-bold text-white/58">
+              <a href="/" className="text-white/58 transition-colors hover:text-white">返回首页</a>
+              <a href={isRegister ? "/login" : "/register"} className="text-cyan-100 transition-colors hover:text-cyan-50">
+                {isRegister ? "已有账号登录" : "注册新账号"}
+              </a>
+            </div>
+            {(statusMessage || errorMessage) && (
+              <p className={`mt-3 text-xs font-bold ${errorMessage ? "text-rose-200" : "text-white/50"}`}>
+                {errorMessage || statusMessage}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </section>
   );
 }

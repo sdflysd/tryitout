@@ -27,22 +27,63 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
-test("app header exposes a visible commercial login entry", async () => {
+test("app header links to standalone commercial auth pages", async () => {
   const { default: App } = await import("./App.js");
   const html = renderToStaticMarkup(<App />);
 
-  assert.match(html, /btn-open-commercial-account/);
-  assert.match(html, /aria-label="打开商业账号登录"/);
-  assert.match(html, />登录\/注册</);
+  assert.match(html, /link-commercial-login/);
+  assert.match(html, /href="\/login"/);
+  assert.match(html, />登录</);
+  assert.match(html, /link-commercial-register/);
+  assert.match(html, /href="\/register"/);
+  assert.match(html, />注册</);
+  assert.doesNotMatch(html, /account-panel/);
 });
 
-test("app shell reserves a commercial account panel without replacing demo flow", async () => {
+test("login path renders a standalone commercial login page", async () => {
   const { default: App } = await import("./App.js");
-  const html = renderToStaticMarkup(<App />);
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/login" },
+  });
 
-  assert.match(html, /account-panel/);
-  assert.match(html, /Commercial account/);
-  assert.match(html, /Multi-Agent Sandbox/);
+  try {
+    const html = renderToStaticMarkup(<App />);
+    assert.match(html, /auth-page-login/);
+    assert.match(html, /Commercial account/);
+    assert.match(html, /Sign in/);
+    assert.doesNotMatch(html, /Create account/);
+    assert.doesNotMatch(html, /home-view-container/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("register path renders a standalone commercial registration page", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/register" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App />);
+    assert.match(html, /auth-page-register/);
+    assert.match(html, /Commercial account/);
+    assert.match(html, /Create account/);
+    assert.doesNotMatch(html, /Sign in</);
+    assert.doesNotMatch(html, /home-view-container/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
 });
 
 test("admin path renders the commercial admin shell", async () => {
