@@ -127,6 +127,37 @@ export interface AdminDisableAccessCodeBatchResultDto {
   disabledCodeCount: number;
 }
 
+interface AdminUserSummaryDto {
+  id: string;
+  email: string;
+  emailNormalized: string;
+  role?: "user" | "admin" | "owner";
+  tier: AdminUserTierDto;
+  status: "active" | "disabled" | "deleted";
+  features: AdminCommercialFeatureDto[];
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  creditAccount?: {
+    balance: number;
+    frozenCredits: number;
+    totalRedeemed: number;
+    totalCaptured: number;
+    updatedAt: string;
+  };
+  taskSummary: {
+    total: number;
+    completed: number;
+    failed: number;
+    active: number;
+  };
+}
+
+interface AdminListUsersResultDto {
+  total: number;
+  items: AdminUserSummaryDto[];
+}
+
 export interface AdminUserRowDto {
   id: string;
   email: string;
@@ -229,6 +260,83 @@ export interface AdminAdjustUserCreditsResultDto {
   ledger: AdminCreditLedgerEntryDto;
 }
 
+export interface AdminCreditAccountRowDto {
+  userId: string;
+  userEmail: string;
+  balance: number;
+  frozenCredits: number;
+  totalRedeemed: number;
+  totalCaptured: number;
+  updatedAt: string;
+}
+
+export interface AdminCreditLedgerRowDto {
+  id: string;
+  userId: string;
+  userEmail: string;
+  taskId?: string;
+  accessCodeId?: string;
+  entryType: AdminCreditLedgerEntryDto["entryType"];
+  amount: number;
+  balanceAfter: number;
+  frozenAfter?: number;
+  idempotencyKey: string;
+  reason?: string;
+  createdAt: string;
+}
+
+export interface AdminCreditOperationsDto {
+  accounts: AdminCreditAccountRowDto[];
+  ledger: AdminCreditLedgerRowDto[];
+}
+
+export interface AdminFeedbackItemDto {
+  id: string;
+  userId?: string;
+  userEmail?: string;
+  taskId?: string;
+  reportId?: string;
+  rating?: number;
+  feedbackType?: string;
+  comment?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AdminFeedbackDto {
+  summary: {
+    total: number;
+    averageRating: number;
+    withComments: number;
+  };
+  items: AdminFeedbackItemDto[];
+}
+
+export interface AdminSettingItemDto {
+  key: string;
+  value: unknown;
+  description?: string;
+  updatedByUserId?: string;
+  configured: boolean;
+  updatedAt?: string;
+}
+
+export interface AdminSettingsDto {
+  items: AdminSettingItemDto[];
+}
+
+export interface AdminAuditLogDto {
+  id: string;
+  actorUserId?: string;
+  action: string;
+  targetType: string;
+  targetId?: string;
+  metadata: Record<string, unknown>;
+  ipHash?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
 export class AdminClientError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -248,6 +356,95 @@ export async function fetchAdminOverview(
   assertObjectWithProperty(body, "overview", "Invalid admin overview response");
 
   return body.overview as unknown as AdminOverviewDto;
+}
+
+export async function fetchAdminUsers(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminUserRowDto[]> {
+  const body = await requestAdminJson("/api/admin/users", {}, fetchImpl);
+  assertObjectWithProperty(body, "users", "Invalid admin users response");
+  const result = body.users as unknown as AdminListUsersResultDto;
+  if (!Array.isArray(result.items)) {
+    throw new AdminClientError(200, "Invalid admin users response");
+  }
+
+  return result.items.map(toUserRowDto);
+}
+
+export async function fetchAdminAccessCodeBatches(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAccessCodeBatchDto[]> {
+  const body = await requestAdminJson("/api/admin/access-codes/batches", {}, fetchImpl);
+  assertObjectWithProperty(body, "batches", "Invalid access-code batches response");
+  if (!Array.isArray(body.batches)) {
+    throw new AdminClientError(200, "Invalid access-code batches response");
+  }
+
+  return body.batches as unknown as AdminAccessCodeBatchDto[];
+}
+
+export async function fetchAdminTasks(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminTaskRowDto[]> {
+  const body = await requestAdminJson("/api/admin/tasks", {}, fetchImpl);
+  assertObjectWithProperty(body, "tasks", "Invalid admin tasks response");
+  if (!Array.isArray(body.tasks)) {
+    throw new AdminClientError(200, "Invalid admin tasks response");
+  }
+
+  return body.tasks as unknown as AdminTaskRowDto[];
+}
+
+export async function fetchAdminCreditOperations(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminCreditOperationsDto> {
+  const body = await requestAdminJson("/api/admin/credits", {}, fetchImpl);
+  assertObjectWithProperty(body, "credits", "Invalid admin credits response");
+  return body.credits as unknown as AdminCreditOperationsDto;
+}
+
+export async function fetchAdminCostSummary(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminCostSummaryDto> {
+  const body = await requestAdminJson("/api/admin/costs", {}, fetchImpl);
+  assertObjectWithProperty(body, "summary", "Invalid admin costs response");
+  return body.summary as unknown as AdminCostSummaryDto;
+}
+
+export async function fetchAdminQueue(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminOverviewDto["queue"]> {
+  const body = await requestAdminJson("/api/admin/queue", {}, fetchImpl);
+  assertObjectWithProperty(body, "queue", "Invalid admin queue response");
+  return body.queue as unknown as AdminOverviewDto["queue"];
+}
+
+export async function fetchAdminFeedback(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminFeedbackDto> {
+  const body = await requestAdminJson("/api/admin/feedback", {}, fetchImpl);
+  assertObjectWithProperty(body, "feedback", "Invalid admin feedback response");
+  return body.feedback as unknown as AdminFeedbackDto;
+}
+
+export async function fetchAdminSettings(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminSettingsDto> {
+  const body = await requestAdminJson("/api/admin/settings", {}, fetchImpl);
+  assertObjectWithProperty(body, "settings", "Invalid admin settings response");
+  return body.settings as unknown as AdminSettingsDto;
+}
+
+export async function fetchAdminAuditLogs(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAuditLogDto[]> {
+  const body = await requestAdminJson("/api/admin/audit-logs", {}, fetchImpl);
+  assertObjectWithProperty(body, "auditLogs", "Invalid admin audit logs response");
+  if (!Array.isArray(body.auditLogs)) {
+    throw new AdminClientError(200, "Invalid admin audit logs response");
+  }
+
+  return body.auditLogs as unknown as AdminAuditLogDto[];
 }
 
 export async function createAdminAccessCodeBatch(
@@ -307,6 +504,27 @@ export async function adjustAdminUserCredits(
   assertObjectWithProperty(body, "ledger", "Invalid credit adjustment response");
 
   return body as unknown as AdminAdjustUserCreditsResultDto;
+}
+
+function toUserRowDto(user: AdminUserSummaryDto): AdminUserRowDto {
+  return {
+    id: user.id,
+    email: user.email,
+    status: user.status === "disabled" ? "disabled" : "active",
+    tier: user.tier,
+    role: user.role === "owner" ? "admin" : user.role,
+    features: user.features,
+    availableCredits: user.creditAccount?.balance ?? 0,
+    frozenCredits: user.creditAccount?.frozenCredits ?? 0,
+    redeemedBatchCount: user.creditAccount?.totalRedeemed ?? 0,
+    taskCount: user.taskSummary.total,
+    completedTaskCount: user.taskSummary.completed,
+    failedTaskCount: user.taskSummary.failed,
+    activeTaskCount: user.taskSummary.active,
+    lastLoginAt: user.lastLoginAt,
+    recentActivityAt: user.creditAccount?.updatedAt ?? user.updatedAt,
+    createdAt: user.createdAt,
+  };
 }
 
 async function requestAdminJson(

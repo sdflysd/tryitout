@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   FormEvent,
   ReactNode,
@@ -13,6 +13,7 @@ import {
 import {
   createAdminAccessCodeBatch,
   disableAdminAccessCodeBatch,
+  fetchAdminAccessCodeBatches,
   type AdminAccessCodeBatchDto,
   type AdminCommercialFeatureDto,
   type AdminCreateAccessCodeBatchInputDto,
@@ -24,6 +25,7 @@ interface AccessCodesPageProps {
   initialBatches?: AdminAccessCodeBatchDto[];
   initialCreationResult?: AdminCreateAccessCodeBatchResultDto;
   copyText?: (value: string) => Promise<void> | void;
+  fetchBatches?: () => Promise<AdminAccessCodeBatchDto[]>;
 }
 
 const FEATURE_OPTIONS: Array<{ value: AdminCommercialFeatureDto; label: string }> = [
@@ -33,12 +35,15 @@ const FEATURE_OPTIONS: Array<{ value: AdminCommercialFeatureDto; label: string }
 ];
 
 export default function AccessCodesPage({
-  initialBatches = [],
+  initialBatches,
   initialCreationResult,
   copyText = defaultCopyText,
+  fetchBatches = fetchAdminAccessCodeBatches,
 }: AccessCodesPageProps) {
-  const [batches, setBatches] = useState(initialBatches);
+  const [batches, setBatches] = useState(initialBatches ?? []);
   const [creationResult, setCreationResult] = useState(initialCreationResult);
+  const [isLoading, setIsLoading] = useState(initialBatches === undefined);
+  const [loadError, setLoadError] = useState("");
   const [form, setForm] = useState<AdminCreateAccessCodeBatchInputDto>({
     name: "",
     source: "sales-led",
@@ -54,6 +59,39 @@ export default function AccessCodesPage({
     () => creationResult?.codes.map((code) => code.rawCode).join("\n") ?? "",
     [creationResult],
   );
+
+  useEffect(() => {
+    if (initialBatches !== undefined) {
+      setBatches(initialBatches);
+      setIsLoading(false);
+      setLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    void fetchBatches()
+      .then((nextBatches) => {
+        if (!cancelled) {
+          setBatches(nextBatches);
+          setLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load access-code batches");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchBatches, initialBatches]);
 
   const handleFeatureToggle = (feature: AdminCommercialFeatureDto) => {
     setForm((current) => ({
@@ -103,6 +141,12 @@ export default function AccessCodesPage({
 
   return (
     <div className="space-y-5">
+      {(isLoading || loadError) && (
+        <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
+          {isLoading ? "Loading access-code batches" : loadError}
+        </section>
+      )}
+
       <section className="border border-slate-200 bg-white">
         <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2">

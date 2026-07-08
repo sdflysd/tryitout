@@ -524,6 +524,342 @@ test("user detail combines profile, account, tasks, ledger, and redemptions with
   assert.equal(JSON.stringify(detail).includes("hash_1"), false);
 });
 
+test("lists access-code batches with status counts without exposing code hashes", async () => {
+  const { repo, service } = createScenario();
+  await repo.saveAccessCodeBatch({
+    id: "batch_1",
+    createdByUserId: "admin_1",
+    name: "Founding customers",
+    source: "sales-led",
+    codeCount: 4,
+    credits: 25,
+    tier: "pro",
+    features: ["priority_queue"],
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    notes: "Q3 launch",
+    metadata: { campaignId: "CRM-1" },
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_active",
+    batchId: "batch_1",
+    codeHash: "hash_active",
+    codeMask: "TIO-****-****-0001",
+    status: "active",
+    credits: 25,
+    features: ["priority_queue"],
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_redeemed",
+    batchId: "batch_1",
+    codeHash: "hash_redeemed",
+    codeMask: "TIO-****-****-0002",
+    status: "redeemed",
+    credits: 25,
+    features: ["priority_queue"],
+    redeemedByUserId: "user_1",
+    redeemedAt: "2026-07-07T00:10:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_disabled",
+    batchId: "batch_1",
+    codeHash: "hash_disabled",
+    codeMask: "TIO-****-****-0003",
+    status: "disabled",
+    credits: 25,
+    features: ["priority_queue"],
+    disabledAt: "2026-07-07T00:11:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_expired",
+    batchId: "batch_1",
+    codeHash: "hash_expired",
+    codeMask: "TIO-****-****-0004",
+    status: "expired",
+    credits: 25,
+    features: ["priority_queue"],
+    expiresAt: "2026-07-01T00:00:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+
+  const batches = await service.listAccessCodeBatches();
+
+  assert.deepEqual(batches, [
+    {
+      id: "batch_1",
+      name: "Founding customers",
+      source: "sales-led",
+      codeCount: 4,
+      credits: 25,
+      tier: "pro",
+      features: ["priority_queue"],
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      notes: "Q3 launch",
+      createdAt: "2026-07-07T00:00:00.000Z",
+      status: "active",
+      redeemedCount: 1,
+      activeCount: 1,
+      disabledCount: 1,
+      expiredCount: 1,
+      redemptionRate: 0.25,
+    },
+  ]);
+  assert.equal(JSON.stringify(batches).includes("hash_"), false);
+});
+
+test("lists admin tasks with user emails, timeline, and safe step costs", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", { email: "alice@example.test" }),
+    makeCreditAccount("user_1"),
+  );
+  await repo.saveCommercialTask(makeTask({
+    id: "task_1",
+    userId: "user_1",
+    status: "failed",
+    creditCost: 3,
+    queuedAt: "2026-07-07T00:00:00.000Z",
+    startedAt: "2026-07-07T00:00:04.000Z",
+    completedAt: "2026-07-07T00:01:40.000Z",
+    errorCode: "model_timeout",
+  }));
+  await repo.appendSimulationTaskRun({
+    id: "run_1",
+    taskId: "task_1",
+    workerId: "worker_a",
+    status: "failed",
+    errorCode: "model_timeout",
+    startedAt: "2026-07-07T00:00:04.000Z",
+    completedAt: "2026-07-07T00:01:40.000Z",
+  });
+  await repo.appendSimulationStepRunCost({
+    id: "cost_1",
+    taskRunId: "run_1",
+    taskId: "task_1",
+    stepName: "generate_report",
+    provider: "openai",
+    modelId: "gpt-5-mini",
+    promptTokens: 1400,
+    completionTokens: 900,
+    totalTokens: 2300,
+    estimatedCost: 0.42,
+    status: "failed",
+    errorCode: "model_timeout",
+    startedAt: "2026-07-07T00:00:10.000Z",
+    metadata: { rawPrompt: "do not expose" },
+  });
+
+  const tasks = await service.listTasks();
+
+  assert.deepEqual(tasks, [
+    {
+      id: "task_1",
+      userEmail: "alice@example.test",
+      scenarioType: "life_choice",
+      interactionMode: "enabled",
+      providerMode: "platform",
+      status: "failed",
+      queueWaitMs: 4000,
+      runDurationMs: 96000,
+      credits: 3,
+      promptTokens: 1400,
+      completionTokens: 900,
+      estimatedCost: 0.42,
+      errorCode: "model_timeout",
+      workerId: "worker_a",
+      createdAt: "2026-07-07T00:00:00.000Z",
+      timeline: [
+        { label: "Queued", at: "2026-07-07T00:00:00.000Z" },
+        { label: "Running", at: "2026-07-07T00:00:04.000Z" },
+        { label: "Failed", at: "2026-07-07T00:01:40.000Z" },
+      ],
+      stepCosts: [
+        {
+          stepName: "generate_report",
+          provider: "openai",
+          modelId: "gpt-5-mini",
+          tokens: 2300,
+          estimatedCost: 0.42,
+          status: "failed",
+        },
+      ],
+    },
+  ]);
+  assert.equal(JSON.stringify(tasks).includes("rawPrompt"), false);
+});
+
+test("summarizes costs by provider, model, step, task, and outcome", async () => {
+  const { repo, service } = createScenario();
+  await repo.saveCommercialTask(makeTask({ id: "task_1", status: "completed" }));
+  await repo.saveCommercialTask(makeTask({ id: "task_2", status: "failed" }));
+  await repo.appendSimulationStepRunCost({
+    id: "cost_1",
+    taskId: "task_1",
+    stepName: "generate_report",
+    provider: "openai",
+    modelId: "gpt-5-mini",
+    totalTokens: 1000,
+    estimatedCost: 0.3,
+    status: "completed",
+    startedAt: "2026-07-07T00:10:00.000Z",
+  });
+  await repo.appendSimulationStepRunCost({
+    id: "cost_2",
+    taskId: "task_2",
+    stepName: "validate_output",
+    provider: "gemini",
+    modelId: "gemini-2.5-flash",
+    promptTokens: 200,
+    completionTokens: 300,
+    estimatedCost: 0.2,
+    status: "failed",
+    startedAt: "2026-07-07T00:11:00.000Z",
+  });
+
+  const summary = await service.getCostSummary();
+
+  assert.deepEqual(summary, {
+    totalEstimatedCost: 0.5,
+    providerGroups: [
+      { key: "openai", cost: 0.3, tokens: 1000 },
+      { key: "gemini", cost: 0.2, tokens: 500 },
+    ],
+    modelGroups: [
+      { key: "gpt-5-mini", cost: 0.3, tokens: 1000 },
+      { key: "gemini-2.5-flash", cost: 0.2, tokens: 500 },
+    ],
+    stepGroups: [
+      { key: "generate_report", cost: 0.3, tokens: 1000 },
+      { key: "validate_output", cost: 0.2, tokens: 500 },
+    ],
+    taskGroups: [
+      { key: "task_1", cost: 0.3, tokens: 1000 },
+      { key: "task_2", cost: 0.2, tokens: 500 },
+    ],
+    outcomeGroups: [
+      { key: "completed", cost: 0.3, tokens: 1000 },
+      { key: "failed", cost: 0.2, tokens: 500 },
+    ],
+  });
+});
+
+test("returns credit operations with accounts and recent ledger entries", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", { email: "alice@example.test" }),
+    makeCreditAccount("user_1", {
+      balance: 12,
+      frozenCredits: 3,
+      totalRedeemed: 20,
+      totalCaptured: 5,
+    }),
+  );
+  await repo.appendCreditLedgerEntry({
+    id: "ledger_1",
+    userId: "user_1",
+    entryType: "adjustment",
+    amount: 12,
+    balanceAfter: 12,
+    frozenAfter: 3,
+    idempotencyKey: "support-1",
+    reason: "offline invoice",
+    metadata: { ticketId: "T-1" },
+    createdAt: "2026-07-07T00:05:00.000Z",
+  });
+
+  const operations = await service.getCreditOperations();
+
+  assert.deepEqual(operations, {
+    accounts: [
+      {
+        userId: "user_1",
+        userEmail: "alice@example.test",
+        balance: 12,
+        frozenCredits: 3,
+        totalRedeemed: 20,
+        totalCaptured: 5,
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      },
+    ],
+    ledger: [
+      {
+        id: "ledger_1",
+        userId: "user_1",
+        userEmail: "alice@example.test",
+        entryType: "adjustment",
+        amount: 12,
+        balanceAfter: 12,
+        frozenAfter: 3,
+        idempotencyKey: "support-1",
+        reason: "offline invoice",
+        createdAt: "2026-07-07T00:05:00.000Z",
+      },
+    ],
+  });
+});
+
+test("returns admin feedback and known settings from real repository data", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", { email: "alice@example.test" }),
+    makeCreditAccount("user_1"),
+  );
+  await repo.appendUserFeedback({
+    id: "feedback_1",
+    userId: "user_1",
+    taskId: "task_1",
+    reportId: "report_1",
+    rating: 4,
+    feedbackType: "quality",
+    comment: "Useful but slow",
+    metadata: { source: "report" },
+    createdAt: "2026-07-07T00:06:00.000Z",
+  });
+  await repo.saveSystemSetting({
+    key: "queue.paused",
+    value: true,
+    description: "Pause commercial queue",
+    updatedByUserId: "admin_1",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:07:00.000Z",
+  });
+
+  const feedback = await service.getFeedback();
+  const settings = await service.getSettings();
+
+  assert.deepEqual(feedback.items, [
+    {
+      id: "feedback_1",
+      userId: "user_1",
+      userEmail: "alice@example.test",
+      taskId: "task_1",
+      reportId: "report_1",
+      rating: 4,
+      feedbackType: "quality",
+      comment: "Useful but slow",
+      metadata: { source: "report" },
+      createdAt: "2026-07-07T00:06:00.000Z",
+    },
+  ]);
+  assert.deepEqual(feedback.summary, {
+    total: 1,
+    averageRating: 4,
+    withComments: 1,
+  });
+  assert.deepEqual(settings.items.find((item) => item.key === "queue.paused"), {
+    key: "queue.paused",
+    value: true,
+    description: "Pause commercial queue",
+    updatedByUserId: "admin_1",
+    configured: true,
+    updatedAt: "2026-07-07T00:07:00.000Z",
+  });
+  assert.equal(settings.items.some((item) => item.configured === false), true);
+});
+
 test("admin service reports missing users and tasks as domain errors", async () => {
   const { service } = createScenario();
 

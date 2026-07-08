@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   BadgeDollarSign,
   Boxes,
@@ -10,9 +11,11 @@ import type {
   AdminCostGroupDto,
   AdminCostSummaryDto,
 } from "./admin-client.js";
+import { fetchAdminCostSummary } from "./admin-client.js";
 
 interface CostsPageProps {
   summary?: AdminCostSummaryDto;
+  fetchSummary?: () => Promise<AdminCostSummaryDto>;
 }
 
 const EMPTY_SUMMARY: AdminCostSummaryDto = {
@@ -24,15 +27,61 @@ const EMPTY_SUMMARY: AdminCostSummaryDto = {
   outcomeGroups: [],
 };
 
-export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
+export default function CostsPage({
+  summary,
+  fetchSummary = fetchAdminCostSummary,
+}: CostsPageProps) {
+  const [resolvedSummary, setResolvedSummary] = useState(summary ?? EMPTY_SUMMARY);
+  const [isLoading, setIsLoading] = useState(summary === undefined);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    if (summary !== undefined) {
+      setResolvedSummary(summary);
+      setIsLoading(false);
+      setLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    void fetchSummary()
+      .then((nextSummary) => {
+        if (!cancelled) {
+          setResolvedSummary(nextSummary);
+          setLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load cost summary");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchSummary, summary]);
+
   return (
     <div className="space-y-5">
+      {(isLoading || loadError) && (
+        <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
+          {isLoading ? "Loading cost summary" : loadError}
+        </section>
+      )}
+
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Cost operations metrics">
-        <Metric title="Total Estimated Cost" value={formatCurrency(summary.totalEstimatedCost)} detail="All tracked model calls" tone="amber" />
-        <Metric title="Provider" value={summary.providerGroups.length} detail="Vendor split" tone="cyan" />
-        <Metric title="Model" value={summary.modelGroups.length} detail="Model mix" tone="emerald" />
-        <Metric title="Step" value={summary.stepGroups.length} detail="Workflow spend" tone="slate" />
-        <Metric title="Task" value={summary.taskGroups.length} detail="High-cost task trail" tone="rose" />
+        <Metric title="Total Estimated Cost" value={formatCurrency(resolvedSummary.totalEstimatedCost)} detail="All tracked model calls" tone="amber" />
+        <Metric title="Provider" value={resolvedSummary.providerGroups.length} detail="Vendor split" tone="cyan" />
+        <Metric title="Model" value={resolvedSummary.modelGroups.length} detail="Model mix" tone="emerald" />
+        <Metric title="Step" value={resolvedSummary.stepGroups.length} detail="Workflow spend" tone="slate" />
+        <Metric title="Task" value={resolvedSummary.taskGroups.length} detail="High-cost task trail" tone="rose" />
       </section>
 
       <section className="border border-slate-200 bg-white">
@@ -44,14 +93,14 @@ export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
               <p className="text-xs font-semibold text-slate-500">Provider, model, step, task, and outcome cost controls for commercial execution.</p>
             </div>
           </div>
-          <div className="font-mono text-xs font-black text-slate-700">{formatCurrency(summary.totalEstimatedCost)}</div>
+          <div className="font-mono text-xs font-black text-slate-700">{formatCurrency(resolvedSummary.totalEstimatedCost)}</div>
         </div>
 
         <div className="grid gap-5 p-4 xl:grid-cols-2">
-          <CostGroupTable title="Provider" icon={Boxes} groups={summary.providerGroups} />
-          <CostGroupTable title="Model" icon={Cpu} groups={summary.modelGroups} />
-          <CostGroupTable title="Step" icon={Layers3} groups={summary.stepGroups} />
-          <CostGroupTable title="Task" icon={Route} groups={summary.taskGroups} />
+          <CostGroupTable title="Provider" icon={Boxes} groups={resolvedSummary.providerGroups} />
+          <CostGroupTable title="Model" icon={Cpu} groups={resolvedSummary.modelGroups} />
+          <CostGroupTable title="Step" icon={Layers3} groups={resolvedSummary.stepGroups} />
+          <CostGroupTable title="Task" icon={Route} groups={resolvedSummary.taskGroups} />
         </div>
       </section>
 
@@ -71,15 +120,15 @@ export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {summary.outcomeGroups.map((group) => (
+              {resolvedSummary.outcomeGroups.map((group) => (
                 <tr key={group.key}>
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{group.key}</td>
                   <td className="px-4 py-3 font-mono text-slate-700">{group.tokens}</td>
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{formatCurrency(group.cost)}</td>
-                  <td className="px-4 py-3 font-mono text-slate-700">{formatShare(group.cost, summary.totalEstimatedCost)}</td>
+                  <td className="px-4 py-3 font-mono text-slate-700">{formatShare(group.cost, resolvedSummary.totalEstimatedCost)}</td>
                 </tr>
               ))}
-              {summary.outcomeGroups.length === 0 && (
+              {resolvedSummary.outcomeGroups.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
                     No outcome cost data loaded.

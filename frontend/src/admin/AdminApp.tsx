@@ -15,7 +15,12 @@ import {
 } from "lucide-react";
 
 import AccessCodesPage from "./AccessCodesPage.js";
+import AuditLogsPage from "./AuditLogsPage.js";
 import CostsPage from "./CostsPage.js";
+import CreditsPage from "./CreditsPage.js";
+import FeedbackPage from "./FeedbackPage.js";
+import QueuePage from "./QueuePage.js";
+import SettingsPage from "./SettingsPage.js";
 import TasksPage from "./TasksPage.js";
 import UsersPage from "./UsersPage.js";
 import {
@@ -247,8 +252,23 @@ function AdminView({
   if (activeView === "Tasks") {
     return <TasksPage />;
   }
+  if (activeView === "Credits") {
+    return <CreditsPage />;
+  }
+  if (activeView === "Queue") {
+    return <QueuePage />;
+  }
   if (activeView === "Costs") {
     return <CostsPage />;
+  }
+  if (activeView === "Feedback") {
+    return <FeedbackPage />;
+  }
+  if (activeView === "Settings") {
+    return <SettingsPage />;
+  }
+  if (activeView === "Audit Logs") {
+    return <AuditLogsPage />;
   }
 
   return (

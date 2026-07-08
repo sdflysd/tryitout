@@ -7,6 +7,7 @@ import AccessCodesPage from "./AccessCodesPage.js";
 import {
   createAdminAccessCodeBatch,
   disableAdminAccessCodeBatch,
+  fetchAdminAccessCodeBatches,
 } from "./admin-client.js";
 import type {
   AdminAccessCodeBatchDto,
@@ -51,6 +52,14 @@ test("AccessCodesPage renders a business-ready creation form", () => {
   ]) {
     assert.match(html, new RegExp(label));
   }
+});
+
+test("AccessCodesPage renders a live loading state before fetched batches arrive", () => {
+  const html = renderToStaticMarkup(
+    <AccessCodesPage fetchBatches={async () => [makeBatch()]} />,
+  );
+
+  assert.match(html, /Loading access-code batches/);
 });
 
 test("AccessCodesPage shows raw creation results only in the copy panel", () => {
@@ -118,6 +127,19 @@ test("admin client creates and disables access-code batches through admin endpoi
       },
     ],
   );
+});
+
+test("admin client fetches existing access-code batches through the admin endpoint", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const batches = await fetchAdminAccessCodeBatches((async (input, init) => {
+    calls.push({ input, init });
+    return jsonResponse({ batches: [makeBatch()] });
+  }) as typeof fetch);
+
+  assert.equal(batches[0]?.name, "Founding Customers");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.input, "/api/admin/access-codes/batches");
+  assert.equal(calls[0]?.init?.credentials, "include");
 });
 
 function makeBatch(): AdminAccessCodeBatchDto {

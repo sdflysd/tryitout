@@ -5,8 +5,16 @@ import {
   handleAdjustAdminUserCreditsRequest,
   handleCreateAdminAccessCodeBatchRequest,
   handleDisableAdminAccessCodeBatchRequest,
+  handleGetAdminCostSummaryRequest,
+  handleGetAdminCreditOperationsRequest,
+  handleGetAdminFeedbackRequest,
   handleGetAdminOverviewRequest,
+  handleGetAdminQueueRequest,
+  handleGetAdminSettingsRequest,
+  handleListAdminAccessCodeBatchesRequest,
   handleListAdminAuditLogsRequest,
+  handleListAdminTasksRequest,
+  handleListAdminUsersRequest,
   type CommercialApiResult,
 } from "./commercial-api.js";
 
@@ -19,6 +27,25 @@ export function registerCommercialAdminRoutes(
       return sendDisabled(res);
     }
     const result = await handleGetAdminOverviewRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/users", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminUsersRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/access-codes/batches", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminAccessCodeBatchesRequest(
+      toCommercialRequest(req),
+      services,
+    );
     sendCommercialApiResult(res, result);
   });
 
@@ -42,6 +69,57 @@ export function registerCommercialAdminRoutes(
       toCommercialRequest(req),
       services,
     );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/tasks", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminTasksRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/credits", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleGetAdminCreditOperationsRequest(
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/costs", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleGetAdminCostSummaryRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/queue", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleGetAdminQueueRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/feedback", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleGetAdminFeedbackRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/settings", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleGetAdminSettingsRequest(toCommercialRequest(req), services);
     sendCommercialApiResult(res, result);
   });
 

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -5,26 +6,75 @@ import {
   ListChecks,
 } from "lucide-react";
 
-import type { AdminTaskRowDto } from "./admin-client.js";
+import {
+  fetchAdminTasks,
+  type AdminTaskRowDto,
+} from "./admin-client.js";
 
 interface TasksPageProps {
   tasks?: AdminTaskRowDto[];
+  fetchTasks?: () => Promise<AdminTaskRowDto[]>;
 }
 
 const EMPTY_TASKS: AdminTaskRowDto[] = [];
 
-export default function TasksPage({ tasks = EMPTY_TASKS }: TasksPageProps) {
-  const selectedTask = tasks[0];
-  const failedTasks = tasks.filter((task) => task.status === "failed").length;
-  const activeTasks = tasks.filter((task) => task.status === "queued" || task.status === "running").length;
-  const totalCost = tasks.reduce((total, task) => total + task.estimatedCost, 0);
-  const totalTokens = tasks.reduce(
+export default function TasksPage({
+  tasks,
+  fetchTasks = fetchAdminTasks,
+}: TasksPageProps) {
+  const [rows, setRows] = useState(tasks ?? EMPTY_TASKS);
+  const [isLoading, setIsLoading] = useState(tasks === undefined);
+  const [loadError, setLoadError] = useState("");
+  const selectedTask = rows[0];
+  const failedTasks = rows.filter((task) => task.status === "failed").length;
+  const activeTasks = rows.filter((task) => task.status === "queued" || task.status === "running").length;
+  const totalCost = rows.reduce((total, task) => total + task.estimatedCost, 0);
+  const totalTokens = rows.reduce(
     (total, task) => total + task.promptTokens + task.completionTokens,
     0,
   );
 
+  useEffect(() => {
+    if (tasks !== undefined) {
+      setRows(tasks);
+      setIsLoading(false);
+      setLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    void fetchTasks()
+      .then((nextTasks) => {
+        if (!cancelled) {
+          setRows(nextTasks);
+          setLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load commercial tasks");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchTasks, tasks]);
+
   return (
     <div className="space-y-5">
+      {(isLoading || loadError) && (
+        <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
+          {isLoading ? "Loading commercial tasks" : loadError}
+        </section>
+      )}
+
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Task operations metrics">
         <Metric title="Active Queue" value={activeTasks} detail="Queued and running" tone="cyan" />
         <Metric title="Failed Tasks" value={failedTasks} detail="Provider, worker, or validation errors" tone="rose" />
@@ -41,7 +91,7 @@ export default function TasksPage({ tasks = EMPTY_TASKS }: TasksPageProps) {
               <p className="text-xs font-semibold text-slate-500">Queue latency, worker execution, paid credits, token burn, and failure codes.</p>
             </div>
           </div>
-          <div className="text-xs font-bold text-slate-500">{tasks.length} tasks tracked</div>
+          <div className="text-xs font-bold text-slate-500">{rows.length} tasks tracked</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -63,7 +113,7 @@ export default function TasksPage({ tasks = EMPTY_TASKS }: TasksPageProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {tasks.map((task) => (
+              {rows.map((task) => (
                 <tr key={task.id}>
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{task.id}</td>
                   <td className="px-4 py-3 font-semibold text-slate-700">{task.userEmail}</td>
@@ -84,7 +134,7 @@ export default function TasksPage({ tasks = EMPTY_TASKS }: TasksPageProps) {
                   <td className="px-4 py-3 font-mono text-slate-700">{task.workerId ?? "unassigned"}</td>
                 </tr>
               ))}
-              {tasks.length === 0 && (
+              {rows.length === 0 && (
                 <tr>
                   <td colSpan={12} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
                     No commercial tasks loaded.

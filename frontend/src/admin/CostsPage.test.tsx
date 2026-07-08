@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import CostsPage from "./CostsPage.js";
+import { fetchAdminCostSummary } from "./admin-client.js";
 import type { AdminCostSummaryDto } from "./admin-client.js";
 
 test("CostsPage groups cost by provider, model, step, task, and outcome", () => {
@@ -26,6 +27,27 @@ test("CostsPage groups cost by provider, model, step, task, and outcome", () => 
   }
 });
 
+test("CostsPage renders a live loading state before fetched cost summary arrives", () => {
+  const html = renderToStaticMarkup(
+    <CostsPage fetchSummary={async () => makeSummary()} />,
+  );
+
+  assert.match(html, /Loading cost summary/);
+});
+
+test("admin client fetches cost summary with credentials", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const summary = await fetchAdminCostSummary((async (input, init) => {
+    calls.push({ input, init });
+    return jsonResponse({ summary: makeSummary() });
+  }) as typeof fetch);
+
+  assert.equal(summary.totalEstimatedCost, 18.72);
+  assert.equal(summary.providerGroups[0]?.key, "openai");
+  assert.equal(calls[0]?.input, "/api/admin/costs");
+  assert.equal(calls[0]?.init?.credentials, "include");
+});
+
 function makeSummary(): AdminCostSummaryDto {
   return {
     totalEstimatedCost: 18.72,
@@ -38,4 +60,11 @@ function makeSummary(): AdminCostSummaryDto {
       { key: "failed", cost: 4.2, tokens: 26000 },
     ],
   };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }
