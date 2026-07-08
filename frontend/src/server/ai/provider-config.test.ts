@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createOpenAiCompatibleProviderAdapter,
+  createUserOpenAiCompatibleProfile,
   createProviderAdapters,
   getConfiguredProvider,
   getProviderProfileIdForMode,
@@ -71,4 +73,27 @@ test("createProviderAdapters registers configured provider adapters only when ke
     adapters.map((adapter) => adapter.provider).sort(),
     ["anthropic", "gemini", "openai_compatible"],
   );
+});
+
+test("createOpenAiCompatibleProviderAdapter builds an adapter for user BYOK credentials", () => {
+  const adapter = createOpenAiCompatibleProviderAdapter({
+    apiKey: "sk-user-secret",
+    baseUrl: "https://api.openai.com/v1",
+  });
+
+  assert.equal(adapter.provider, "openai_compatible");
+});
+
+test("createUserOpenAiCompatibleProfile binds user BYOK base URL and model", () => {
+  const profile = createUserOpenAiCompatibleProfile({
+    quality: "balanced",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+  });
+
+  assert.equal(profile.id, "user_openai_compatible_balanced");
+  assert.equal(profile.provider, "openai_compatible");
+  assert.equal(profile.modelId, "gpt-4.1-mini");
+  assert.equal(profile.baseUrl, "https://api.openai.com/v1");
+  assert.deepEqual(profile.allowedBaseUrls, ["https://api.openai.com/v1"]);
 });

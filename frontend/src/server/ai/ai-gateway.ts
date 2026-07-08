@@ -8,20 +8,32 @@ import {
 } from "./debug-trace.js";
 import { getPolicyForScenario } from "./model-policy.js";
 import { assertCapabilities, resolveModel } from "./model-router.js";
-import { createProviderAdapters } from "./provider-config.js";
+import {
+  createOpenAiCompatibleProviderAdapter,
+  createProviderAdapters,
+  createUserOpenAiCompatibleProfile,
+} from "./provider-config.js";
 import type {
   AiCallRequest,
   AiCallResult,
   AiProviderType,
+  ModelProfile,
   ModelSelection,
   SimulationStep,
   SimulationType,
 } from "./types.js";
 
+type ResolveModelFn = (
+  selection: ModelSelection | undefined,
+  scenarioType: SimulationType,
+  step: SimulationStep,
+) => ModelProfile;
+
 export interface AiGatewayOptions {
   adapters?: AiProviderAdapter[];
   onLog?: (entry: AiCallLogEntry) => void;
   onDebugTrace?: AiDebugTraceWriter;
+  resolveModel?: ResolveModelFn;
 }
 
 export interface CreateAiCallRequestParams {
@@ -36,12 +48,14 @@ export interface CreateAiCallRequestParams {
 
 export class AiGateway {
   private readonly adapters = new Map<AiProviderType, AiProviderAdapter>();
+  private readonly resolveModel: ResolveModelFn;
   onLog?: (entry: AiCallLogEntry) => void;
   onDebugTrace?: AiDebugTraceWriter;
 
   constructor(apiKey = "", options: AiGatewayOptions = {}) {
     this.onLog = options.onLog;
     this.onDebugTrace = options.onDebugTrace;
+    this.resolveModel = options.resolveModel ?? resolveModel;
 
     const adapters =
       options.adapters ??
@@ -106,7 +120,7 @@ export class AiGateway {
   }
 
   createRequest(params: CreateAiCallRequestParams): AiCallRequest {
-    const profile = resolveModel(
+    const profile = this.resolveModel(
       params.modelSelection,
       params.scenarioType,
       params.step,
@@ -131,6 +145,29 @@ export class AiGateway {
       metadata: params.metadata ?? {},
     };
   }
+}
+
+export function createUserOpenAiCompatibleGateway(input: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  adapter?: AiProviderAdapter;
+}): AiGateway {
+  return new AiGateway("", {
+    adapters: [
+      input.adapter ??
+        createOpenAiCompatibleProviderAdapter({
+          apiKey: input.apiKey,
+          baseUrl: input.baseUrl,
+        }),
+    ],
+    resolveModel: (selection, _scenarioType, _step) =>
+      createUserOpenAiCompatibleProfile({
+        quality: selection?.mode ?? "balanced",
+        baseUrl: input.baseUrl,
+        model: input.model,
+      }),
+  });
 }
 
 function buildPromptHashInput(request: AiCallRequest): string {

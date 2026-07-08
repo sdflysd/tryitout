@@ -56,6 +56,43 @@ ENABLE_AGENT_INTERACTION_MODE="true"
 
 Deep mode makes extra AI calls for world events, agent actions, votes, arbitration, and memory. It can take longer and cost more than the default path.
 
+## Commercial MVP Mode
+
+Commercial mode is the paid path. It requires real backing services and must not use in-memory repositories for accounts, credits, tasks, analytics, feedback, or audit logs.
+
+Set both server and client flags:
+
+```bash
+COMMERCIAL_MODE_ENABLED="true"
+VITE_COMMERCIAL_MODE_ENABLED="true"
+```
+
+Required services and secrets:
+
+```bash
+DATABASE_URL="postgres://tryitout:tryitout@localhost:5432/tryitout"
+REDIS_URL="redis://localhost:6379"
+SESSION_SECRET="long-random-secret"
+ACCESS_CODE_PEPPER="long-random-pepper"
+USER_SECRET_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+Commercial startup fails clearly when required env vars are missing. Run database migrations from `db/migrations/` in filename order; see [`db/README.md`](db/README.md).
+
+Commercial task creation requires a server-side session, sufficient credits, and an access-code credit balance. When `COMMERCIAL_MODE_ENABLED=true`, unauthenticated legacy simulation entry points are rejected or routed through commercial task handlers so credits cannot be bypassed.
+
+Queue and pricing controls:
+
+```bash
+MAX_WEIGHTED_CONCURRENCY="6"
+PLATFORM_LEGACY_CREDIT_COST="1"
+PLATFORM_DEEP_CREDIT_COST="3"
+BYOK_LEGACY_CREDIT_COST="1"
+BYOK_DEEP_CREDIT_COST="2"
+```
+
+BYOK custom model providers are available only to users with the `custom_model_provider` entitlement. User API keys are AES-GCM encrypted with `USER_SECRET_ENCRYPTION_KEY`; provider URLs must be HTTPS, explicitly allowed, and must not target localhost, private networks, link-local ranges, metadata IPs, or unsafe redirects.
+
 ## Safety
 
 Do not commit `.env`, debug traces, local logs, generated model output, or raw user inputs. See the root `SECURITY.md` for details.

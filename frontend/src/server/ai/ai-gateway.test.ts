@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AiGateway } from "./ai-gateway.js";
+import { AiGateway, createUserOpenAiCompatibleGateway } from "./ai-gateway.js";
 import { hashPrompt } from "./call-log.js";
 import type { AiCallRequest, AiCallResult } from "./types.js";
 import { ModelResolutionError } from "./model-router.js";
@@ -21,6 +21,21 @@ class StubAdapter implements AiProviderAdapter {
     }
 
     return this.outcome as AiCallResult<T>;
+  }
+}
+
+class StubOpenAiCompatibleAdapter implements AiProviderAdapter {
+  readonly provider = "openai_compatible" as const;
+  calls: AiCallRequest[] = [];
+
+  async generateJson<T>(request: AiCallRequest): Promise<AiCallResult<T>> {
+    this.calls.push(request);
+    return makeResult({
+      data: { ok: true },
+      provider: "openai_compatible",
+      modelId: request.modelProfile.modelId,
+      modelProfileId: request.modelProfile.id,
+    }) as AiCallResult<T>;
   }
 }
 
@@ -54,6 +69,31 @@ test("createRequest resolves safe mode selections and defaults metadata", () => 
   assert.equal(request.modelProfile.defaults.quality, "fast");
   assert.equal(request.responseFormat, "json");
   assert.deepEqual(request.metadata, {});
+});
+
+test("createUserOpenAiCompatibleGateway resolves requests to user BYOK profile metadata", async () => {
+  const adapter = new StubOpenAiCompatibleAdapter();
+  const gateway = createUserOpenAiCompatibleGateway({
+    apiKey: "sk-user-secret",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    adapter,
+  });
+
+  const request = gateway.createRequest({
+    step: "parse_scenario",
+    scenarioType: "side_hustle",
+    modelSelection: { mode: "balanced" },
+    userPrompt: "private prompt",
+  });
+  const result = await gateway.generateJson(request);
+
+  assert.equal(request.modelProfile.id, "user_openai_compatible_balanced");
+  assert.equal(request.modelProfile.provider, "openai_compatible");
+  assert.equal(request.modelProfile.modelId, "gpt-4.1-mini");
+  assert.equal(request.modelProfile.baseUrl, "https://api.openai.com/v1");
+  assert.equal(result.provider, "openai_compatible");
+  assert.equal(adapter.calls[0], request);
 });
 
 test("createRequest uses json_schema response format when a schema is provided", () => {

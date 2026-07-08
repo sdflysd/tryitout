@@ -143,6 +143,43 @@ Deep mode makes extra model calls for world events, agent actions, voting, arbit
 ENABLE_AGENT_INTERACTION_MODE="true"
 ```
 
+### Commercial MVP Mode
+
+Commercial mode is the paid path, not the in-memory demo path. Accounts, server sessions, access-code credits, paid tasks, reports, feedback, analytics, settings, and audit logs must use Postgres; queue execution must use Redis/BullMQ.
+
+Enable both server and client flags:
+
+```bash
+COMMERCIAL_MODE_ENABLED="true"
+VITE_COMMERCIAL_MODE_ENABLED="true"
+```
+
+Required external services and secrets:
+
+```bash
+DATABASE_URL="postgres://tryitout:tryitout@localhost:5432/tryitout"
+REDIS_URL="redis://localhost:6379"
+SESSION_SECRET="long-random-secret"
+ACCESS_CODE_PEPPER="long-random-pepper"
+USER_SECRET_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+Run migrations from `frontend/db/migrations/` in filename order; see [`frontend/db/README.md`](frontend/db/README.md). Commercial startup fails when required env vars are missing.
+
+Paid task creation requires a server-side session, sufficient credits, and a transactional credit hold. When `COMMERCIAL_MODE_ENABLED=true`, legacy unauthenticated simulation entry points are rejected or routed through commercial task handlers so credits cannot be bypassed.
+
+Queue and pricing controls:
+
+```bash
+MAX_WEIGHTED_CONCURRENCY="6"
+PLATFORM_LEGACY_CREDIT_COST="1"
+PLATFORM_DEEP_CREDIT_COST="3"
+BYOK_LEGACY_CREDIT_COST="1"
+BYOK_DEEP_CREDIT_COST="2"
+```
+
+BYOK custom model providers require the `custom_model_provider` entitlement. User API keys are AES-GCM encrypted with `USER_SECRET_ENCRYPTION_KEY`; provider URLs must be HTTPS, explicitly allowed, and blocked from localhost, private networks, link-local ranges, metadata IPs, and unsafe redirects.
+
 ## Scripts
 
 Run from `frontend/`:
@@ -160,7 +197,7 @@ npm start        # Run built server
 Current local checks:
 
 - `npm run lint` passes.
-- `npm test` passes with 306 tests.
+- `npm test` passes; the commercial MVP branch expands coverage to 400+ tests.
 - `npm run build` passes. Vite currently warns that the main JS chunk is larger than 500 kB; that is a known optimization target, not a release blocker.
 
 ## Privacy And Safety
