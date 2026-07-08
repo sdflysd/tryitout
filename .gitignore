@@ -17,6 +17,7 @@ server.js
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+frontend/*账号密码*.txt
 
 # Logs
 *.log

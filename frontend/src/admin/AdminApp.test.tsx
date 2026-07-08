@@ -4,7 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import AdminApp from "./AdminApp.js";
-import { fetchAdminOverview } from "./admin-client.js";
+import { AdminClientError, fetchAdminOverview } from "./admin-client.js";
 import type { AdminOverviewDto } from "./admin-client.js";
 
 test("AdminApp renders platform operations navigation", () => {
@@ -46,6 +46,22 @@ test("AdminApp can render an operations shell before overview data loads", () =>
 
   assert.match(html, /admin-app-shell/);
   assert.match(html, /Loading live metrics/);
+});
+
+test("AdminApp renders a login callout when the admin session is missing", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp
+      initialLoadError={new AdminClientError(
+        401,
+        "Authentication required",
+        "authentication_required",
+      )}
+    />,
+  );
+
+  assert.match(html, /请先登录管理员账号/);
+  assert.match(html, /href="\/login"/);
+  assert.match(html, /去登录/);
 });
 
 test("AdminApp can render the access-code operations view", () => {

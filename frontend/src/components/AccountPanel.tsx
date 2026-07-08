@@ -48,6 +48,7 @@ export default function AccountPanel({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [accessCode, setAccessCode] = useState("");
+  const canOpenAdmin = user?.role === "owner" || user?.role === "admin" || user?.features.includes("admin_ops") === true;
 
   const handleAuthSubmit = async (
     event: FormEvent<HTMLFormElement>,
@@ -100,15 +101,26 @@ export default function AccountPanel({
         </div>
 
         {user ? (
-          <button
-            type="button"
-            onClick={() => void onLogout?.()}
-            disabled={busy}
-            className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/7 px-2.5 text-[10px] font-black text-white/70 transition-colors hover:border-white/20 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-            Logout
-          </button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {canOpenAdmin && (
+              <a
+                href="/admin"
+                className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-cyan-200/25 bg-cyan-200/10 px-2.5 text-[10px] font-black text-cyan-100 transition-colors hover:bg-cyan-200/15"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                进入后台
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => void onLogout?.()}
+              disabled={busy}
+              className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/7 px-2.5 text-[10px] font-black text-white/70 transition-colors hover:border-white/20 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              Logout
+            </button>
+          </div>
         ) : null}
       </div>
 

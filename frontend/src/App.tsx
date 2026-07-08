@@ -857,11 +857,11 @@ function CommercialAuthPage({
           <>
             <div className="flex items-center gap-2">
               <UserRound className="h-4 w-4 text-cyan-200" aria-hidden="true" />
-              <h1 className="text-sm font-black text-white">Commercial account</h1>
+              <h1 className="text-sm font-black text-white">{isRegister ? "商业账号注册" : "商业账号登录"}</h1>
             </div>
             <form onSubmit={(event) => void handleSubmit(event)} className="mt-4 grid gap-3">
               <label className="block">
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Email</span>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">邮箱</span>
                 <input
                   type="email"
                   value={email}
@@ -871,7 +871,7 @@ function CommercialAuthPage({
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Password</span>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">密码</span>
                 <input
                   type="password"
                   value={password}
@@ -890,7 +890,7 @@ function CommercialAuthPage({
                 ) : (
                   <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                 )}
-                {isRegister ? "Create account" : "Sign in"}
+                {isRegister ? "创建商业账号" : "登录商业账号"}
               </button>
             </form>
 

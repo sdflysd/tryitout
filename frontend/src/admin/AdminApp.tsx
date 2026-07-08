@@ -19,6 +19,7 @@ import CostsPage from "./CostsPage.js";
 import TasksPage from "./TasksPage.js";
 import UsersPage from "./UsersPage.js";
 import {
+  AdminClientError,
   fetchAdminOverview,
   type AdminOverviewDto,
 } from "./admin-client.js";
@@ -27,6 +28,7 @@ interface AdminAppProps {
   overview?: AdminOverviewDto;
   fetchOverview?: () => Promise<AdminOverviewDto>;
   initialView?: AdminNavLabel;
+  initialLoadError?: AdminClientError | Error;
 }
 
 const NAV_ITEMS = [
@@ -96,12 +98,13 @@ export default function AdminApp({
   overview: initialOverview,
   fetchOverview = fetchAdminOverview,
   initialView = "Overview",
+  initialLoadError,
 }: AdminAppProps = {}) {
   const [overview, setOverview] = useState<AdminOverviewDto | undefined>(
     initialOverview,
   );
   const [activeView, setActiveView] = useState<AdminNavLabel>(initialView);
-  const [loadError, setLoadError] = useState<string | undefined>(undefined);
+  const [loadError, setLoadError] = useState<AdminClientError | Error | undefined>(initialLoadError);
   const resolvedOverview = overview ?? EMPTY_OVERVIEW;
   const isLoading = overview === undefined;
   const completionRate = formatPercent(resolvedOverview.tasks.completionRate);
@@ -126,7 +129,7 @@ export default function AdminApp({
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "Unable to load admin overview");
+          setLoadError(error instanceof Error ? error : new Error("Unable to load admin overview"));
         }
       });
 
@@ -191,7 +194,21 @@ export default function AdminApp({
           <div className="space-y-5 p-5">
             {(isLoading || loadError !== undefined) && (
               <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
-                {loadError !== undefined ? loadError : "Loading live metrics"}
+                {loadError !== undefined ? (
+                  isAuthenticationError(loadError) ? (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <span>请先登录管理员账号，再进入商业后台。</span>
+                      <a
+                        href="/login"
+                        className="inline-flex min-h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-[10px] font-black text-white"
+                      >
+                        去登录
+                      </a>
+                    </div>
+                  ) : (
+                    getLoadErrorMessage(loadError)
+                  )
+                ) : "Loading live metrics"}
               </section>
             )}
             <AdminView
@@ -443,4 +460,16 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function isAuthenticationError(error: AdminClientError | Error): boolean {
+  return error instanceof AdminClientError && (
+    error.status === 401 ||
+    error.code === "authentication_required" ||
+    error.code === "admin_required"
+  );
+}
+
+function getLoadErrorMessage(error: AdminClientError | Error): string {
+  return error.message || "Unable to load admin overview";
 }

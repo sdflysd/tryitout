@@ -51,9 +51,9 @@ test("login path renders a standalone commercial login page", async () => {
   try {
     const html = renderToStaticMarkup(<App />);
     assert.match(html, /auth-page-login/);
-    assert.match(html, /Commercial account/);
-    assert.match(html, /Sign in/);
-    assert.doesNotMatch(html, /Create account/);
+    assert.match(html, /商业账号登录/);
+    assert.match(html, /登录商业账号/);
+    assert.doesNotMatch(html, /创建商业账号/);
     assert.doesNotMatch(html, /home-view-container/);
   } finally {
     Object.defineProperty(globalThis, "location", {
@@ -74,9 +74,9 @@ test("register path renders a standalone commercial registration page", async ()
   try {
     const html = renderToStaticMarkup(<App />);
     assert.match(html, /auth-page-register/);
-    assert.match(html, /Commercial account/);
-    assert.match(html, /Create account/);
-    assert.doesNotMatch(html, /Sign in</);
+    assert.match(html, /商业账号注册/);
+    assert.match(html, /创建商业账号/);
+    assert.doesNotMatch(html, /登录商业账号/);
     assert.doesNotMatch(html, /home-view-container/);
   } finally {
     Object.defineProperty(globalThis, "location", {

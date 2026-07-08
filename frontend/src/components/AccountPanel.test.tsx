@@ -53,6 +53,35 @@ test("account panel shows commercial identity, tier, balance, frozen credits, an
   assert.match(html, /sk-liv\.\.\.3456/);
 });
 
+test("account panel exposes an admin console link for owner accounts", () => {
+  const html = renderToStaticMarkup(
+    <AccountPanel
+      user={{
+        id: "owner_1",
+        email: "admin@example.test",
+        emailNormalized: "admin@example.test",
+        role: "owner",
+        tier: "business",
+        status: "active",
+        features: ["admin_ops"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      account={{
+        userId: "owner_1",
+        balance: 0,
+        frozenCredits: 0,
+        totalRedeemed: 0,
+        totalCaptured: 0,
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+    />,
+  );
+
+  assert.match(html, /href="\/admin"/);
+  assert.match(html, /进入后台/);
+});
+
 test("account panel renders a compact login and registration form when signed out", () => {
   const html = renderToStaticMarkup(
     <AccountPanel
