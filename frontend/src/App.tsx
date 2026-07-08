@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Flame, Sparkles } from "lucide-react";
+import { Flame, LogIn, Sparkles, UserRound } from "lucide-react";
 import AdminApp from "./admin/AdminApp";
 import { fetchAgentRuntimeCapabilities } from "./agent-runtime-client";
 import {
@@ -153,6 +153,9 @@ export default function App() {
   const [commercialBusy, setCommercialBusy] = useState(false);
   const [commercialStatus, setCommercialStatus] = useState("");
   const [commercialError, setCommercialError] = useState("");
+  const [accountPanelOpen, setAccountPanelOpen] = useState(
+    () => typeof globalThis.window === "undefined",
+  );
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
@@ -504,6 +507,7 @@ export default function App() {
     try {
       await loginCommercialUser(input);
       await refreshCommercialAccount();
+      setAccountPanelOpen(true);
       setCommercialStatus("Signed in. Credits loaded.");
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
@@ -520,6 +524,7 @@ export default function App() {
       await registerCommercialUser(input);
       await loginCommercialUser(input);
       await refreshCommercialAccount();
+      setAccountPanelOpen(true);
       setCommercialStatus("Account created. Credits loaded.");
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
@@ -577,6 +582,11 @@ export default function App() {
     providerMode: "platform",
   });
   const commercialMode = commercialAvailable;
+  const shouldShowAccountPanel = accountPanelOpen || Boolean(commercialUser);
+  const accountEntryLabel = commercialUser ? "账号" : "登录/注册";
+  const accountEntryAriaLabel = commercialUser
+    ? "打开商业账号面板"
+    : "打开商业账号登录";
 
   return (
     <div id="app-root-container" className="min-h-screen flex flex-col bg-[#050711] text-[#f8fafc]">
@@ -597,11 +607,26 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-xs font-semibold text-white/60">
+          <div className="flex items-center gap-2 text-xs font-semibold text-white/60 sm:gap-3">
             <span className="hidden md:inline-flex items-center gap-1 bg-white/6 border border-white/10 text-white/58 px-2.5 py-1 rounded-md text-3xs font-mono">
               <Sparkles className="w-3 h-3 text-amber-500" />
               <span>Multi-Agent Sandbox</span>
             </span>
+            <button
+              id="btn-open-commercial-account"
+              type="button"
+              onClick={() => setAccountPanelOpen((open) => !open)}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-black text-cyan-100 transition-colors hover:border-cyan-200/40 hover:bg-cyan-200/15 cursor-pointer"
+              aria-label={accountEntryAriaLabel}
+              title={accountEntryAriaLabel}
+            >
+              {commercialUser ? (
+                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span>{accountEntryLabel}</span>
+            </button>
             <button
               id="btn-toggle-language"
               type="button"
@@ -618,7 +643,7 @@ export default function App() {
 
       {/* Main Container */}
       <main id="app-main-content" className="flex-1 py-4 md:py-8">
-        {commercialAvailable && (
+        {shouldShowAccountPanel && (
           <div className="mx-auto max-w-4xl px-4 pb-4">
             <AccountPanel
               user={commercialUser}

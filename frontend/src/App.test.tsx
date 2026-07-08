@@ -27,6 +27,15 @@ test("app header exposes a language switch", async () => {
   assert.match(html, />EN</);
 });
 
+test("app header exposes a visible commercial login entry", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(<App />);
+
+  assert.match(html, /btn-open-commercial-account/);
+  assert.match(html, /aria-label="打开商业账号登录"/);
+  assert.match(html, />登录\/注册</);
+});
+
 test("app shell reserves a commercial account panel without replacing demo flow", async () => {
   const { default: App } = await import("./App.js");
   const html = renderToStaticMarkup(<App />);
