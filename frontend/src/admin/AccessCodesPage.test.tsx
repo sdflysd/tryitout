@@ -3,8 +3,11 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import AccessCodesPage from "./AccessCodesPage.js";
+import AccessCodesPage, {
+  getAccessCodeCreateFailureMessage,
+} from "./AccessCodesPage.js";
 import {
+  AdminClientError,
   createAdminAccessCodeBatch,
   disableAdminAccessCodeBatch,
   fetchAdminAccessCodeBatches,
@@ -16,7 +19,7 @@ import type {
 
 test("AccessCodesPage renders batch operating columns with campaign context", () => {
   const html = renderToStaticMarkup(
-    <AccessCodesPage initialBatches={[makeBatch()]} />,
+    <AccessCodesPage initialBatches={[makeBatch()]} language="en-US" />,
   );
 
   for (const text of [
@@ -37,8 +40,51 @@ test("AccessCodesPage renders batch operating columns with campaign context", ()
   }
 });
 
+test("AccessCodesPage renders Chinese operator copy", () => {
+  const html = renderToStaticMarkup(
+    <AccessCodesPage initialBatches={[makeBatch()]} language="zh-CN" />,
+  );
+
+  for (const text of [
+    "访问码运营",
+    "批次名称",
+    "来源",
+    "额度",
+    "权益",
+    "兑换率",
+    "生成活动批次",
+    "生成可复制原始码",
+    "创建结果",
+    "禁用",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
+});
+
+test("AccessCodesPage requires a campaign name before submitting", () => {
+  const html = renderToStaticMarkup(
+    <AccessCodesPage initialBatches={[]} language="zh-CN" />,
+  );
+
+  assert.match(
+    html,
+    /placeholder="Founding Customers"[^>]*required=""/,
+  );
+});
+
+test("AccessCodesPage formats access-code creation failures in the active language", () => {
+  const message = getAccessCodeCreateFailureMessage(
+    "zh-CN",
+    new AdminClientError(400, "name is required", "invalid_admin_input"),
+  );
+
+  assert.equal(message, "创建失败：name is required");
+});
+
 test("AccessCodesPage renders a business-ready creation form", () => {
-  const html = renderToStaticMarkup(<AccessCodesPage initialBatches={[]} />);
+  const html = renderToStaticMarkup(
+    <AccessCodesPage initialBatches={[]} language="en-US" />,
+  );
 
   for (const label of [
     "Campaign name",
@@ -68,6 +114,7 @@ test("AccessCodesPage shows raw creation results only in the copy panel", () => 
     <AccessCodesPage
       initialBatches={[makeBatch()]}
       initialCreationResult={created}
+      language="en-US"
     />,
   );
 

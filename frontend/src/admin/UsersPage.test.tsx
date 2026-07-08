@@ -13,7 +13,9 @@ import {
 import type { AdminUserRowDto } from "./admin-client.js";
 
 test("UsersPage renders user, credit, redemption, task, and activity controls", () => {
-  const html = renderToStaticMarkup(<UsersPage users={[makeUser()]} />);
+  const html = renderToStaticMarkup(
+    <UsersPage users={[makeUser()]} language="en-US" />,
+  );
 
   for (const text of [
     "Email",
@@ -40,6 +42,27 @@ test("UsersPage renders a live loading state before fetched users arrive", () =>
   );
 
   assert.match(html, /Loading commercial users/);
+});
+
+test("UsersPage renders Chinese operator copy", () => {
+  const html = renderToStaticMarkup(
+    <UsersPage users={[makeUser()]} language="zh-CN" />,
+  );
+
+  for (const text of [
+    "用户运营",
+    "邮箱",
+    "状态",
+    "等级",
+    "可用额度",
+    "冻结额度",
+    "已兑换批次",
+    "近期活动",
+    "额度调整",
+    "确认调整",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
 });
 
 test("admin client adjusts user credits through the admin endpoint", async () => {

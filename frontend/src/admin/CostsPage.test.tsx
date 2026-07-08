@@ -8,7 +8,9 @@ import { fetchAdminCostSummary } from "./admin-client.js";
 import type { AdminCostSummaryDto } from "./admin-client.js";
 
 test("CostsPage groups cost by provider, model, step, task, and outcome", () => {
-  const html = renderToStaticMarkup(<CostsPage summary={makeSummary()} />);
+  const html = renderToStaticMarkup(
+    <CostsPage summary={makeSummary()} language="en-US" />,
+  );
 
   for (const text of [
     "Provider",
@@ -46,6 +48,25 @@ test("admin client fetches cost summary with credentials", async () => {
   assert.equal(summary.providerGroups[0]?.key, "openai");
   assert.equal(calls[0]?.input, "/api/admin/costs");
   assert.equal(calls[0]?.init?.credentials, "include");
+});
+
+test("CostsPage renders Chinese operator copy", () => {
+  const html = renderToStaticMarkup(
+    <CostsPage summary={makeSummary()} language="zh-CN" />,
+  );
+
+  for (const text of [
+    "成本运营",
+    "总预估成本",
+    "供应商",
+    "模型",
+    "步骤",
+    "任务",
+    "成功 / 失败",
+    "退款和供应商质量观察",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
 });
 
 function makeSummary(): AdminCostSummaryDto {

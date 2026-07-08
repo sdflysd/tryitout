@@ -14,6 +14,14 @@ import {
   Workflow,
 } from "lucide-react";
 
+import {
+  DEFAULT_LANGUAGE,
+  LANGUAGE_STORAGE_KEY,
+  getLanguageToggleLabel,
+  getNextLanguage,
+  parseStoredLanguage,
+  type Language,
+} from "../language.js";
 import AccessCodesPage from "./AccessCodesPage.js";
 import AuditLogsPage from "./AuditLogsPage.js";
 import CostsPage from "./CostsPage.js";
@@ -28,12 +36,14 @@ import {
   fetchAdminOverview,
   type AdminOverviewDto,
 } from "./admin-client.js";
+import { getAdminCopy, type AdminCopy } from "./admin-copy.js";
 
 interface AdminAppProps {
   overview?: AdminOverviewDto;
   fetchOverview?: () => Promise<AdminOverviewDto>;
   initialView?: AdminNavLabel;
   initialLoadError?: AdminClientError | Error;
+  initialLanguage?: Language;
 }
 
 const NAV_ITEMS = [
@@ -104,13 +114,16 @@ export default function AdminApp({
   fetchOverview = fetchAdminOverview,
   initialView = "Overview",
   initialLoadError,
+  initialLanguage,
 }: AdminAppProps = {}) {
   const [overview, setOverview] = useState<AdminOverviewDto | undefined>(
     initialOverview,
   );
   const [activeView, setActiveView] = useState<AdminNavLabel>(initialView);
   const [loadError, setLoadError] = useState<AdminClientError | Error | undefined>(initialLoadError);
+  const [language, setLanguage] = useState<Language>(() => initialLanguage ?? getInitialAdminLanguage());
   const resolvedOverview = overview ?? EMPTY_OVERVIEW;
+  const copy = getAdminCopy(language);
   const isLoading = overview === undefined;
   const completionRate = formatPercent(resolvedOverview.tasks.completionRate);
   const failureRate = formatPercent(resolvedOverview.tasks.failureRate);
@@ -118,7 +131,18 @@ export default function AdminApp({
     resolvedOverview.accessCodes.total === 0
       ? 0
       : resolvedOverview.accessCodes.redeemed / resolvedOverview.accessCodes.total,
-  );
+    );
+
+  useEffect(() => {
+    if (initialLanguage !== undefined) {
+      return;
+    }
+    try {
+      globalThis.localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch {
+      // Ignore unavailable storage in SSR/tests.
+    }
+  }, [initialLanguage, language]);
 
   useEffect(() => {
     if (initialOverview !== undefined) {
@@ -153,11 +177,11 @@ export default function AdminApp({
             </div>
             <div>
               <div className="text-sm font-black tracking-tight">tryitout admin</div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Commercial Ops</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{copy.brandSubtitle}</div>
             </div>
           </div>
 
-          <nav className="space-y-1" aria-label="Admin navigation">
+          <nav className="space-y-1" aria-label={copy.navAriaLabel}>
             {NAV_ITEMS.map((item, index) => {
               const Icon = item.icon;
               const active = item.label === activeView;
@@ -173,7 +197,7 @@ export default function AdminApp({
                   }`}
                 >
                   <Icon className="h-4 w-4" aria-hidden="true" />
-                  <span>{item.label}</span>
+                  <span>{copy.nav[item.label]}</span>
                 </button>
               );
             })}
@@ -184,14 +208,24 @@ export default function AdminApp({
           <header className="border-b border-slate-200 bg-white px-5 py-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
-                <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Platform Control Center</div>
-                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{activeView}</h1>
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">{copy.shell.eyebrow}</div>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{copy.nav[activeView]}</h1>
               </div>
-              <div className="flex flex-wrap gap-2 text-xs font-bold">
-                <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">Commercial mode monitored</span>
-                <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">Queue Backlog {resolvedOverview.queue.backlog}</span>
-                <span className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">Active Weight {resolvedOverview.queue.activeWeight ?? 0}/{resolvedOverview.queue.maxWeight ?? 0}</span>
-                <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">Oldest {resolvedOverview.queue.oldestQueuedAt ?? "none"}</span>
+              <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                <button
+                  id="btn-admin-toggle-language"
+                  type="button"
+                  onClick={() => setLanguage((current) => getNextLanguage(current))}
+                  className="inline-flex min-h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
+                  aria-label={copy.languageToggleAriaLabel}
+                  title={copy.languageToggleAriaLabel}
+                >
+                  {getLanguageToggleLabel(language)}
+                </button>
+                <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{copy.shell.badges.commercialMode}</span>
+                <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">{copy.shell.badges.queueBacklog} {resolvedOverview.queue.backlog}</span>
+                <span className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">{copy.shell.badges.activeWeight} {resolvedOverview.queue.activeWeight ?? 0}/{resolvedOverview.queue.maxWeight ?? 0}</span>
+                <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">{copy.shell.badges.oldest} {resolvedOverview.queue.oldestQueuedAt ?? copy.shell.badges.none}</span>
               </div>
             </div>
           </header>
@@ -202,18 +236,18 @@ export default function AdminApp({
                 {loadError !== undefined ? (
                   isAuthenticationError(loadError) ? (
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <span>请先登录管理员账号，再进入商业后台。</span>
+                      <span>{copy.shell.loginRequired}</span>
                       <a
                         href="/login"
                         className="inline-flex min-h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-[10px] font-black text-white"
                       >
-                        去登录
+                        {copy.shell.loginAction}
                       </a>
                     </div>
                   ) : (
                     getLoadErrorMessage(loadError)
                   )
-                ) : "Loading live metrics"}
+                ) : copy.shell.loading}
               </section>
             )}
             <AdminView
@@ -222,6 +256,8 @@ export default function AdminApp({
               completionRate={completionRate}
               failureRate={failureRate}
               redemptionRate={redemptionRate}
+              language={language}
+              copy={copy}
             />
           </div>
         </main>
@@ -236,21 +272,25 @@ function AdminView({
   completionRate,
   failureRate,
   redemptionRate,
+  language,
+  copy,
 }: {
   activeView: AdminNavLabel;
   overview: AdminOverviewDto;
   completionRate: string;
   failureRate: string;
   redemptionRate: string;
+  language: Language;
+  copy: AdminCopy;
 }) {
   if (activeView === "Access Codes") {
-    return <AccessCodesPage />;
+    return <AccessCodesPage language={language} />;
   }
   if (activeView === "Users") {
-    return <UsersPage />;
+    return <UsersPage language={language} />;
   }
   if (activeView === "Tasks") {
-    return <TasksPage />;
+    return <TasksPage language={language} />;
   }
   if (activeView === "Credits") {
     return <CreditsPage />;
@@ -259,7 +299,7 @@ function AdminView({
     return <QueuePage />;
   }
   if (activeView === "Costs") {
-    return <CostsPage />;
+    return <CostsPage language={language} />;
   }
   if (activeView === "Feedback") {
     return <FeedbackPage />;
@@ -277,6 +317,7 @@ function AdminView({
       completionRate={completionRate}
       failureRate={failureRate}
       redemptionRate={redemptionRate}
+      copy={copy}
     />
   );
 }
@@ -286,76 +327,78 @@ function OverviewDashboard({
   completionRate,
   failureRate,
   redemptionRate,
+  copy,
 }: {
   overview: AdminOverviewDto;
   completionRate: string;
   failureRate: string;
   redemptionRate: string;
+  copy: AdminCopy;
 }) {
   return (
     <>
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Admin metrics">
-        <Metric title="Total Users" value={overview.users.total} detail={`${overview.users.active} active / ${overview.users.disabled} disabled`} tone="slate" />
-        <Metric title="Redeemed Users" value={overview.users.redeemed} detail={`${redemptionRate} code redemption`} tone="emerald" />
-        <Metric title="Task Completion" value={completionRate} detail={`${overview.tasks.byStatus.completed} completed`} tone="cyan" />
-        <Metric title="Failure Rate" value={failureRate} detail={`${overview.tasks.byStatus.failed} failed tasks`} tone="rose" />
-        <Metric title="Estimated Cost" value={`¥${overview.costs.estimatedTotal.toFixed(2)}`} detail={`${overview.credits.consumed} credits consumed`} tone="amber" />
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label={copy.overview.metricsAriaLabel}>
+        <Metric title={copy.overview.metrics.totalUsers} value={overview.users.total} detail={copy.overview.details.activeDisabled(overview.users.active, overview.users.disabled)} tone="slate" />
+        <Metric title={copy.overview.metrics.redeemedUsers} value={overview.users.redeemed} detail={copy.overview.details.codeRedemption(redemptionRate)} tone="emerald" />
+        <Metric title={copy.overview.metrics.taskCompletion} value={completionRate} detail={copy.overview.details.completed(overview.tasks.byStatus.completed)} tone="cyan" />
+        <Metric title={copy.overview.metrics.failureRate} value={failureRate} detail={copy.overview.details.failedTasks(overview.tasks.byStatus.failed)} tone="rose" />
+        <Metric title={copy.overview.metrics.estimatedCost} value={`¥${overview.costs.estimatedTotal.toFixed(2)}`} detail={copy.overview.details.creditsConsumed(overview.credits.consumed)} tone="amber" />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
         <div className="space-y-5">
           <div className="border border-slate-200 bg-white">
-            <PanelHeader title="Recent Failures" icon={Activity} action={`${overview.tasks.byStatus.failed} open`} />
+            <PanelHeader title={copy.overview.panels.recentFailures} icon={Activity} action={`${overview.tasks.byStatus.failed} open`} />
             <table className="w-full text-left text-xs">
               <thead className="border-y border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.14em] text-slate-500">
                 <tr>
-                  <th className="px-4 py-2 font-black">Area</th>
-                  <th className="px-4 py-2 font-black">Signal</th>
-                  <th className="px-4 py-2 font-black">Impact</th>
+                  <th className="px-4 py-2 font-black">{copy.overview.table.area}</th>
+                  <th className="px-4 py-2 font-black">{copy.overview.table.signal}</th>
+                  <th className="px-4 py-2 font-black">{copy.overview.table.impact}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                <SignalRow area="Tasks" signal={`${failureRate} failed`} impact="Review provider, worker, and prompt safety errors" />
-                <SignalRow area="Queue" signal={`${overview.queue.backlog} backlog`} impact="Watch capacity before paid users stall" />
-                <SignalRow area="Stuck Tasks" signal={`${overview.queue.stuck ?? 0} stuck`} impact={`${overview.queue.retrying ?? 0} retrying / ${overview.queue.running ?? overview.tasks.byStatus.running} running`} />
-                <SignalRow area="Codes" signal={`${overview.accessCodes.disabled} disabled`} impact="Audit campaign shutdowns and partner batches" />
+                <SignalRow area={copy.overview.signals.tasks} signal={copy.overview.signals.failed(failureRate)} impact={copy.overview.signals.taskImpact} />
+                <SignalRow area={copy.overview.signals.queue} signal={copy.overview.signals.backlog(overview.queue.backlog)} impact={copy.overview.signals.queueImpact} />
+                <SignalRow area={copy.overview.signals.stuckTasks} signal={copy.overview.signals.stuck(overview.queue.stuck ?? 0)} impact={copy.overview.signals.stuckImpact(overview.queue.retrying ?? 0, overview.queue.running ?? overview.tasks.byStatus.running)} />
+                <SignalRow area={copy.overview.signals.codes} signal={copy.overview.signals.disabled(overview.accessCodes.disabled)} impact={copy.overview.signals.codeImpact} />
               </tbody>
             </table>
           </div>
 
           <div className="border border-slate-200 bg-white">
-            <PanelHeader title="High Cost Tasks" icon={BadgeDollarSign} action={`¥${overview.costs.estimatedTotal.toFixed(2)} total`} />
+            <PanelHeader title={copy.overview.panels.highCostTasks} icon={BadgeDollarSign} action={copy.overview.costs.total(`¥${overview.costs.estimatedTotal.toFixed(2)}`)} />
             <div className="grid gap-3 p-4 md:grid-cols-3">
-              <CostCell label="Credits Redeemed" value={overview.credits.totalRedeemed} />
-              <CostCell label="Credits Frozen" value={overview.credits.totalFrozen} />
-              <CostCell label="Credits Balance" value={overview.credits.totalBalance} />
+              <CostCell label={copy.overview.costs.creditsRedeemed} value={overview.credits.totalRedeemed} />
+              <CostCell label={copy.overview.costs.creditsFrozen} value={overview.credits.totalFrozen} />
+              <CostCell label={copy.overview.costs.creditsBalance} value={overview.credits.totalBalance} />
             </div>
           </div>
         </div>
 
         <div className="space-y-5">
           <div className="border border-slate-200 bg-white">
-            <PanelHeader title="Redemption Watch" icon={KeyRound} action={`${overview.accessCodes.total} codes`} />
+            <PanelHeader title={copy.overview.panels.redemptionWatch} icon={KeyRound} action={copy.overview.redemption.codes(overview.accessCodes.total)} />
             <div className="space-y-3 p-4">
-              <ProgressLine label="Active" value={overview.accessCodes.active} total={overview.accessCodes.total} tone="emerald" />
-              <ProgressLine label="Redeemed" value={overview.accessCodes.redeemed} total={overview.accessCodes.total} tone="cyan" />
-              <ProgressLine label="Disabled" value={overview.accessCodes.disabled} total={overview.accessCodes.total} tone="rose" />
-              <ProgressLine label="Expired" value={overview.accessCodes.expired} total={overview.accessCodes.total} tone="slate" />
+              <ProgressLine label={copy.overview.redemption.active} value={overview.accessCodes.active} total={overview.accessCodes.total} tone="emerald" />
+              <ProgressLine label={copy.overview.redemption.redeemed} value={overview.accessCodes.redeemed} total={overview.accessCodes.total} tone="cyan" />
+              <ProgressLine label={copy.overview.redemption.disabled} value={overview.accessCodes.disabled} total={overview.accessCodes.total} tone="rose" />
+              <ProgressLine label={copy.overview.redemption.expired} value={overview.accessCodes.expired} total={overview.accessCodes.total} tone="slate" />
             </div>
           </div>
 
           <div className="border border-slate-200 bg-slate-950 p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Operator Focus</div>
-                <div className="mt-1 text-lg font-black">Protect paid execution</div>
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">{copy.overview.panels.operatorFocus}</div>
+                <div className="mt-1 text-lg font-black">{copy.overview.panels.protectPaidExecution}</div>
               </div>
               <Workflow className="h-5 w-5 text-cyan-300" aria-hidden="true" />
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-              <MiniStat label="Queued" value={overview.tasks.byStatus.queued} />
-              <MiniStat label="Running" value={overview.queue.running ?? overview.tasks.byStatus.running} />
-              <MiniStat label="Stuck" value={overview.queue.stuck ?? 0} />
+              <MiniStat label={copy.overview.miniStats.queued} value={overview.tasks.byStatus.queued} />
+              <MiniStat label={copy.overview.miniStats.running} value={overview.queue.running ?? overview.tasks.byStatus.running} />
+              <MiniStat label={copy.overview.miniStats.stuck} value={overview.queue.stuck ?? 0} />
             </div>
           </div>
         </div>
@@ -480,6 +523,14 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function getInitialAdminLanguage(): Language {
+  try {
+    return parseStoredLanguage(globalThis.localStorage?.getItem(LANGUAGE_STORAGE_KEY) ?? null) ?? DEFAULT_LANGUAGE;
+  } catch {
+    return DEFAULT_LANGUAGE;
+  }
 }
 
 function isAuthenticationError(error: AdminClientError | Error): boolean {

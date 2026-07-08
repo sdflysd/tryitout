@@ -11,15 +11,18 @@ import {
   UserCog,
 } from "lucide-react";
 
+import { type Language } from "../language.js";
 import {
   adjustAdminUserCredits,
   fetchAdminUsers,
   type AdminUserRowDto,
 } from "./admin-client.js";
+import { getAdminCopy, type AdminCopy } from "./admin-copy.js";
 
 interface UsersPageProps {
   users?: AdminUserRowDto[];
   fetchUsers?: () => Promise<AdminUserRowDto[]>;
+  language?: Language;
 }
 
 const EMPTY_USERS: AdminUserRowDto[] = [];
@@ -27,7 +30,9 @@ const EMPTY_USERS: AdminUserRowDto[] = [];
 export default function UsersPage({
   users,
   fetchUsers = fetchAdminUsers,
+  language,
 }: UsersPageProps) {
+  const copy = getAdminCopy(language);
   const [rows, setRows] = useState<AdminUserRowDto[]>(users ?? EMPTY_USERS);
   const [isLoading, setIsLoading] = useState(users === undefined);
   const [loadError, setLoadError] = useState("");
@@ -88,10 +93,10 @@ export default function UsersPage({
   const handleAdjustCredits = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (selectedUser === undefined) {
-      setStatusMessage("Select a user before adjusting credits.");
+      setStatusMessage(copy.users.creditAdjustment.selectUser);
       return;
     }
-    setStatusMessage("Submitting credit adjustment...");
+    setStatusMessage(copy.users.creditAdjustment.submitting);
     const result = await adjustAdminUserCredits(selectedUser.id, {
       amount: adjustment.amount,
       reason: adjustment.reason,
@@ -109,7 +114,7 @@ export default function UsersPage({
           : user,
       ),
     );
-    setStatusMessage(`Credit adjustment recorded: ${result.ledger.amount} credits.`);
+    setStatusMessage(copy.users.creditAdjustment.recorded(result.ledger.amount));
   };
 
   return (
@@ -120,11 +125,11 @@ export default function UsersPage({
         </section>
       )}
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="User operations metrics">
-        <Metric title="Active Users" value={activeUsers} detail={`${disabledUsers} disabled`} tone="emerald" />
-        <Metric title="Available Credits" value={totalAvailable} detail={`${totalFrozen} frozen`} tone="cyan" />
-        <Metric title="Redeemed Batches" value={totalRedeemedBatches} detail="Campaign conversion signal" tone="amber" />
-        <Metric title="Failed Tasks" value={totalFailedTasks} detail="Needs support review" tone="rose" />
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label={copy.users.metricsAriaLabel}>
+        <Metric title={copy.users.metrics.activeUsers} value={activeUsers} detail={copy.users.metrics.disabled(disabledUsers)} tone="emerald" />
+        <Metric title={copy.users.metrics.availableCredits} value={totalAvailable} detail={copy.users.metrics.frozen(totalFrozen)} tone="cyan" />
+        <Metric title={copy.users.metrics.redeemedBatches} value={totalRedeemedBatches} detail={copy.users.metrics.campaignSignal} tone="amber" />
+        <Metric title={copy.users.metrics.failedTasks} value={totalFailedTasks} detail={copy.users.metrics.supportReview} tone="rose" />
       </section>
 
       <section className="border border-slate-200 bg-white">
@@ -132,27 +137,27 @@ export default function UsersPage({
           <div className="flex items-center gap-2">
             <UserCog className="h-4 w-4 text-slate-500" aria-hidden="true" />
             <div>
-              <h2 className="text-sm font-black text-slate-950">User Operations</h2>
-              <p className="text-xs font-semibold text-slate-500">Commercial accounts, credit health, redemption source, and task reliability.</p>
+              <h2 className="text-sm font-black text-slate-950">{copy.users.title}</h2>
+              <p className="text-xs font-semibold text-slate-500">{copy.users.description}</p>
             </div>
           </div>
-          <div className="text-xs font-bold text-slate-500">{rows.length} users tracked</div>
+          <div className="text-xs font-bold text-slate-500">{copy.users.tracked(rows.length)}</div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1120px] text-left text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
               <tr>
-                <th className="px-4 py-2 font-black">Email</th>
-                <th className="px-4 py-2 font-black">Status</th>
-                <th className="px-4 py-2 font-black">Tier</th>
-                <th className="px-4 py-2 font-black">Available</th>
-                <th className="px-4 py-2 font-black">Frozen</th>
-                <th className="px-4 py-2 font-black">Redeemed Batches</th>
-                <th className="px-4 py-2 font-black">Tasks</th>
-                <th className="px-4 py-2 font-black">Completed</th>
-                <th className="px-4 py-2 font-black">Failed</th>
-                <th className="px-4 py-2 font-black">Recent Activity</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.email}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.status}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.tier}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.available}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.frozen}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.redeemedBatches}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.tasks}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.completed}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.failed}</th>
+                <th className="px-4 py-2 font-black">{copy.users.columns.recentActivity}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -163,7 +168,7 @@ export default function UsersPage({
                     <div className="mt-1 font-mono text-[10px] text-slate-400">{user.id}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={user.status} />
+                    <StatusBadge status={user.status} copy={copy} />
                   </td>
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{user.tier}</td>
                   <td className="px-4 py-3 font-mono font-black text-emerald-700">{user.availableCredits}</td>
@@ -172,13 +177,13 @@ export default function UsersPage({
                   <td className="px-4 py-3 font-mono text-slate-700">{user.taskCount}</td>
                   <td className="px-4 py-3 font-mono text-emerald-700">{user.completedTaskCount}</td>
                   <td className="px-4 py-3 font-mono text-rose-700">{user.failedTaskCount}</td>
-                  <td className="px-4 py-3 text-slate-500">{formatDateTime(user.recentActivityAt ?? user.lastLoginAt ?? user.createdAt)}</td>
+                  <td className="px-4 py-3 text-slate-500">{formatDateTime(user.recentActivityAt ?? user.lastLoginAt ?? user.createdAt, copy)}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
-                    No commercial users loaded.
+                    {copy.users.empty}
                   </td>
                 </tr>
               )}
@@ -191,10 +196,10 @@ export default function UsersPage({
         <form onSubmit={(event) => void handleAdjustCredits(event)} className="border border-slate-200 bg-white p-4">
           <div className="mb-4 flex items-center gap-2">
             <CreditCard className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">Credit Adjustment</h2>
+            <h2 className="text-sm font-black text-slate-950">{copy.users.creditAdjustment.title}</h2>
           </div>
           <div className="grid gap-3">
-            <Field label="Target user">
+            <Field label={copy.users.creditAdjustment.targetUser}>
               <select
                 className="admin-input"
                 value={selectedUser?.id ?? selectedUserId}
@@ -208,7 +213,7 @@ export default function UsersPage({
               </select>
             </Field>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Amount">
+              <Field label={copy.users.creditAdjustment.amount}>
                 <input
                   className="admin-input"
                   type="number"
@@ -216,7 +221,7 @@ export default function UsersPage({
                   onChange={(event) => setAdjustment({ ...adjustment, amount: Number(event.target.value) })}
                 />
               </Field>
-              <Field label="Idempotency key">
+              <Field label={copy.users.creditAdjustment.idempotencyKey}>
                 <input
                   className="admin-input"
                   value={adjustment.idempotencyKey}
@@ -225,7 +230,7 @@ export default function UsersPage({
                 />
               </Field>
             </div>
-            <Field label="Reason">
+            <Field label={copy.users.creditAdjustment.reason}>
               <textarea
                 className="admin-input min-h-20"
                 value={adjustment.reason}
@@ -235,7 +240,7 @@ export default function UsersPage({
             </Field>
           </div>
           <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            Confirm adjustment
+            {copy.users.creditAdjustment.submit}
           </button>
           {statusMessage && <p className="mt-3 text-xs font-bold text-slate-500">{statusMessage}</p>}
         </form>
@@ -244,21 +249,21 @@ export default function UsersPage({
           <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
             <div className="flex items-center gap-2">
               <History className="h-4 w-4 text-slate-500" aria-hidden="true" />
-              <h2 className="text-sm font-black text-slate-950">Recent Activity</h2>
+              <h2 className="text-sm font-black text-slate-950">{copy.users.activity.title}</h2>
             </div>
             <span className="rounded-sm bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-              masked account view
+              {copy.users.activity.masked}
             </span>
           </div>
           <div className="grid gap-3 p-4 md:grid-cols-3">
-            <ActivityCell label="Last activity" value={formatDateTime(selectedUser?.recentActivityAt)} />
-            <ActivityCell label="Active tasks" value={selectedUser?.activeTaskCount ?? 0} />
-            <ActivityCell label="Failure ratio" value={formatRatio(selectedUser?.failedTaskCount ?? 0, selectedUser?.taskCount ?? 0)} />
+            <ActivityCell label={copy.users.activity.lastActivity} value={formatDateTime(selectedUser?.recentActivityAt, copy)} />
+            <ActivityCell label={copy.users.activity.activeTasks} value={selectedUser?.activeTaskCount ?? 0} />
+            <ActivityCell label={copy.users.activity.failureRatio} value={formatRatio(selectedUser?.failedTaskCount ?? 0, selectedUser?.taskCount ?? 0)} />
           </div>
           <div className="border-t border-slate-200 p-4">
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>Credit changes must carry a reason and idempotency key so finance, support, and audit logs can reconcile the operator action.</span>
+              <span>{copy.users.activity.notice}</span>
             </div>
           </div>
         </section>
@@ -302,14 +307,14 @@ function Metric({
   );
 }
 
-function StatusBadge({ status }: { status: AdminUserRowDto["status"] }) {
+function StatusBadge({ status, copy }: { status: AdminUserRowDto["status"]; copy: AdminCopy }) {
   const className =
     status === "active"
       ? "bg-emerald-50 text-emerald-700"
       : "bg-rose-50 text-rose-700";
   return (
     <span className={`rounded-sm px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] ${className}`}>
-      {status}
+      {copy.status[status]}
     </span>
   );
 }
@@ -323,8 +328,8 @@ function ActivityCell({ label, value }: { label: string; value: string | number 
   );
 }
 
-function formatDateTime(value: string | undefined): string {
-  return value === undefined ? "none" : value.replace("T", " ").slice(0, 16);
+function formatDateTime(value: string | undefined, copy: AdminCopy): string {
+  return value === undefined ? copy.common.none : value.replace("T", " ").slice(0, 16);
 }
 
 function formatRatio(numerator: number, denominator: number): string {

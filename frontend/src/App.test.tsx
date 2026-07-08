@@ -97,7 +97,7 @@ test("admin path renders the commercial admin shell", async () => {
   try {
     const html = renderToStaticMarkup(<App />);
     assert.match(html, /admin-app-shell/);
-    assert.match(html, /Platform Control Center/);
+    assert.match(html, /平台控制中心/);
   } finally {
     Object.defineProperty(globalThis, "location", {
       configurable: true,

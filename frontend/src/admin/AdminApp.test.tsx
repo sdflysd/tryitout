@@ -15,7 +15,9 @@ import {
 import type { AdminOverviewDto } from "./admin-client.js";
 
 test("AdminApp renders platform operations navigation", () => {
-  const html = renderToStaticMarkup(<AdminApp overview={makeOverview()} />);
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialLanguage="en-US" />,
+  );
 
   for (const label of [
     "Overview",
@@ -33,8 +35,43 @@ test("AdminApp renders platform operations navigation", () => {
   }
 });
 
-test("AdminApp renders supplied operating metrics and monitoring tables", () => {
+test("AdminApp defaults the full admin shell to Chinese", () => {
   const html = renderToStaticMarkup(<AdminApp overview={makeOverview()} />);
+
+  for (const text of [
+    "平台控制中心",
+    "概览",
+    "用户",
+    "访问码",
+    "商业模式监控中",
+    "队列积压",
+    "总用户数",
+    "近期失败",
+    "兑换监控",
+    "保护付费执行",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
+  assert.match(html, /btn-admin-toggle-language/);
+  assert.match(html, /aria-label="Switch language to English"/);
+});
+
+test("AdminApp can render the admin shell in English", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialLanguage="en-US" />,
+  );
+
+  assert.match(html, /Platform Control Center/);
+  assert.match(html, /Overview/);
+  assert.match(html, /Commercial mode monitored/);
+  assert.match(html, /Total Users/);
+  assert.match(html, />中</);
+});
+
+test("AdminApp renders supplied operating metrics and monitoring tables", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp overview={makeOverview()} initialLanguage="en-US" />,
+  );
 
   assert.match(html, /156/);
   assert.match(html, /42/);
@@ -49,7 +86,7 @@ test("AdminApp renders supplied operating metrics and monitoring tables", () => 
 });
 
 test("AdminApp can render an operations shell before overview data loads", () => {
-  const html = renderToStaticMarkup(<AdminApp />);
+  const html = renderToStaticMarkup(<AdminApp initialLanguage="en-US" />);
 
   assert.match(html, /admin-app-shell/);
   assert.match(html, /Loading live metrics/);
@@ -73,7 +110,11 @@ test("AdminApp renders a login callout when the admin session is missing", () =>
 
 test("AdminApp can render the access-code operations view", () => {
   const html = renderToStaticMarkup(
-    <AdminApp overview={makeOverview()} initialView="Access Codes" />,
+    <AdminApp
+      overview={makeOverview()}
+      initialView="Access Codes"
+      initialLanguage="en-US"
+    />,
   );
 
   assert.match(html, /Access Code Operations/);
@@ -82,7 +123,11 @@ test("AdminApp can render the access-code operations view", () => {
 
 test("AdminApp can render the user operations view", () => {
   const html = renderToStaticMarkup(
-    <AdminApp overview={makeOverview()} initialView="Users" />,
+    <AdminApp
+      overview={makeOverview()}
+      initialView="Users"
+      initialLanguage="en-US"
+    />,
   );
 
   assert.match(html, /User Operations/);
@@ -91,7 +136,11 @@ test("AdminApp can render the user operations view", () => {
 
 test("AdminApp can render the task operations view", () => {
   const html = renderToStaticMarkup(
-    <AdminApp overview={makeOverview()} initialView="Tasks" />,
+    <AdminApp
+      overview={makeOverview()}
+      initialView="Tasks"
+      initialLanguage="en-US"
+    />,
   );
 
   assert.match(html, /Task Operations/);
@@ -100,7 +149,11 @@ test("AdminApp can render the task operations view", () => {
 
 test("AdminApp can render the cost operations view", () => {
   const html = renderToStaticMarkup(
-    <AdminApp overview={makeOverview()} initialView="Costs" />,
+    <AdminApp
+      overview={makeOverview()}
+      initialView="Costs"
+      initialLanguage="en-US"
+    />,
   );
 
   assert.match(html, /Cost Operations/);
