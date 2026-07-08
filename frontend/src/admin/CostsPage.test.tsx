@@ -7,7 +7,9 @@ import CostsPage from "./CostsPage.js";
 import type { AdminCostSummaryDto } from "./admin-client.js";
 
 test("CostsPage groups cost by provider, model, step, task, and outcome", () => {
-  const html = renderToStaticMarkup(<CostsPage summary={makeSummary()} />);
+  const html = renderToStaticMarkup(
+    <CostsPage summary={makeSummary()} language="en-US" />,
+  );
 
   for (const text of [
     "Provider",
@@ -21,6 +23,25 @@ test("CostsPage groups cost by provider, model, step, task, and outcome", () => 
     "task_1",
     "failed",
     "¥18.72",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
+});
+
+test("CostsPage renders Chinese operator copy", () => {
+  const html = renderToStaticMarkup(
+    <CostsPage summary={makeSummary()} language="zh-CN" />,
+  );
+
+  for (const text of [
+    "成本运营",
+    "总预估成本",
+    "供应商",
+    "模型",
+    "步骤",
+    "任务",
+    "成功 / 失败",
+    "退款和供应商质量观察",
   ]) {
     assert.match(html, new RegExp(text));
   }

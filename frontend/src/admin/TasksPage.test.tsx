@@ -7,7 +7,9 @@ import TasksPage from "./TasksPage.js";
 import type { AdminTaskRowDto } from "./admin-client.js";
 
 test("TasksPage renders task operations table and task detail timeline", () => {
-  const html = renderToStaticMarkup(<TasksPage tasks={[makeTask()]} />);
+  const html = renderToStaticMarkup(
+    <TasksPage tasks={[makeTask()]} language="en-US" />,
+  );
 
   for (const text of [
     "Task ID",
@@ -25,6 +27,27 @@ test("TasksPage renders task operations table and task detail timeline", () => {
     "Timeline",
     "Step Cost Table",
     "model_timeout",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
+});
+
+test("TasksPage renders Chinese operator copy", () => {
+  const html = renderToStaticMarkup(
+    <TasksPage tasks={[makeTask()]} language="zh-CN" />,
+  );
+
+  for (const text of [
+    "任务运营",
+    "任务 ID",
+    "用户",
+    "场景",
+    "模式",
+    "状态",
+    "排队等待",
+    "运行时长",
+    "时间线",
+    "步骤成本表",
   ]) {
     assert.match(html, new RegExp(text));
   }

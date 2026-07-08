@@ -6,13 +6,16 @@ import {
   Route,
 } from "lucide-react";
 
+import { type Language } from "../language.js";
 import type {
   AdminCostGroupDto,
   AdminCostSummaryDto,
 } from "./admin-client.js";
+import { getAdminCopy, type AdminCopy } from "./admin-copy.js";
 
 interface CostsPageProps {
   summary?: AdminCostSummaryDto;
+  language?: Language;
 }
 
 const EMPTY_SUMMARY: AdminCostSummaryDto = {
@@ -24,15 +27,16 @@ const EMPTY_SUMMARY: AdminCostSummaryDto = {
   outcomeGroups: [],
 };
 
-export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
+export default function CostsPage({ summary = EMPTY_SUMMARY, language }: CostsPageProps) {
+  const copy = getAdminCopy(language);
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label="Cost operations metrics">
-        <Metric title="Total Estimated Cost" value={formatCurrency(summary.totalEstimatedCost)} detail="All tracked model calls" tone="amber" />
-        <Metric title="Provider" value={summary.providerGroups.length} detail="Vendor split" tone="cyan" />
-        <Metric title="Model" value={summary.modelGroups.length} detail="Model mix" tone="emerald" />
-        <Metric title="Step" value={summary.stepGroups.length} detail="Workflow spend" tone="slate" />
-        <Metric title="Task" value={summary.taskGroups.length} detail="High-cost task trail" tone="rose" />
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5" aria-label={copy.costs.metricsAriaLabel}>
+        <Metric title={copy.costs.metrics.totalEstimatedCost} value={formatCurrency(summary.totalEstimatedCost)} detail={copy.costs.metrics.allCalls} tone="amber" />
+        <Metric title={copy.costs.metrics.provider} value={summary.providerGroups.length} detail={copy.costs.metrics.vendorSplit} tone="cyan" />
+        <Metric title={copy.costs.metrics.model} value={summary.modelGroups.length} detail={copy.costs.metrics.modelMix} tone="emerald" />
+        <Metric title={copy.costs.metrics.step} value={summary.stepGroups.length} detail={copy.costs.metrics.workflowSpend} tone="slate" />
+        <Metric title={copy.costs.metrics.task} value={summary.taskGroups.length} detail={copy.costs.metrics.highCostTrail} tone="rose" />
       </section>
 
       <section className="border border-slate-200 bg-white">
@@ -40,34 +44,34 @@ export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
           <div className="flex items-center gap-2">
             <BadgeDollarSign className="h-4 w-4 text-slate-500" aria-hidden="true" />
             <div>
-              <h2 className="text-sm font-black text-slate-950">Cost Operations</h2>
-              <p className="text-xs font-semibold text-slate-500">Provider, model, step, task, and outcome cost controls for commercial execution.</p>
+              <h2 className="text-sm font-black text-slate-950">{copy.costs.title}</h2>
+              <p className="text-xs font-semibold text-slate-500">{copy.costs.description}</p>
             </div>
           </div>
           <div className="font-mono text-xs font-black text-slate-700">{formatCurrency(summary.totalEstimatedCost)}</div>
         </div>
 
         <div className="grid gap-5 p-4 xl:grid-cols-2">
-          <CostGroupTable title="Provider" icon={Boxes} groups={summary.providerGroups} />
-          <CostGroupTable title="Model" icon={Cpu} groups={summary.modelGroups} />
-          <CostGroupTable title="Step" icon={Layers3} groups={summary.stepGroups} />
-          <CostGroupTable title="Task" icon={Route} groups={summary.taskGroups} />
+          <CostGroupTable title={copy.costs.group.provider} icon={Boxes} groups={summary.providerGroups} copy={copy} />
+          <CostGroupTable title={copy.costs.group.model} icon={Cpu} groups={summary.modelGroups} copy={copy} />
+          <CostGroupTable title={copy.costs.group.step} icon={Layers3} groups={summary.stepGroups} copy={copy} />
+          <CostGroupTable title={copy.costs.group.task} icon={Route} groups={summary.taskGroups} copy={copy} />
         </div>
       </section>
 
       <section className="border border-slate-200 bg-white">
         <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
-          <h2 className="text-sm font-black text-slate-950">Success / Failure</h2>
-          <span className="text-xs font-bold text-slate-500">Refund and provider-quality watch</span>
+          <h2 className="text-sm font-black text-slate-950">{copy.costs.outcome.title}</h2>
+          <span className="text-xs font-bold text-slate-500">{copy.costs.outcome.watch}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] text-left text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
               <tr>
-                <th className="px-4 py-2 font-black">Success / Failure</th>
-                <th className="px-4 py-2 font-black">Tokens</th>
-                <th className="px-4 py-2 font-black">Cost</th>
-                <th className="px-4 py-2 font-black">Share</th>
+                <th className="px-4 py-2 font-black">{copy.costs.outcome.column}</th>
+                <th className="px-4 py-2 font-black">{copy.costs.group.tokens}</th>
+                <th className="px-4 py-2 font-black">{copy.costs.group.cost}</th>
+                <th className="px-4 py-2 font-black">{copy.costs.group.share}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -82,7 +86,7 @@ export default function CostsPage({ summary = EMPTY_SUMMARY }: CostsPageProps) {
               {summary.outcomeGroups.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
-                    No outcome cost data loaded.
+                    {copy.costs.outcome.empty}
                   </td>
                 </tr>
               )}
@@ -98,10 +102,12 @@ function CostGroupTable({
   title,
   icon: Icon,
   groups,
+  copy,
 }: {
   title: string;
   icon: typeof Boxes;
   groups: AdminCostGroupDto[];
+  copy: AdminCopy;
 }) {
   const totalCost = groups.reduce((total, group) => total + group.cost, 0);
   return (
@@ -118,9 +124,9 @@ function CostGroupTable({
           <thead className="border-b border-slate-200 text-[10px] uppercase tracking-[0.13em] text-slate-500">
             <tr>
               <th className="px-3 py-2 font-black">{title}</th>
-              <th className="px-3 py-2 font-black">Tokens</th>
-              <th className="px-3 py-2 font-black">Cost</th>
-              <th className="px-3 py-2 font-black">Share</th>
+              <th className="px-3 py-2 font-black">{copy.costs.group.tokens}</th>
+              <th className="px-3 py-2 font-black">{copy.costs.group.cost}</th>
+              <th className="px-3 py-2 font-black">{copy.costs.group.share}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -135,7 +141,7 @@ function CostGroupTable({
             {groups.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-3 py-6 text-center text-xs font-bold text-slate-500">
-                  No {title.toLowerCase()} cost data loaded.
+                  {copy.costs.group.empty(title)}
                 </td>
               </tr>
             )}

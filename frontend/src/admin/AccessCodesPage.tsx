@@ -10,7 +10,9 @@ import {
   ShieldOff,
 } from "lucide-react";
 
+import { type Language } from "../language.js";
 import {
+  AdminClientError,
   createAdminAccessCodeBatch,
   disableAdminAccessCodeBatch,
   type AdminAccessCodeBatchDto,
@@ -19,11 +21,13 @@ import {
   type AdminCreateAccessCodeBatchResultDto,
   type AdminUserTierDto,
 } from "./admin-client.js";
+import { getAdminCopy } from "./admin-copy.js";
 
 interface AccessCodesPageProps {
   initialBatches?: AdminAccessCodeBatchDto[];
   initialCreationResult?: AdminCreateAccessCodeBatchResultDto;
   copyText?: (value: string) => Promise<void> | void;
+  language?: Language;
 }
 
 const FEATURE_OPTIONS: Array<{ value: AdminCommercialFeatureDto; label: string }> = [
@@ -36,7 +40,9 @@ export default function AccessCodesPage({
   initialBatches = [],
   initialCreationResult,
   copyText = defaultCopyText,
+  language,
 }: AccessCodesPageProps) {
+  const copy = getAdminCopy(language);
   const [batches, setBatches] = useState(initialBatches);
   const [creationResult, setCreationResult] = useState(initialCreationResult);
   const [form, setForm] = useState<AdminCreateAccessCodeBatchInputDto>({
@@ -50,6 +56,7 @@ export default function AccessCodesPage({
     notes: "",
   });
   const [statusMessage, setStatusMessage] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
   const rawCodeText = useMemo(
     () => creationResult?.codes.map((code) => code.rawCode).join("\n") ?? "",
     [creationResult],
@@ -66,21 +73,29 @@ export default function AccessCodesPage({
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setStatusMessage("Creating access-code batch...");
-    const result = await createAdminAccessCodeBatch({
-      ...form,
-      expiresAt: form.expiresAt?.trim() || undefined,
-      notes: form.notes?.trim() || undefined,
-      source: form.source?.trim() || undefined,
-    });
-    setCreationResult(result);
-    setBatches((current) => [toBatchDto(result), ...current]);
-    setStatusMessage(`${result.codes.length} raw codes generated. Copy them now.`);
+    setStatusMessage(copy.accessCodes.status.creating);
+    setIsCreating(true);
+    try {
+      const result = await createAdminAccessCodeBatch({
+        ...form,
+        name: form.name.trim(),
+        expiresAt: form.expiresAt?.trim() || undefined,
+        notes: form.notes?.trim() || undefined,
+        source: form.source?.trim() || undefined,
+      });
+      setCreationResult(result);
+      setBatches((current) => [toBatchDto(result), ...current]);
+      setStatusMessage(copy.accessCodes.status.created(result.codes.length));
+    } catch (error) {
+      setStatusMessage(getAccessCodeCreateFailureMessage(language, error));
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleCopyAll = async () => {
     await copyText(rawCodeText);
-    setStatusMessage("Raw codes copied. They will not be reconstructable from storage.");
+    setStatusMessage(copy.accessCodes.status.copied);
   };
 
   const handleDisable = async (batchId: string) => {
@@ -98,7 +113,7 @@ export default function AccessCodesPage({
           : batch,
       ),
     );
-    setStatusMessage(`${result.disabledCodeCount} active codes disabled.`);
+    setStatusMessage(copy.accessCodes.status.disabled(result.disabledCodeCount));
   };
 
   return (
@@ -108,26 +123,26 @@ export default function AccessCodesPage({
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-slate-500" aria-hidden="true" />
             <div>
-              <h2 className="text-sm font-black text-slate-950">Access Code Operations</h2>
-              <p className="text-xs font-semibold text-slate-500">Campaign batches, credit grants, tier unlocks, and masked storage controls.</p>
+              <h2 className="text-sm font-black text-slate-950">{copy.accessCodes.title}</h2>
+              <p className="text-xs font-semibold text-slate-500">{copy.accessCodes.description}</p>
             </div>
           </div>
-          <div className="text-xs font-bold text-slate-500">{batches.length} batches tracked</div>
+          <div className="text-xs font-bold text-slate-500">{copy.accessCodes.tracked(batches.length)}</div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] text-left text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
               <tr>
-                <th className="px-4 py-2 font-black">Batch Name</th>
-                <th className="px-4 py-2 font-black">Source</th>
-                <th className="px-4 py-2 font-black">Credits</th>
-                <th className="px-4 py-2 font-black">Features</th>
-                <th className="px-4 py-2 font-black">Created</th>
-                <th className="px-4 py-2 font-black">Redeemed</th>
-                <th className="px-4 py-2 font-black">Redemption Rate</th>
-                <th className="px-4 py-2 font-black">Status</th>
-                <th className="px-4 py-2 font-black">Action</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.batchName}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.source}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.credits}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.features}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.created}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.redeemed}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.redemptionRate}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.status}</th>
+                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.action}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -137,12 +152,12 @@ export default function AccessCodesPage({
                     <div className="font-black text-slate-950">{batch.name}</div>
                     <div className="mt-1 font-mono text-[10px] text-slate-400">{batch.id}</div>
                   </td>
-                  <td className="px-4 py-3 font-semibold text-slate-700">{batch.source ?? "manual"}</td>
+                  <td className="px-4 py-3 font-semibold text-slate-700">{batch.source ?? copy.common.manual}</td>
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{batch.credits}</td>
                   <td className="px-4 py-3">
                     <div className="flex max-w-64 flex-wrap gap-1">
                       {batch.features.length === 0 ? (
-                        <span className="text-slate-400">standard</span>
+                        <span className="text-slate-400">{copy.common.standard}</span>
                       ) : (
                         batch.features.map((feature) => (
                           <span key={feature} className="rounded-sm bg-cyan-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-700">
@@ -157,7 +172,7 @@ export default function AccessCodesPage({
                   <td className="px-4 py-3 font-mono font-black text-slate-950">{formatPercent(batch.redemptionRate)}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-sm px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] ${batch.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                      {batch.status}
+                      {copy.status[batch.status]}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -167,7 +182,7 @@ export default function AccessCodesPage({
                       className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[10px] font-black text-rose-700"
                     >
                       <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
-                      Disable
+                      {copy.accessCodes.actions.disable}
                     </button>
                   </td>
                 </tr>
@@ -181,23 +196,23 @@ export default function AccessCodesPage({
         <form onSubmit={(event) => void handleCreate(event)} className="border border-slate-200 bg-white p-4">
           <div className="mb-4 flex items-center gap-2">
             <PackagePlus className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">Create Campaign Batch</h2>
+            <h2 className="text-sm font-black text-slate-950">{copy.accessCodes.form.title}</h2>
           </div>
 
           <div className="grid gap-3">
-            <Field label="Campaign name">
-              <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="admin-input" placeholder="Founding Customers" />
+            <Field label={copy.accessCodes.form.campaignName}>
+              <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="admin-input" placeholder="Founding Customers" required />
             </Field>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Code count">
+              <Field label={copy.accessCodes.form.codeCount}>
                 <input type="number" value={form.codeCount} onChange={(event) => setForm({ ...form, codeCount: Number(event.target.value) })} className="admin-input" min={1} />
               </Field>
-              <Field label="Credits per code">
+              <Field label={copy.accessCodes.form.creditsPerCode}>
                 <input type="number" value={form.credits} onChange={(event) => setForm({ ...form, credits: Number(event.target.value) })} className="admin-input" min={1} />
               </Field>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Tier grant">
+              <Field label={copy.accessCodes.form.tierGrant}>
                 <select value={form.tier ?? ""} onChange={(event) => setForm({ ...form, tier: event.target.value as AdminUserTierDto })} className="admin-input">
                   <option value="">none</option>
                   <option value="basic">basic</option>
@@ -205,11 +220,11 @@ export default function AccessCodesPage({
                   <option value="business">business</option>
                 </select>
               </Field>
-              <Field label="Source">
+              <Field label={copy.accessCodes.form.source}>
                 <input value={form.source ?? ""} onChange={(event) => setForm({ ...form, source: event.target.value })} className="admin-input" placeholder="sales-led" />
               </Field>
             </div>
-            <Field label="Features">
+            <Field label={copy.accessCodes.form.features}>
               <div className="flex flex-wrap gap-2">
                 {FEATURE_OPTIONS.map((feature) => (
                   <label key={feature.value} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-xs font-bold text-slate-700">
@@ -223,23 +238,23 @@ export default function AccessCodesPage({
                 ))}
               </div>
             </Field>
-            <Field label="Expiration">
+            <Field label={copy.accessCodes.form.expiration}>
               <input value={form.expiresAt ?? ""} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} className="admin-input" placeholder="2026-08-01T00:00:00.000Z" />
             </Field>
-            <Field label="Operator notes">
+            <Field label={copy.accessCodes.form.operatorNotes}>
               <textarea value={form.notes ?? ""} onChange={(event) => setForm({ ...form, notes: event.target.value })} className="admin-input min-h-20" placeholder="CRM campaign, contract id, support ticket..." />
             </Field>
           </div>
 
-          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            Generate copyable raw codes
+          <button type="submit" disabled={isCreating} className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white disabled:opacity-50">
+            {copy.accessCodes.form.submit}
           </button>
           {statusMessage && <p className="mt-3 text-xs font-bold text-slate-500">{statusMessage}</p>}
         </form>
 
         <section className="border border-slate-200 bg-white">
           <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
-            <h2 className="text-sm font-black text-slate-950">Creation Result</h2>
+            <h2 className="text-sm font-black text-slate-950">{copy.accessCodes.result.title}</h2>
             <button
               type="button"
               onClick={() => void handleCopyAll()}
@@ -247,7 +262,7 @@ export default function AccessCodesPage({
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 text-xs font-black text-slate-700 disabled:opacity-40"
             >
               <ClipboardCopy className="h-4 w-4" aria-hidden="true" />
-              Copy All
+              {copy.accessCodes.actions.copyAll}
             </button>
           </div>
           <div className="grid gap-3 p-4 md:grid-cols-2">
@@ -256,12 +271,12 @@ export default function AccessCodesPage({
                 <div className="font-mono text-sm font-black text-slate-950">{code.rawCode}</div>
                 <div className="mt-2 flex items-center justify-between text-[10px] font-bold text-slate-500">
                   <span>{code.codeMask}</span>
-                  <span>{code.credits} credits</span>
+                  <span>{copy.accessCodes.result.credits(code.credits)}</span>
                 </div>
               </div>
             )) ?? (
               <div className="col-span-full border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs font-bold text-slate-500">
-                Raw codes appear here only after creation. Stored batch data remains masked.
+                {copy.accessCodes.result.empty}
               </div>
             )}
           </div>
@@ -269,6 +284,17 @@ export default function AccessCodesPage({
       </section>
     </div>
   );
+}
+
+export function getAccessCodeCreateFailureMessage(
+  language: Language | undefined,
+  error: unknown,
+): string {
+  const message =
+    error instanceof AdminClientError || error instanceof Error
+      ? error.message
+      : "Unknown error";
+  return getAdminCopy(language).accessCodes.status.createFailed(message);
 }
 
 function Field({
