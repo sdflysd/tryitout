@@ -12,8 +12,12 @@ import type { SimulationQueueJob } from "./simulation-queue.js";
 const CREATED_AT = "2026-07-07T00:00:00.000Z";
 
 test("BullMQ simulation queue name is stable", () => {
-  assert.equal(BULLMQ_SIMULATION_QUEUE_NAME, "tryitout:simulation-tasks");
+  assert.equal(BULLMQ_SIMULATION_QUEUE_NAME, "tryitout-simulation-tasks");
   assert.equal(BULLMQ_SIMULATION_JOB_NAME, "run-simulation-task");
+});
+
+test("BullMQ simulation queue name is accepted by BullMQ v5", () => {
+  assert.equal(BULLMQ_SIMULATION_QUEUE_NAME.includes(":"), false);
 });
 
 test("BullMQ job id equals task id", async () => {

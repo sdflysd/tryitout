@@ -6,7 +6,7 @@ import type {
   SimulationQueueJob,
 } from "./simulation-queue.js";
 
-export const BULLMQ_SIMULATION_QUEUE_NAME = "tryitout:simulation-tasks";
+export const BULLMQ_SIMULATION_QUEUE_NAME = "tryitout-simulation-tasks";
 export const BULLMQ_SIMULATION_JOB_NAME = "run-simulation-task";
 
 export interface BullMqSimulationJobOptions {
