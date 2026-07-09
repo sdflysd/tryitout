@@ -23,6 +23,7 @@ test("progress copy can render English UI text", () => {
 
   assert.match(copy.heading, /business/i);
   assert.match(copy.subHeading, /30 days/i);
+  assert.doesNotMatch(copy.subHeading, /10 to 30 seconds/i);
   assert.match(serialized, /target customer|competitor|cash flow/i);
   assert.doesNotMatch(serialized, /兄弟|副业|获客/);
 });
@@ -32,7 +33,29 @@ test("life-choice progress copy uses decision language instead of side-hustle la
   const serialized = JSON.stringify(copy);
 
   assert.match(serialized, /人生|抉择|机会成本|选择/);
+  assert.doesNotMatch(copy.subHeading, /10 至 30 秒/);
   assert.doesNotMatch(serialized, /副业|搞钱|创业|商业|获客|付费|变现|MVP/);
+});
+
+test("SimulationProgress shows elapsed runtime below the progress bar", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating
+      simulationType="dating"
+      elapsedMs={65_000}
+      progressEvent={{
+        simulationId: "sim-progress",
+        step: "simulate_stage",
+        stageIndex: 4,
+        status: "started",
+        percent: 75,
+        message: "正在推演第 16-23 天...",
+      }}
+    />,
+  );
+
+  assert.match(html, /已运行/);
+  assert.match(html, /01:05/);
 });
 
 test("progress display state follows backend event percent and label", () => {
@@ -50,6 +73,39 @@ test("progress display state follows backend event percent and label", () => {
     logs: ["正在推演第 8-15 天：核心矛盾逼近..."],
     activeMessage: "正在推演第 8-15 天：核心矛盾逼近...",
   });
+});
+
+test("progress display state labels queued commercial tasks as waiting", () => {
+  const event: SimulationProgressEvent = {
+    simulationId: "commercial_task_active",
+    step: "generate_agents",
+    status: "queued",
+    percent: 5,
+    message: "任务已进入商业队列，等待 worker 处理。",
+  };
+
+  assert.deepEqual(getProgressDisplayState(event), {
+    percent: 5,
+    logs: ["任务已进入商业队列，等待 worker 处理。"],
+    activeMessage: "任务已进入商业队列，等待 worker 处理。",
+  });
+});
+
+test("progress display state explains backend steps with concrete user-facing actions", () => {
+  const event: SimulationProgressEvent = {
+    simulationId: "commercial_task_running",
+    step: "generate_agents",
+    status: "started",
+    percent: 20,
+    message: "全局步骤 generate_agents 运行中。",
+  };
+
+  const state = getProgressDisplayState(event, "zh-CN", "side_hustle");
+
+  assert.equal(state.percent, 20);
+  assert.match(state.activeMessage, /正在创建 7 个商业智能体/);
+  assert.match(state.logs.join("\n"), /目标客户 Agent 正在入场/);
+  assert.doesNotMatch(state.logs.join("\n"), /generate_agents/);
 });
 
 test("progress display state has an English establishing state", () => {

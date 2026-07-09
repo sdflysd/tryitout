@@ -1,5 +1,7 @@
 import type {
   InteractionMode,
+  ModelSelection,
+  UserInput,
 } from "../../types.js";
 import type {
   ProviderMode,
@@ -9,8 +11,10 @@ import type { CommercialSimulationTaskRecord } from "./types.js";
 export interface SimulationQueueJob {
   taskId: string;
   userId: string;
+  userInput: UserInput;
   interactionMode: InteractionMode;
   providerMode: ProviderMode;
+  modelSelection?: ModelSelection;
   weight: number;
   priority: number;
   idempotencyKey: string;
@@ -39,12 +43,15 @@ export function getSimulationJobWeight(
 
 export function toSimulationQueueJob(
   task: CommercialSimulationTaskRecord,
+  input: { userInput: UserInput },
 ): SimulationQueueJob {
   return {
     taskId: task.id,
     userId: task.userId,
+    userInput: input.userInput,
     interactionMode: task.interactionMode,
     providerMode: task.providerMode,
+    modelSelection: task.modelSelection,
     weight: getSimulationJobWeight(task),
     priority: task.priority ?? 0,
     idempotencyKey: task.idempotencyKey ?? task.id,
@@ -182,6 +189,8 @@ function validateSimulationQueueJob(job: SimulationQueueJob): SimulationQueueJob
     ...job,
     taskId: validateRequiredString(job.taskId, "taskId"),
     userId: validateRequiredString(job.userId, "userId"),
+    userInput: validateUserInput(job.userInput),
+    modelSelection: validateModelSelection(job.modelSelection),
     weight: validateWeight(job.weight),
     priority: validatePriority(job.priority),
     idempotencyKey,
@@ -208,6 +217,52 @@ function validateQueuedAt(queuedAt: string): string {
     throw new Error("Simulation queue queuedAt must be a valid timestamp");
   }
   return queuedAt;
+}
+
+function validateUserInput(userInput: UserInput): UserInput {
+  if (typeof userInput !== "object" || userInput === null) {
+    throw new Error("Simulation queue userInput must be an object");
+  }
+  if (
+    userInput.type !== "side_hustle" &&
+    userInput.type !== "dating" &&
+    userInput.type !== "life_choice"
+  ) {
+    throw new Error("Simulation queue userInput must include a valid type");
+  }
+  return Object.freeze({ ...userInput }) as UserInput;
+}
+
+function validateModelSelection(
+  modelSelection: ModelSelection | undefined,
+): ModelSelection | undefined {
+  if (modelSelection === undefined) {
+    return undefined;
+  }
+  if (typeof modelSelection !== "object" || modelSelection === null) {
+    throw new Error("Simulation queue modelSelection must be an object");
+  }
+  const allowedModes = new Set(["fast", "balanced", "deep"]);
+  const mode = modelSelection.mode;
+  if (mode !== undefined && !allowedModes.has(mode)) {
+    throw new Error("Simulation queue modelSelection.mode is invalid");
+  }
+  const modelProfileId = modelSelection.modelProfileId;
+  if (
+    modelProfileId !== undefined &&
+    (typeof modelProfileId !== "string" || modelProfileId.trim() === "")
+  ) {
+    throw new Error("Simulation queue modelSelection.modelProfileId is invalid");
+  }
+  const userCredentialId = modelSelection.userCredentialId;
+  if (
+    userCredentialId !== undefined &&
+    typeof userCredentialId !== "string"
+  ) {
+    throw new Error("Simulation queue modelSelection.userCredentialId is invalid");
+  }
+
+  return Object.freeze({ ...modelSelection }) as ModelSelection;
 }
 
 function validateRequiredString(value: string, fieldName: string): string {

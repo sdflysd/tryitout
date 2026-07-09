@@ -4,12 +4,14 @@ import test from "node:test";
 import {
   cancelSimulationTask,
   createSimulationTask,
+  fetchActiveSimulationTask,
   getSimulationTaskReport,
   getSimulationTaskStatus,
   isRecoverableSimulationTaskError,
   resumeSimulationTask,
   resumeSimulationTaskUntilComplete,
   runSimulationTaskUntilComplete,
+  watchSimulationTaskUntilComplete,
 } from "./simulation-tasks.js";
 import type { SimulationProgressEvent } from "./types.js";
 
@@ -161,6 +163,73 @@ test("getSimulationTaskStatus normalizes commercial task status responses", asyn
   });
 }
 );
+
+test("getSimulationTaskStatus preserves commercial worker progress fields", async () => {
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        task: {
+          id: "commercial_task_1",
+          userId: "user_1",
+          scenarioType: "side_hustle",
+          interactionMode: "enabled",
+          providerMode: "platform",
+          status: "running",
+          creditCost: 3,
+          currentStepName: "generate_agent_actions",
+          currentStageIndex: 2,
+          progressPercent: 43,
+          progressMessage: "第 2 阶段 Agent 行动生成开始。",
+          createdAt: "2026-07-07T00:00:00.000Z",
+          updatedAt: "2026-07-07T00:05:00.000Z",
+        },
+      }),
+      { status: 200 },
+    );
+
+  const result = await getSimulationTaskStatus("commercial_task_1", fetchImpl as typeof fetch);
+
+  assert.equal(result.currentStepName, "generate_agent_actions");
+  assert.equal(result.currentStageIndex, 2);
+  assert.equal(result.progressPercent, 43);
+});
+
+test("fetchActiveSimulationTask reads the current commercial active task", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init ?? {} });
+    return new Response(
+      JSON.stringify({
+        task: {
+          id: "commercial_task_active",
+          userId: "user_1",
+          scenarioType: "dating",
+          interactionMode: "enabled",
+          providerMode: "platform",
+          status: "queued",
+          creditCost: 3,
+          createdAt: "2026-07-07T00:00:00.000Z",
+          updatedAt: "2026-07-07T00:00:00.000Z",
+        },
+      }),
+      { status: 200 },
+    );
+  };
+
+  const result = await fetchActiveSimulationTask(fetchImpl as typeof fetch);
+
+  assert.deepEqual(result, {
+    simulationId: "commercial_task_active",
+    scenarioType: "dating",
+    mode: "enabled",
+    status: "queued",
+    progressPercent: 5,
+    recoverable: false,
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  });
+  assert.equal(calls[0]?.url, "/api/simulation-tasks/active");
+  assert.equal(calls[0]?.init.credentials, "include");
+});
 
 test("getSimulationTaskReport normalizes commercial report responses", async () => {
   const report = makeReport("commercial_task_1");
@@ -396,6 +465,52 @@ test("resumeSimulationTaskUntilComplete resumes existing task before polling", a
     "POST /api/simulation-tasks/sim_resume/resume",
     "GET /api/simulation-tasks/sim_resume/status",
     "GET /api/simulation-tasks/sim_resume/report",
+  ]);
+});
+
+test("watchSimulationTaskUntilComplete polls an existing active task without calling resume", async () => {
+  const calls: string[] = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url === "/api/simulation-tasks/sim_active/status") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_active",
+          scenarioType: "side_hustle",
+          mode: "enabled",
+          status: "completed",
+          currentStepName: "generate_report",
+          progressPercent: 100,
+          recoverable: false,
+          updatedAt: "2026-07-02T00:00:02.000Z",
+        }),
+        { status: 200 },
+      );
+    }
+    if (url === "/api/simulation-tasks/sim_active/report") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_active",
+          status: "completed",
+          report: makeReport("sim_active"),
+        }),
+        { status: 200 },
+      );
+    }
+
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  const report = await watchSimulationTaskUntilComplete("sim_active", {
+    fetchImpl: fetchImpl as typeof fetch,
+    pollIntervalMs: 0,
+    sleep: async () => undefined,
+  });
+
+  assert.equal(report.id, "sim_active");
+  assert.deepEqual(calls, [
+    "GET /api/simulation-tasks/sim_active/status",
+    "GET /api/simulation-tasks/sim_active/report",
   ]);
 });
 

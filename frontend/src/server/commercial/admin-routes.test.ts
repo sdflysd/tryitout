@@ -20,6 +20,7 @@ test("commercial admin routes register real platform endpoints", () => {
     { method: "GET", path: "/api/admin/queue" },
     { method: "GET", path: "/api/admin/feedback" },
     { method: "GET", path: "/api/admin/settings" },
+    { method: "POST", path: "/api/admin/settings/platform-models" },
     { method: "POST", path: "/api/admin/users/:id/credits" },
     { method: "GET", path: "/api/admin/audit-logs" },
   ]);

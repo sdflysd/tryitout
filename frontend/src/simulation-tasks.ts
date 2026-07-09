@@ -39,6 +39,22 @@ export async function getSimulationTaskStatus(
   return normalizeSimulationTaskStatusResponse(body);
 }
 
+export async function fetchActiveSimulationTask(
+  fetchImpl: typeof fetch = fetch,
+): Promise<SimulationTaskStatusResponse | undefined> {
+  const body = await readJsonResponse<unknown>(
+    await fetchImpl("/api/simulation-tasks/active", {
+      credentials: "include",
+    }),
+  );
+
+  if (isObject(body) && body.task === undefined) {
+    return undefined;
+  }
+
+  return normalizeSimulationTaskStatusResponse(body);
+}
+
 export async function getSimulationTaskReport(
   simulationId: string,
   fetchImpl: typeof fetch = fetch,
@@ -114,6 +130,13 @@ export async function resumeSimulationTaskUntilComplete(
   return pollSimulationTaskUntilComplete(simulationId, options);
 }
 
+export async function watchSimulationTaskUntilComplete(
+  simulationId: string,
+  options: RunSimulationTaskOptions = {},
+): Promise<SimulationApiResponse> {
+  return pollSimulationTaskUntilComplete(simulationId, options);
+}
+
 interface RunSimulationTaskOptions {
   fetchImpl?: typeof fetch;
   pollIntervalMs?: number;
@@ -162,7 +185,9 @@ function toProgressEvent(status: SimulationTaskStatusResponse): SimulationProgre
     simulationId: status.simulationId,
     step,
     stageIndex: status.currentStageIndex,
-    status: status.status === "completed" ? "completed" : "started",
+    status: status.status === "queued"
+      ? "queued"
+      : status.status === "completed" ? "completed" : "started",
     percent: status.progressPercent,
     message: getTaskProgressMessage(status, step),
     createdAt: status.updatedAt,
@@ -191,6 +216,12 @@ function getTaskProgressMessage(
   status: SimulationTaskStatusResponse,
   step: SimulationProgressStep,
 ): string {
+  if (typeof status.progressMessage === "string" && status.progressMessage.trim()) {
+    return status.progressMessage;
+  }
+  if (status.status === "queued") {
+    return "任务已进入商业队列，等待 worker 处理。";
+  }
   if (status.status === "completed") {
     return "模拟任务完成，正在读取报告。";
   }
@@ -242,13 +273,26 @@ function normalizeSimulationTaskStatusResponse(
   }
   const task = isObject(body) && isObject(body.task) ? body.task : undefined;
   if (task && typeof task.id === "string") {
+    const progressPercent =
+      typeof task.progressPercent === "number"
+        ? task.progressPercent
+        : getCommercialTaskProgressPercent(task.status);
     return {
       simulationId: task.id,
       scenarioType: normalizeScenarioType(task.scenarioType),
       mode: task.interactionMode === "enabled" ? "enabled" : "legacy",
       status: normalizeTaskStatus(task.status),
-      progressPercent: getCommercialTaskProgressPercent(task.status),
+      progressPercent,
       recoverable: false,
+      ...(typeof task.currentStepName === "string"
+        ? { currentStepName: task.currentStepName }
+        : {}),
+      ...(typeof task.currentStageIndex === "number"
+        ? { currentStageIndex: task.currentStageIndex }
+        : {}),
+      ...(typeof task.progressMessage === "string"
+        ? { progressMessage: task.progressMessage }
+        : {}),
       ...(typeof task.errorCode === "string" ? { errorCode: task.errorCode } : {}),
       updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : new Date().toISOString(),
     };

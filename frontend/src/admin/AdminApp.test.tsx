@@ -11,6 +11,7 @@ import {
   fetchAdminOverview,
   fetchAdminQueue,
   fetchAdminSettings,
+  updateAdminPlatformModels,
 } from "./admin-client.js";
 import type { AdminOverviewDto } from "./admin-client.js";
 
@@ -275,6 +276,38 @@ test("admin client fetches queue, feedback, settings, and audit logs with creden
       { input: "/api/admin/audit-logs", credentials: "include" },
     ],
   );
+});
+
+test("admin client saves platform model configuration with credentials", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    return jsonResponse({
+      settings: {
+        items: [],
+        platformModels: {
+          available: [],
+          enabled: [],
+          enabledModelProfileIds: ["anthropic_sonnet_balanced"],
+        },
+      },
+    });
+  };
+
+  const settings = await updateAdminPlatformModels(
+    ["anthropic_sonnet_balanced"],
+    fetchImpl as typeof fetch,
+  );
+
+  assert.deepEqual(settings.platformModels?.enabledModelProfileIds, [
+    "anthropic_sonnet_balanced",
+  ]);
+  assert.equal(calls[0]?.input, "/api/admin/settings/platform-models");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.equal(calls[0]?.init?.credentials, "include");
+  assert.equal(calls[0]?.init?.body, JSON.stringify({
+    enabledModelProfileIds: ["anthropic_sonnet_balanced"],
+  }));
 });
 
 function makeOverview(): AdminOverviewDto {

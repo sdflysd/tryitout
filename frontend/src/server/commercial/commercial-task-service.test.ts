@@ -70,6 +70,30 @@ test("user with insufficient credits cannot create task", async () => {
   assert.equal(await repo.getCommercialTask("simulation_task_1"), undefined);
 });
 
+test("BYOK task creation requires access-code entitlement", async () => {
+  const { service } = await createScenario({ balance: 10 });
+
+  await assert.rejects(
+    service.createTask(makeCreateInput({
+      providerMode: "byok",
+      modelSelection: { userCredentialId: "provider_1", mode: "deep" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+});
+
+test("platform task creation rejects models not enabled by admin", async () => {
+  const { service } = await createScenario({ balance: 10 });
+
+  await assert.rejects(
+    service.createTask(makeCreateInput({
+      providerMode: "platform",
+      modelSelection: { modelProfileId: "gemini_flash_balanced" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+});
+
 test("single user active task limit rejects second queued or running task", async () => {
   const { repo, service } = await createScenario({ balance: 10 });
   const first = await service.createTask(makeCreateInput({ idempotencyKey: "task-key-1" }));
@@ -122,6 +146,7 @@ test("task creation calculates credit cost, creates hold, saves task, and enqueu
     makeCreateInput({
       interactionMode: "enabled",
       providerMode: "platform",
+      modelSelection: { modelProfileId: "anthropic_sonnet_balanced" },
       priority: 7,
       inputSummary: { title: "Should I quit?" },
     }),
@@ -137,9 +162,13 @@ test("task creation calculates credit cost, creates hold, saves task, and enqueu
   const claim = await queue.claimNext();
   assert.equal(claim?.job.taskId, result.task.id);
   assert.equal(claim?.job.userId, "user_1");
+  assert.deepEqual(claim?.job.userInput, makeUserInput());
   assert.equal(claim?.job.weight, 3);
   assert.equal(claim?.job.priority, 7);
   assert.equal(claim?.job.idempotencyKey, "task-key-1");
+  assert.deepEqual(claim?.job.modelSelection, {
+    modelProfileId: "anthropic_sonnet_balanced",
+  });
 });
 
 test("if enqueue fails, hold is released and task is marked failed", async () => {
@@ -294,6 +323,13 @@ async function createScenario(
     await repo.saveUser(makeUser({ status: options.userStatus ?? "active" }));
   }
   await repo.saveCreditAccount(makeCreditAccount({ balance: options.balance ?? 10 }));
+  await repo.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["anthropic_sonnet_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   const creditService = new CreditService({
     repository: repo,
     accessCodePepper: ACCESS_CODE_PEPPER,

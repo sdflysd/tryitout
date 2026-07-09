@@ -183,7 +183,7 @@ const ADMIN_COPY = {
         supportReview: "Needs support review",
       },
       title: "User Operations",
-      description: "Commercial accounts, credit health, redemption source, and task reliability.",
+      description: "Accounts, credit health, redemption source, and task reliability.",
       tracked: (count: number) => `${count} users tracked`,
       columns: {
         email: "Email",
@@ -452,7 +452,7 @@ const ADMIN_COPY = {
         supportReview: "需要客服复核",
       },
       title: "用户运营",
-      description: "商业账号、额度健康、兑换来源和任务可靠性。",
+      description: "账号、额度健康、兑换来源和任务可靠性。",
       tracked: (count: number) => `已跟踪 ${count} 个用户`,
       columns: {
         email: "邮箱",

@@ -17,6 +17,9 @@ test("UsersPage renders user, credit, redemption, task, and activity controls", 
     <UsersPage users={[makeUser()]} language="en-US" />,
   );
 
+  assert.match(html, /Accounts, credit health, redemption source, and task reliability/);
+  assert.doesNotMatch(html, /Commercial accounts/);
+
   for (const text of [
     "Email",
     "Status",
@@ -48,6 +51,9 @@ test("UsersPage renders Chinese operator copy", () => {
   const html = renderToStaticMarkup(
     <UsersPage users={[makeUser()]} language="zh-CN" />,
   );
+
+  assert.match(html, /账号、额度健康、兑换来源和任务可靠性/);
+  assert.doesNotMatch(html, /商业账号/);
 
   for (const text of [
     "用户运营",

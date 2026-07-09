@@ -160,21 +160,18 @@ test("createRequest rejects unsafe model selection keys through model resolution
   );
 });
 
-test("createRequest rejects disallowed model profile overrides through model resolution", () => {
+test("createRequest accepts visible platform model profile overrides", () => {
   const gateway = new AiGateway("test-key", { adapters: [] });
 
-  assert.throws(
-    () =>
-      gateway.createRequest({
-        step: "parse_scenario",
-        scenarioType: "side_hustle",
-        modelSelection: { modelProfileId: "gemini_flash_deep" },
-        userPrompt: "private prompt",
-      }),
-    (error) =>
-      error instanceof ModelResolutionError &&
-      /override not allowed/i.test(error.message),
-  );
+  const request = gateway.createRequest({
+    step: "parse_scenario",
+    scenarioType: "side_hustle",
+    modelSelection: { modelProfileId: "gemini_flash_deep" },
+    userPrompt: "private prompt",
+  });
+
+  assert.equal(request.modelProfile.id, "gemini_flash_deep");
+  assert.equal(request.modelProfile.visibleToUser, true);
 });
 
 test("generateJson dispatches to the registered provider adapter and logs a prompt hash", async () => {

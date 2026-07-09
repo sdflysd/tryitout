@@ -30,7 +30,6 @@ test("validateModelSelection accepts empty and controlled selection keys", () =>
       mode: "deep",
       modelProfileId: "gemini_flash_deep",
       userCredentialId: "cred_123",
-      modelIdOverride: undefined,
     },
   });
 });

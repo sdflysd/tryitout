@@ -4,6 +4,7 @@ import type {
   UserRole,
   UserTier,
 } from "./contracts/commercial.js";
+import type { PlatformModelOption } from "./model-options.js";
 
 export interface CommercialUserDto {
   id: string;
@@ -95,6 +96,10 @@ export interface SaveModelProviderInputDto {
   modelFast?: string;
   modelBalanced?: string;
   modelDeep?: string;
+}
+
+export interface PlatformModelsDto {
+  models: PlatformModelOption[];
 }
 
 export class CommercialClientError extends Error {
@@ -201,6 +206,14 @@ export async function fetchModelProvider(
 ): Promise<{ provider?: PublicModelProviderDto }> {
   const body = await requestCommercialJson("/api/model-provider", {}, fetchImpl);
   return body as unknown as { provider?: PublicModelProviderDto };
+}
+
+export async function fetchPlatformModels(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<PlatformModelsDto> {
+  const body = await requestCommercialJson("/api/platform-models", {}, fetchImpl);
+  assertObjectWithProperty(body, "models", "Invalid platform models response");
+  return body as unknown as PlatformModelsDto;
 }
 
 export async function testModelProvider(

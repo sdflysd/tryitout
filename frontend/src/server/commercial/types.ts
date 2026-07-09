@@ -10,6 +10,7 @@ import type {
 } from "../../contracts/commercial.js";
 import type {
   InteractionMode,
+  ModelSelection,
   Report,
   SimulationApiResponse,
   SimulationType,
@@ -126,6 +127,7 @@ export interface CommercialSimulationTaskRecord {
   scenarioType: SimulationType;
   interactionMode: InteractionMode;
   providerMode: ProviderMode;
+  modelSelection?: ModelSelection;
   status: CommercialTaskStatus;
   creditCost: number;
   creditHoldLedgerId?: string;

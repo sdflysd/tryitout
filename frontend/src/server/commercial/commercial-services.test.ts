@@ -57,6 +57,12 @@ test("commercial mode creates platform services with Postgres and BullMQ adapter
   await services.queue.enqueue({
     taskId: "task_1",
     userId: "user_1",
+    userInput: {
+      type: "life_choice",
+      decisionContext: "Should I quit my job?",
+      optionA: "Stay",
+      optionB: "Quit",
+    },
     interactionMode: "enabled",
     providerMode: "platform",
     weight: 3,

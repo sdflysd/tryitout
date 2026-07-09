@@ -860,6 +860,44 @@ test("returns admin feedback and known settings from real repository data", asyn
   assert.equal(settings.items.some((item) => item.configured === false), true);
 });
 
+test("admin can configure platform models exposed to users", async () => {
+  const { repo, service } = createScenario();
+
+  const settings = await service.updatePlatformModels({
+    actorUserId: "admin_1",
+    enabledModelProfileIds: ["anthropic_sonnet_balanced", "gemini_flash_deep"],
+  });
+
+  assert.deepEqual(settings.platformModels.enabledModelProfileIds, [
+    "anthropic_sonnet_balanced",
+    "gemini_flash_deep",
+  ]);
+  assert.deepEqual(
+    settings.platformModels.enabled.map((model) => model.id),
+    ["gemini_flash_deep", "anthropic_sonnet_balanced"],
+  );
+  assert.deepEqual(
+    (await repo.getSystemSetting("platform.models.enabled"))?.value,
+    ["anthropic_sonnet_balanced", "gemini_flash_deep"],
+  );
+  assert.deepEqual(
+    (await repo.listAdminAuditLogs()).map((log) => ({
+      action: log.action,
+      targetId: log.targetId,
+      metadata: log.metadata,
+    })),
+    [
+      {
+        action: "system_setting_updated",
+        targetId: "platform.models.enabled",
+        metadata: {
+          enabledModelProfileIds: ["anthropic_sonnet_balanced", "gemini_flash_deep"],
+        },
+      },
+    ],
+  );
+});
+
 test("admin service reports missing users and tasks as domain errors", async () => {
   const { service } = createScenario();
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { ArrowLeft, Play, Check, BadgeAlert, Flame, Heart, Compass, ListChecks, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Check, BadgeAlert, Flame, Heart, Compass, ListChecks, Plus, Trash2, X } from "lucide-react";
 import { AgentRuntimeCapabilities, UserInput, SimulationType } from "../types";
+import type { ProviderMode } from "../contracts/commercial";
 import { getDeepModeCopy, getDeepModeDisabledCopy } from "./deep-mode-copy";
 import { getStartSimulationButtonLabel } from "./input-view-copy";
 import { getPrivacySafetyCopy } from "./privacy-copy";
@@ -27,6 +28,16 @@ import {
 } from "./life-choice-structure";
 import { structureLifeChoiceForReview } from "./life-choice-structure-flow";
 
+export interface CommercialActionNotice {
+  tone: "login" | "credits";
+  title: string;
+  message: string;
+  primaryHref: string;
+  primaryLabel: string;
+  secondaryHref?: string;
+  secondaryLabel?: string;
+}
+
 interface InputViewProps {
   simulationType: SimulationType;
   onTypeChange: (type: SimulationType) => void;
@@ -43,6 +54,11 @@ interface InputViewProps {
   requiredCredits?: number;
   availableCredits?: number;
   frozenCredits?: number;
+  providerMode?: ProviderMode;
+  onProviderModeChange?: (providerMode: ProviderMode) => void;
+  byokAvailable?: boolean;
+  commercialActionNotice?: CommercialActionNotice;
+  onCommercialActionNoticeClose?: () => void;
 }
 
 interface InputViewInitialState {
@@ -254,6 +270,9 @@ const INPUT_FORM_COPY = {
   "zh-CN": {
     currentLength: (count: number, minimum?: number) =>
       minimum ? `目前字数: ${count} (需 ≥${minimum})` : `目前字数: ${count}`,
+    commercial: {
+      credits: "商业额度",
+    },
     sideHustle: {
       projectSection: "你的项目构想",
       projectQuestion: "你想做什么副业想法？",
@@ -323,6 +342,9 @@ const INPUT_FORM_COPY = {
   "en-US": {
     currentLength: (count: number, minimum?: number) =>
       minimum ? `Current length: ${count} (min ${minimum})` : `Current length: ${count}`,
+    commercial: {
+      credits: "Commercial credits",
+    },
     sideHustle: {
       projectSection: "Your project idea",
       projectQuestion: "What side-hustle idea do you want to test?",
@@ -497,6 +519,11 @@ export default function InputView({
   requiredCredits = 0,
   availableCredits = 0,
   frozenCredits = 0,
+  providerMode = "platform",
+  onProviderModeChange,
+  byokAvailable = false,
+  commercialActionNotice,
+  onCommercialActionNoticeClose,
 }: InputViewProps) {
   // Side Hustle States
   const [projectIdea, setProjectIdea] = useState("");
@@ -532,14 +559,19 @@ export default function InputView({
   const [error, setError] = useState("");
   const isEnglish = language === "en-US";
   const formCopy = getInputFormCopy(language);
+  void providerMode;
+  void onProviderModeChange;
+  void byokAvailable;
   const deepModeCopy = getDeepModeCopy(language);
   const deepModeUnavailable = runtimeCapabilities?.deepModeAvailable === false;
   const deepModeDescription = deepModeUnavailable
     ? getDeepModeDisabledCopy(runtimeCapabilities.reason, language)
     : deepModeCopy.description;
   const privacySafetyCopy = getPrivacySafetyCopy(language);
-  const insufficientCredits =
-    commercialMode && requiredCredits > 0 && availableCredits < requiredCredits;
+  void commercialMode;
+  void requiredCredits;
+  void availableCredits;
+  void frozenCredits;
 
   useEffect(() => {
     if (!initialInput) return;
@@ -710,14 +742,6 @@ export default function InputView({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (insufficientCredits) {
-      setError(isEnglish
-        ? "Insufficient credits. Redeem an access code or ask support to top up before starting this simulation."
-        : "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
 
     if (simulationType === "side_hustle") {
       if (!projectIdea || projectIdea.trim().length < 15) {
@@ -946,6 +970,61 @@ export default function InputView({
           <div>
             <p className="font-bold">{isEnglish ? "Incomplete input" : "输入不完整提示"}</p>
             <p className="mt-0.5">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {commercialMode && commercialActionNotice && (
+        <div
+          id="commercial-action-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/68 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="commercial-action-modal-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-white/12 bg-white p-5 text-left text-slate-950 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-600">
+                  {formCopy.commercial.credits}
+                </p>
+                <h2 id="commercial-action-modal-title" className="text-base font-black text-slate-950">
+                  {commercialActionNotice.title}
+                </h2>
+              </div>
+              <button
+                id="btn-close-commercial-action-modal"
+                type="button"
+                onClick={onCommercialActionNoticeClose}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 cursor-pointer"
+                aria-label={isEnglish ? "Close prompt" : "关闭提示"}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="mt-3 text-sm font-semibold leading-relaxed text-slate-600">
+              {commercialActionNotice.message}
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              {commercialActionNotice.secondaryHref && commercialActionNotice.secondaryLabel && (
+                <a
+                  href={commercialActionNotice.secondaryHref}
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 transition-colors hover:bg-slate-50"
+                >
+                  {commercialActionNotice.secondaryLabel}
+                </a>
+              )}
+              <a
+                href={commercialActionNotice.primaryHref}
+                className={`inline-flex min-h-10 items-center justify-center rounded-lg px-4 text-xs font-black text-white transition-colors ${
+                  commercialActionNotice.tone === "login"
+                    ? "bg-cyan-700 hover:bg-cyan-800"
+                    : "bg-rose-700 hover:bg-rose-800"
+                }`}
+              >
+                {commercialActionNotice.primaryLabel}
+              </a>
+            </div>
           </div>
         </div>
       )}
@@ -1665,25 +1744,6 @@ export default function InputView({
 
         {/* Submit Action */}
         <div id="form-actions" className="pt-4 space-y-4">
-          {commercialMode && (
-            <div className={`flex flex-col gap-2 border p-3 text-xs sm:flex-row sm:items-center sm:justify-between ${
-              insufficientCredits
-                ? "border-rose-200 bg-rose-50 text-rose-800"
-                : "border-emerald-200 bg-emerald-50 text-emerald-800"
-            }`}>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em]">
-                  Commercial credits
-                </span>
-                <span className="font-black">Cost: {requiredCredits} credits</span>
-              </div>
-              <div className="flex flex-wrap gap-3 font-mono text-[11px] font-bold">
-                <span>Available: {availableCredits}</span>
-                <span>Frozen: {frozenCredits}</span>
-                {insufficientCredits && <span>Insufficient credits</span>}
-              </div>
-            </div>
-          )}
           <label className="flex items-start gap-3 bg-gray-50 border border-gray-150 rounded-2xl p-4 cursor-pointer">
             <input
               type="checkbox"
@@ -1700,9 +1760,9 @@ export default function InputView({
           <button
             id="btn-trigger-simulation"
             type="submit"
-            disabled={isGenerating || insufficientCredits}
+            disabled={isGenerating}
             className={`w-full inline-flex items-center justify-center gap-2.5 text-white font-bold px-8 py-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-155 active:scale-98 cursor-pointer text-base ${
-              isGenerating || insufficientCredits ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
+              isGenerating ? "bg-gray-400 cursor-not-allowed" : theme.bg + " hover:opacity-90"
             }`}
           >
             <Play className="w-5 h-5 fill-white" />
