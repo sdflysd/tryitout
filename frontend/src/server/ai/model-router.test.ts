@@ -45,18 +45,15 @@ test("resolveModel maps mode selections to the configured backend provider", () 
   );
 });
 
-test("resolveModel rejects direct profile overrides when policy disallows them", () => {
-  assert.throws(
-    () =>
-      resolveModel(
-        { modelProfileId: "gemini_flash_deep" },
-        "side_hustle",
-        "full_simulation",
-      ),
-    (error) =>
-      error instanceof ModelResolutionError &&
-      /override not allowed/i.test(error.message),
+test("resolveModel accepts visible platform profile selections", () => {
+  const profile = resolveModel(
+    { modelProfileId: "anthropic_sonnet_balanced" },
+    "side_hustle",
+    "full_simulation",
   );
+
+  assert.equal(profile.id, "anthropic_sonnet_balanced");
+  assert.equal(profile.visibleToUser, true);
 });
 
 test("resolveModel validates untrusted selections before resolving", () => {

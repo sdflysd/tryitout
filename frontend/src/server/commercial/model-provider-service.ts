@@ -208,12 +208,11 @@ export class ModelProviderService {
     if (
       !user ||
       user.status !== "active" ||
-      user.tier === "basic" ||
       !hasCommercialFeature(user, "custom_model_provider")
     ) {
       throw new ModelProviderServiceError(
         "provider_not_allowed",
-        "Custom model providers require an eligible paid tier",
+        "Custom model providers require BYOK access from an access code",
       );
     }
   }

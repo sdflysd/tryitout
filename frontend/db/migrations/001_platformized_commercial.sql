@@ -120,6 +120,7 @@ CREATE TABLE simulation_tasks (
   priority integer NOT NULL DEFAULT 0,
   queue_weight integer NOT NULL DEFAULT 1,
   idempotency_key text,
+  model_selection jsonb NOT NULL DEFAULT '{}'::jsonb,
   input_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
   error_code text,
   queued_at timestamptz NOT NULL DEFAULT now(),
@@ -134,6 +135,7 @@ CREATE TABLE simulation_tasks (
   ),
   CONSTRAINT simulation_tasks_credit_cost_check CHECK (credit_cost >= 0),
   CONSTRAINT simulation_tasks_queue_weight_check CHECK (queue_weight > 0),
+  CONSTRAINT simulation_tasks_model_selection_object_check CHECK (jsonb_typeof(model_selection) = 'object'),
   CONSTRAINT simulation_tasks_input_summary_object_check CHECK (jsonb_typeof(input_summary) = 'object'),
   CONSTRAINT simulation_tasks_idempotency_key_unique UNIQUE (idempotency_key)
 );

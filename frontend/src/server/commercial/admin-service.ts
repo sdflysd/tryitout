@@ -5,6 +5,13 @@ import type {
   UserRole,
   UserTier,
 } from "../../contracts/commercial.js";
+import {
+  PLATFORM_MODEL_OPTIONS,
+  PLATFORM_MODEL_SETTING_KEY,
+  filterPlatformModelOptions,
+  normalizePlatformModelProfileIds,
+  type PlatformModelOption,
+} from "../../model-options.js";
 import type {
   AccessCodeService,
   CreateAccessCodeBatchInput,
@@ -356,6 +363,17 @@ export interface AdminSettingItem {
 
 export interface AdminSettingsResult {
   items: AdminSettingItem[];
+  platformModels: {
+    available: PlatformModelOption[];
+    enabled: PlatformModelOption[];
+    enabledModelProfileIds: string[];
+  };
+}
+
+export interface UpdatePlatformModelsInput {
+  actorUserId: string;
+  enabledModelProfileIds: string[];
+  requestContext?: AdminRequestContext;
 }
 
 const TASK_STATUSES: CommercialTaskStatus[] = [
@@ -371,6 +389,7 @@ const KNOWN_SYSTEM_SETTING_KEYS: Array<{
   key: string;
   description: string;
 }> = [
+  { key: PLATFORM_MODEL_SETTING_KEY, description: "Platform model profiles enabled for users" },
   { key: "queue.paused", description: "Pause commercial queue" },
   { key: "commercial.mode", description: "Commercial mode runtime flag" },
   { key: "access_codes.disabled", description: "Disable access-code redemption" },
@@ -634,8 +653,55 @@ export class CommercialAdminService {
         return toAdminSettingItem(known, setting);
       }),
     );
+    const enabledModelProfileIds = normalizePlatformModelProfileIds(
+      items.find((item) => item.key === PLATFORM_MODEL_SETTING_KEY)?.value,
+    );
 
-    return { items };
+    return {
+      items,
+      platformModels: {
+        available: PLATFORM_MODEL_OPTIONS,
+        enabled: filterPlatformModelOptions(enabledModelProfileIds),
+        enabledModelProfileIds,
+      },
+    };
+  }
+
+  async updatePlatformModels(
+    input: UpdatePlatformModelsInput,
+  ): Promise<AdminSettingsResult> {
+    validateRequired(input.actorUserId, "Actor user id");
+    const enabledModelProfileIds = normalizePlatformModelProfileIds(
+      input.enabledModelProfileIds,
+    );
+    if (enabledModelProfileIds.length !== input.enabledModelProfileIds.length) {
+      throw new CommercialAdminServiceError(
+        "invalid_admin_input",
+        "enabledModelProfileIds contains an unknown platform model",
+      );
+    }
+    const nowIso = this.currentDate().toISOString();
+    await this.repository.saveSystemSetting({
+      key: PLATFORM_MODEL_SETTING_KEY,
+      value: enabledModelProfileIds,
+      description: "Platform model profiles enabled for users",
+      updatedByUserId: input.actorUserId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    await this.auditService.append({
+      actorUserId: input.actorUserId,
+      action: "system_setting_updated",
+      targetType: "system_setting",
+      targetId: PLATFORM_MODEL_SETTING_KEY,
+      metadata: {
+        enabledModelProfileIds,
+      },
+      ipHash: input.requestContext?.ipHash,
+      userAgent: input.requestContext?.userAgent,
+    });
+
+    return this.getSettings();
   }
 
   async createAccessCodeBatch(

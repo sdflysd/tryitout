@@ -2,10 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import {
   getSimulationCreditCost,
+  hasCommercialFeature,
   type ProviderMode,
 } from "../../contracts/commercial.js";
+import {
+  PLATFORM_MODEL_SETTING_KEY,
+  normalizePlatformModelProfileIds,
+} from "../../model-options.js";
 import type {
   InteractionMode,
+  ModelSelection,
   Report,
   SimulationApiResponse,
   SimulationType,
@@ -24,6 +30,7 @@ import {
 import type {
   CommercialSimulationReportRecord,
   CommercialSimulationTaskRecord,
+  CommercialUserRecord,
   JsonObject,
 } from "./types.js";
 
@@ -32,6 +39,7 @@ export type CommercialTaskServiceErrorCode =
   | "user_not_active"
   | "active_task_exists"
   | "insufficient_credits"
+  | "provider_not_allowed"
   | "task_not_found"
   | "task_not_chargeable"
   | "queue_enqueue_failed"
@@ -60,6 +68,7 @@ export interface CreateCommercialTaskInput {
   userInput: UserInput;
   interactionMode?: InteractionMode;
   providerMode?: ProviderMode;
+  modelSelection?: ModelSelection;
   priority?: number;
   queueWeight?: number;
   idempotencyKey: string;
@@ -137,11 +146,16 @@ export class CommercialTaskService {
     if (!user || user.status !== "active") {
       throw new CommercialTaskServiceError("user_not_active", "User is not active");
     }
+    await this.assertProviderSelectionAllowed({
+      user,
+      providerMode: input.providerMode ?? "platform",
+      modelSelection: input.modelSelection,
+    });
     const existing = await this.repository.findCommercialTaskByIdempotencyKey(
       input.idempotencyKey,
     );
     if (existing !== undefined) {
-      return this.returnExistingCreateResult(existing);
+      return this.returnExistingCreateResult(existing, input.userInput);
     }
     if ((await this.repository.findActiveCommercialTaskByUserId(input.userId)) !== undefined) {
       throw new CommercialTaskServiceError(
@@ -155,6 +169,7 @@ export class CommercialTaskService {
       scenarioType,
       interactionMode: input.interactionMode ?? "legacy",
       providerMode: input.providerMode ?? "platform",
+      modelSelection: input.modelSelection,
       priority: input.priority,
       queueWeight: input.queueWeight,
       idempotencyKey: input.idempotencyKey,
@@ -180,7 +195,9 @@ export class CommercialTaskService {
 
     const heldTask = await this.requireTask(task.id);
     try {
-      await this.queue.enqueue(toSimulationQueueJob(heldTask));
+      await this.queue.enqueue(toSimulationQueueJob(heldTask, {
+        userInput: input.userInput,
+      }));
     } catch (error) {
       await this.releaseHoldForFailedEnqueue(heldTask);
       throw new CommercialTaskServiceError(
@@ -194,6 +211,7 @@ export class CommercialTaskService {
 
   private async returnExistingCreateResult(
     task: CommercialSimulationTaskRecord,
+    userInput: UserInput,
   ): Promise<CreateCommercialTaskResult> {
     const hold = await this.creditService.holdCreditsForTask({
       userId: task.userId,
@@ -204,7 +222,9 @@ export class CommercialTaskService {
       metadata: { taskId: task.id },
     });
     if (task.status === "queued" || task.status === "running") {
-      await this.queue.enqueue(toSimulationQueueJob(task));
+      await this.queue.enqueue(toSimulationQueueJob(task, {
+        userInput,
+      }));
     }
     return { task, hold };
   }
@@ -358,6 +378,7 @@ export class CommercialTaskService {
       userInput: { type: task.scenarioType },
       interactionMode: task.interactionMode,
       providerMode: task.providerMode,
+      modelSelection: task.modelSelection,
       priority: input.priority ?? task.priority,
       queueWeight: task.queueWeight,
       idempotencyKey: input.idempotencyKey,
@@ -370,6 +391,13 @@ export class CommercialTaskService {
     return this.requireTask(taskId);
   }
 
+  async getActiveTaskForUser(
+    userId: string,
+  ): Promise<CommercialSimulationTaskRecord | undefined> {
+    validateRequired(userId, "User id");
+    return this.repository.findActiveCommercialTaskByUserId(userId);
+  }
+
   async getReport(taskId: string): Promise<CommercialSimulationReportRecord> {
     validateRequired(taskId, "Task id");
     return this.requireReport(taskId);
@@ -380,6 +408,7 @@ export class CommercialTaskService {
     scenarioType: SimulationType;
     interactionMode: InteractionMode;
     providerMode: ProviderMode;
+    modelSelection?: ModelSelection;
     priority?: number;
     queueWeight?: number;
     idempotencyKey: string;
@@ -396,6 +425,7 @@ export class CommercialTaskService {
       scenarioType: input.scenarioType,
       interactionMode: input.interactionMode,
       providerMode: input.providerMode,
+      modelSelection: input.modelSelection,
       status: "queued",
       creditCost,
       priority: input.priority,
@@ -417,6 +447,35 @@ export class CommercialTaskService {
       throw new CommercialTaskServiceError(
         "insufficient_credits",
         "Available credit balance is insufficient",
+      );
+    }
+  }
+
+  private async assertProviderSelectionAllowed(input: {
+    user: CommercialUserRecord;
+    providerMode: ProviderMode;
+    modelSelection?: ModelSelection;
+  }): Promise<void> {
+    if (input.providerMode === "byok") {
+      if (!hasCommercialFeature(input.user, "custom_model_provider")) {
+        throw new CommercialTaskServiceError(
+          "provider_not_allowed",
+          "BYOK provider mode requires access-code entitlement",
+        );
+      }
+      return;
+    }
+
+    const requestedProfileId = input.modelSelection?.modelProfileId;
+    if (requestedProfileId === undefined) {
+      return;
+    }
+    const setting = await this.repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
+    const enabledModelProfileIds = normalizePlatformModelProfileIds(setting?.value);
+    if (!enabledModelProfileIds.includes(requestedProfileId)) {
+      throw new CommercialTaskServiceError(
+        "provider_not_allowed",
+        "Platform model is not enabled by admin",
       );
     }
   }

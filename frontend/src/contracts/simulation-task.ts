@@ -1,5 +1,6 @@
 import type {
   InteractionMode,
+  ModelSelection,
   SimulationApiResponse,
   SimulationProgressEvent,
   SimulationType,
@@ -24,6 +25,7 @@ export interface CreateSimulationTaskRequest {
   userInput: UserInput;
   interactionMode?: SimulationExecutionMode;
   providerMode?: ProviderMode;
+  modelSelection?: ModelSelection;
   priority?: number;
   queueWeight?: number;
   idempotencyKey?: string;
@@ -41,6 +43,7 @@ export interface SimulationTaskStatusResponse {
   status: SimulationTaskStatus;
   currentStageIndex?: number;
   currentStepName?: string;
+  progressMessage?: string;
   progressPercent: number;
   recoverable: boolean;
   errorCode?: string;

@@ -26,11 +26,13 @@ import {
   handleCancelCommercialTaskRequest,
   handleCreateCommercialTaskRequest,
   handleDeleteModelProviderRequest,
+  handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleGetModelProviderRequest,
+  handleGetPlatformModelsRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
@@ -332,6 +334,14 @@ app.get("/api/model-provider", async (req, res) => {
   sendCommercialApiResult(res, result);
 });
 
+app.get("/api/platform-models", async (req, res) => {
+  if (!commercialServices.enabled) {
+    return res.status(404).json({ error: "Commercial mode is disabled" });
+  }
+  const result = await handleGetPlatformModelsRequest(commercialServices);
+  sendCommercialApiResult(res, result);
+});
+
 app.put("/api/model-provider", async (req, res) => {
   if (!commercialServices.enabled) {
     return res.status(404).json({ error: "Commercial mode is disabled" });
@@ -398,6 +408,24 @@ app.post("/api/simulation-tasks", async (req, res) => {
   }
 
   res.status(result.status).json(result.body);
+});
+
+app.get("/api/simulation-tasks/active", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleGetActiveCommercialTaskRequest(
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
+  }
+
+  res.status(404).json({ error: "Active commercial task is unavailable" });
 });
 
 app.get("/api/simulation-tasks/:id/status", async (req, res) => {

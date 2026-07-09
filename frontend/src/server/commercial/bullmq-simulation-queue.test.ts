@@ -42,6 +42,7 @@ test("BullMQ job data includes weight and idempotency key", async () => {
   assert.deepEqual(fakeQueue.addCalls[0]?.data, {
     taskId: "task_1",
     userId: "user_1",
+    userInput: makeUserInput(),
     interactionMode: "enabled",
     providerMode: "platform",
     weight: 3,
@@ -81,6 +82,7 @@ function job(overrides: Partial<SimulationQueueJob> = {}): SimulationQueueJob {
   return {
     taskId: "task_1",
     userId: "user_1",
+    userInput: makeUserInput(),
     interactionMode: "enabled",
     providerMode: "platform",
     weight: 3,
@@ -88,6 +90,15 @@ function job(overrides: Partial<SimulationQueueJob> = {}): SimulationQueueJob {
     idempotencyKey: "idem_1",
     queuedAt: CREATED_AT,
     ...overrides,
+  };
+}
+
+function makeUserInput(): SimulationQueueJob["userInput"] {
+  return {
+    type: "life_choice",
+    decisionContext: "Should I quit my job?",
+    optionA: "Stay",
+    optionB: "Quit",
   };
 }
 

@@ -57,10 +57,16 @@ export function validateModelSelection(body: unknown): ValidationResult {
   return {
     ok: true,
     value: {
-      mode: mode as ModelQuality | undefined,
-      modelProfileId: modelProfileId as string | undefined,
-      userCredentialId: userCredentialId as string | undefined,
-      modelIdOverride: modelIdOverride as string | undefined,
+      ...(mode !== undefined ? { mode: mode as ModelQuality } : {}),
+      ...(modelProfileId !== undefined
+        ? { modelProfileId: modelProfileId as string }
+        : {}),
+      ...(userCredentialId !== undefined
+        ? { userCredentialId: userCredentialId as string }
+        : {}),
+      ...(modelIdOverride !== undefined
+        ? { modelIdOverride: modelIdOverride as string }
+        : {}),
     },
   };
 }

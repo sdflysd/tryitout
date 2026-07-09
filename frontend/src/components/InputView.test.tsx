@@ -208,7 +208,7 @@ test("deep mode toggle explains unavailable server capability", () => {
   assert.match(html, /disabled=""/);
 });
 
-test("commercial mode shows the credit cost and disables start when credits are insufficient", () => {
+test("commercial mode keeps start clickable without showing a preemptive credit warning", () => {
   const html = renderToStaticMarkup(
     <InputView
       simulationType="side_hustle"
@@ -216,14 +216,184 @@ test("commercial mode shows the credit cost and disables start when credits are 
       onBack={() => undefined}
       onSubmit={() => undefined}
       isGenerating={false}
+      language="en-US"
       commercialMode
       requiredCredits={3}
       availableCredits={1}
     />,
   );
 
-  assert.match(html, /Cost: 3 credits/);
-  assert.match(html, /Available: 1/);
+  assert.doesNotMatch(html, /Commercial credits/);
+  assert.doesNotMatch(html, /Cost: 3 credits/);
+  assert.doesNotMatch(html, /Available: 1/);
+  assert.doesNotMatch(html, /Insufficient credits/);
+  assert.doesNotMatch(html, /commercial-action-notice/);
+  assert.doesNotMatch(html, /btn-trigger-simulation[^>]*disabled=""/);
+  assert.doesNotMatch(html, /cursor-not-allowed/);
+});
+
+test("commercial mode can show a login modal with localized links", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      language="en-US"
+      commercialMode
+      requiredCredits={3}
+      availableCredits={0}
+      commercialActionNotice={{
+        tone: "login",
+        title: "Sign in required",
+        message: "Sign in or create an account before starting a paid simulation.",
+        primaryHref: "/login",
+        primaryLabel: "Sign in",
+        secondaryHref: "/register",
+        secondaryLabel: "Create account",
+      }}
+    />,
+  );
+
+  assert.match(html, /commercial-action-modal/);
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /Sign in required/);
+  assert.match(html, /Sign in or create an account/);
+  assert.doesNotMatch(html, /commercial account/);
+  assert.match(html, /href="\/login"/);
+  assert.match(html, />Sign in</);
+  assert.match(html, /href="\/register"/);
+  assert.match(html, />Create account</);
+  assert.match(html, /btn-close-commercial-action-modal/);
+  assert.doesNotMatch(html, /commercial-action-notice/);
+});
+
+test("commercial mode can show a credit modal with account navigation", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      language="zh-CN"
+      commercialMode
+      requiredCredits={3}
+      availableCredits={1}
+      commercialActionNotice={{
+        tone: "credits",
+        title: "额度不足",
+        message: "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。",
+        primaryHref: "/account",
+        primaryLabel: "去账号页兑换",
+      }}
+    />,
+  );
+
+  assert.match(html, /commercial-action-modal/);
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /额度不足/);
+  assert.match(html, /当前可用额度不足/);
+  assert.match(html, /href="\/account"/);
+  assert.match(html, />去账号页兑换</);
+  assert.doesNotMatch(html, /commercial-action-notice/);
+});
+
+test("commercial mode keeps model source configuration out of the input form", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      language="en-US"
+      commercialMode
+      requiredCredits={2}
+      availableCredits={6}
+      providerMode="byok"
+      byokAvailable
+      onProviderModeChange={() => undefined}
+    />,
+  );
+
+  assert.doesNotMatch(html, /Commercial credits/);
+  assert.doesNotMatch(html, /Cost: 2 credits/);
+  assert.doesNotMatch(html, /Model source/);
+  assert.doesNotMatch(html, /Platform model/);
+  assert.doesNotMatch(html, /My API key/);
+});
+
+test("commercial mode localizes the credit modal in Chinese", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      language="zh-CN"
+      commercialMode
+      requiredCredits={3}
+      availableCredits={1}
+      frozenCredits={2}
+      commercialActionNotice={{
+        tone: "credits",
+        title: "额度不足",
+        message: "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。",
+        primaryHref: "/account",
+        primaryLabel: "去账号页兑换",
+      }}
+      providerMode="platform"
+      byokAvailable={false}
+      onProviderModeChange={() => undefined}
+    />,
+  );
+
+  assert.match(html, /商业额度/);
+  assert.match(html, /额度不足/);
+  assert.match(html, /当前可用额度不足/);
+  assert.match(html, /去账号页兑换/);
+  assert.match(html, /aria-label="关闭提示"/);
+  assert.doesNotMatch(html, /消耗：3 点/);
+  assert.doesNotMatch(html, /可用：1/);
+  assert.doesNotMatch(html, /冻结：2/);
+  assert.doesNotMatch(html, /Set up BYOK in account settings first/);
+});
+
+test("commercial mode localizes the credit modal in English", () => {
+  const html = renderToStaticMarkup(
+    <InputView
+      simulationType="side_hustle"
+      onTypeChange={() => undefined}
+      onBack={() => undefined}
+      onSubmit={() => undefined}
+      isGenerating={false}
+      language="en-US"
+      commercialMode
+      requiredCredits={3}
+      availableCredits={1}
+      frozenCredits={2}
+      commercialActionNotice={{
+        tone: "credits",
+        title: "Insufficient credits",
+        message: "Insufficient available credits. Redeem an access code or ask support to top up before starting.",
+        primaryHref: "/account",
+        primaryLabel: "Open account settings",
+      }}
+      providerMode="platform"
+      byokAvailable={false}
+      onProviderModeChange={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Commercial credits/);
   assert.match(html, /Insufficient credits/);
-  assert.match(html, /btn-trigger-simulation[^>]*disabled=""/);
+  assert.match(html, /Insufficient available credits/);
+  assert.match(html, /Open account settings/);
+  assert.match(html, /aria-label="Close prompt"/);
+  assert.doesNotMatch(html, /Cost: 3 credits/);
+  assert.doesNotMatch(html, /Available: 1/);
+  assert.doesNotMatch(html, /Frozen: 2/);
 });

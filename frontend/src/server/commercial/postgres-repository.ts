@@ -1402,12 +1402,12 @@ export class PostgresCommercialRepository implements CommercialRepository {
         insert into simulation_tasks (
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, input_summary, error_code, queued_at, started_at,
-          completed_at, created_at, updated_at
+          idempotency_key, model_selection, input_summary, error_code,
+          queued_at, started_at, completed_at, created_at, updated_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13,
-          $14, $15, $16, $17, $18
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13::jsonb, $14, $15, $16, $17, $18, $19
         )
         on conflict (id) do update set
           user_id = excluded.user_id,
@@ -1420,6 +1420,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           priority = excluded.priority,
           queue_weight = excluded.queue_weight,
           idempotency_key = excluded.idempotency_key,
+          model_selection = excluded.model_selection,
           input_summary = excluded.input_summary,
           error_code = excluded.error_code,
           queued_at = excluded.queued_at,
@@ -1440,6 +1441,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         task.priority ?? 0,
         task.queueWeight ?? 1,
         task.idempotencyKey ?? null,
+        toJsonb(task.modelSelection ?? {}),
         toJsonb(task.inputSummary ?? {}),
         task.errorCode ?? null,
         task.queuedAt ?? task.createdAt,
@@ -1459,8 +1461,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, input_summary, error_code, queued_at, started_at,
-          completed_at, created_at, updated_at
+          idempotency_key, model_selection, input_summary, error_code,
+          queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where id = $1
       `,
@@ -1478,8 +1480,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, input_summary, error_code, queued_at, started_at,
-          completed_at, created_at, updated_at
+          idempotency_key, model_selection, input_summary, error_code,
+          queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         ${userId === undefined ? "" : "where user_id = $1"}
         order by created_at desc, id asc
@@ -1497,8 +1499,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, input_summary, error_code, queued_at, started_at,
-          completed_at, created_at, updated_at
+          idempotency_key, model_selection, input_summary, error_code,
+          queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where idempotency_key = $1
       `,
@@ -1515,8 +1517,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, input_summary, error_code, queued_at, started_at,
-          completed_at, created_at, updated_at
+          idempotency_key, model_selection, input_summary, error_code,
+          queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where user_id = $1
           and status in ('queued', 'running')
@@ -1932,7 +1934,6 @@ export class PostgresCommercialRepository implements CommercialRepository {
           value = excluded.value,
           description = excluded.description,
           updated_by_user_id = excluded.updated_by_user_id,
-          created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `,
       [
@@ -2288,6 +2289,15 @@ function optionalJsonObjectField(
   return value as JsonObject;
 }
 
+function optionalNonEmptyJsonObjectField(
+  row: DbRow,
+  field: string,
+  table: string,
+): JsonObject | undefined {
+  const value = optionalJsonObjectField(row, field, table);
+  return value && Object.keys(value).length > 0 ? value : undefined;
+}
+
 function jsonObjectField(row: DbRow, field: string, table: string): JsonObject {
   const value = optionalJsonObjectField(row, field, table);
   if (value === undefined) {
@@ -2601,6 +2611,7 @@ function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
   assignIfDefined(record, "priority", optionalNumberField(row, "priority", table));
   assignIfDefined(record, "queueWeight", optionalNumberField(row, "queue_weight", table));
   assignIfDefined(record, "idempotencyKey", optionalStringField(row, "idempotency_key", table));
+  assignIfDefined(record, "modelSelection", optionalNonEmptyJsonObjectField(row, "model_selection", table));
   assignIfDefined(record, "inputSummary", optionalJsonObjectField(row, "input_summary", table));
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
   assignIfDefined(record, "queuedAt", optionalTimestampField(row, "queued_at", table));

@@ -1454,7 +1454,8 @@ test("postgres repository supplies defaults for not-null optional fields", async
 
   assert.equal(queries[0].params?.[8], 0);
   assert.equal(queries[0].params?.[9], 1);
-  assert.equal(queries[0].params?.[13], "created");
+  assert.equal(queries[0].params?.[11], "{}");
+  assert.equal(queries[0].params?.[14], "created");
   assert.equal(queries[1].params?.[7], 0);
   assert.equal(queries[2].params?.[3], 1);
   assert.equal(queries[3].params?.[16], 0);

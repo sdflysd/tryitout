@@ -11,8 +11,10 @@ import type { CommercialUserRecord } from "./types.js";
 const MASTER_KEY = Buffer.alloc(32, 9);
 const NOW = "2026-07-07T00:00:00.000Z";
 
-test("basic users cannot save a custom provider", async () => {
-  const { repo, service } = createScenario();
+test("basic users without BYOK entitlement cannot save their own API key provider", async () => {
+  const { repo, service } = createScenario({
+    randomBytes: (length) => Buffer.alloc(length, 2),
+  });
   await repo.saveUser(makeUser({ tier: "basic", features: [] }));
 
   await assert.rejects(
@@ -21,10 +23,11 @@ test("basic users cannot save a custom provider", async () => {
       provider: "openai",
       displayName: "OpenAI",
       baseUrl: "https://api.openai.com/v1",
-      apiKey: "sk-basic",
+      apiKey: "sk-basic-secret123456",
     }),
     (error) => hasProviderCode(error, "provider_not_allowed"),
   );
+  assert.deepEqual(await repo.listUserModelProviders("user_1"), []);
 });
 
 test("eligible users save encrypted provider keys and receive only masked DTOs", async () => {

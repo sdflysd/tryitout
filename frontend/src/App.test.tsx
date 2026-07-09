@@ -3,7 +3,8 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { Simulation, UserInput } from "./types.js";
+import type { ModelSelection, Simulation, UserInput } from "./types.js";
+import type { PublicModelProviderDto } from "./commercial-client.js";
 
 test("simulation request body defaults interaction mode to legacy", async () => {
   const { buildSimulationRequestBody } = await import("./simulation-request.js");
@@ -40,6 +41,25 @@ test("app header links to standalone commercial auth pages", async () => {
   assert.doesNotMatch(html, /account-panel/);
 });
 
+test("app header links signed-in users to the account settings page", async () => {
+  const { default: App } = await import("./App.js");
+  const html = renderToStaticMarkup(<App initialCommercialUser={{
+    id: "user_1",
+    email: "buyer@example.test",
+    emailNormalized: "buyer@example.test",
+    role: "user",
+    tier: "pro",
+    status: "active",
+    features: ["custom_model_provider"],
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  }} />);
+
+  assert.match(html, /link-commercial-account/);
+  assert.match(html, /href="\/account"/);
+  assert.doesNotMatch(html, /href="\/login"/);
+});
+
 test("login path renders a standalone commercial login page", async () => {
   const { default: App } = await import("./App.js");
   const originalLocation = globalThis.location;
@@ -51,9 +71,11 @@ test("login path renders a standalone commercial login page", async () => {
   try {
     const html = renderToStaticMarkup(<App />);
     assert.match(html, /auth-page-login/);
-    assert.match(html, /商业账号登录/);
-    assert.match(html, /登录商业账号/);
-    assert.doesNotMatch(html, /创建商业账号/);
+    assert.match(html, /账号登录/);
+    assert.match(html, /登录账号/);
+    assert.doesNotMatch(html, /创建账号/);
+    assert.doesNotMatch(html, /商业账号/);
+    assert.doesNotMatch(html, /commercial-secret/);
     assert.doesNotMatch(html, /home-view-container/);
   } finally {
     Object.defineProperty(globalThis, "location", {
@@ -74,9 +96,11 @@ test("register path renders a standalone commercial registration page", async ()
   try {
     const html = renderToStaticMarkup(<App />);
     assert.match(html, /auth-page-register/);
-    assert.match(html, /商业账号注册/);
-    assert.match(html, /创建商业账号/);
-    assert.doesNotMatch(html, /登录商业账号/);
+    assert.match(html, /账号注册/);
+    assert.match(html, /创建账号/);
+    assert.doesNotMatch(html, /登录账号/);
+    assert.doesNotMatch(html, /商业账号/);
+    assert.doesNotMatch(html, /commercial-secret/);
     assert.doesNotMatch(html, /home-view-container/);
   } finally {
     Object.defineProperty(globalThis, "location", {
@@ -84,6 +108,179 @@ test("register path renders a standalone commercial registration page", async ()
       value: originalLocation,
     });
   }
+});
+
+test("commercial auth and account route chrome can render in English", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/login" },
+  });
+
+  try {
+    const loginHtml = renderToStaticMarkup(<App initialLanguage="en-US" />);
+    assert.match(loginHtml, /Account login/);
+    assert.match(loginHtml, /Sign in to account/);
+    assert.match(loginHtml, /Create account/);
+    assert.doesNotMatch(loginHtml, /Commercial account/);
+    assert.doesNotMatch(loginHtml, /commercial-secret/);
+
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: { pathname: "/account" },
+    });
+    const accountHtml = renderToStaticMarkup(<App initialLanguage="en-US" />);
+    assert.match(accountHtml, /Account settings/);
+    assert.match(accountHtml, /Sign in before viewing credits, redeeming access codes, or configuring models/);
+    assert.match(accountHtml, /Sign in/);
+    assert.match(accountHtml, /Create account/);
+    assert.doesNotMatch(accountHtml, /Commercial account/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("account path renders the account settings route", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/account" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App initialCommercialUser={{
+      id: "user_1",
+      email: "buyer@example.test",
+      emailNormalized: "buyer@example.test",
+      role: "user",
+      tier: "pro",
+      status: "active",
+      features: ["custom_model_provider"],
+      createdAt: "2026-07-07T00:00:00.000Z",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+    }} />);
+    assert.match(html, /account-page/);
+    assert.match(html, /account-panel/);
+    assert.doesNotMatch(html, /auth-page-login/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("account path links to a dedicated model configuration page", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/account" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App initialCommercialUser={{
+      id: "user_1",
+      email: "buyer@example.test",
+      emailNormalized: "buyer@example.test",
+      role: "user",
+      tier: "pro",
+      status: "active",
+      features: ["custom_model_provider"],
+      createdAt: "2026-07-07T00:00:00.000Z",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+    }} />);
+    assert.match(html, /account-page/);
+    assert.match(html, /href="\/account\/models"/);
+    assert.match(html, /模型配置/);
+    assert.doesNotMatch(html, /平台模型选择/);
+    assert.doesNotMatch(html, /name="accountProviderMode"/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("model configuration path renders selectable platform and BYOK settings", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/account/models" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App
+      initialLanguage="en-US"
+      initialCommercialUser={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "pro",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      initialCommercialModelProvider={{
+        id: "provider_1",
+        provider: "openai",
+        displayName: "OpenAI-compatible",
+        baseUrl: "https://api.openai.com/v1",
+        apiKeyMask: "sk-liv...3456",
+        status: "active",
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      initialPlatformModels={[
+        {
+          id: "gemini_flash_balanced",
+          label: "Gemini Flash Balanced",
+          providerLabel: "Gemini",
+          modelId: "gemini-3.5-flash",
+          quality: "balanced",
+        },
+      ]}
+    />);
+    assert.match(html, /model-config-page/);
+    assert.match(html, /Model settings/);
+    assert.doesNotMatch(html, /Account settings/);
+    assert.match(html, /Platform model choice/);
+    assert.match(html, /Gemini Flash Balanced/);
+    assert.match(html, /API key choice/);
+    assert.match(html, /Use my API key/);
+    assert.match(html, /sk-liv\.\.\.3456/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("commercial post-auth helpers return users to home", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    getCommercialPostAuthPath?: () => string;
+    redirectToCommercialPostAuthPath?: (location?: Pick<Location, "assign">) => void;
+  };
+  const assignedPaths: string[] = [];
+
+  assert.equal(appModule.getCommercialPostAuthPath?.(), "/");
+  appModule.redirectToCommercialPostAuthPath?.({
+    assign: (path: string | URL) => {
+      assignedPaths.push(String(path));
+    },
+  });
+
+  assert.deepEqual(assignedPaths, ["/"]);
 });
 
 test("admin path renders the commercial admin shell", async () => {
@@ -135,6 +332,182 @@ test("buildShareCardOpenedEvent records share modal exposure separately from cop
     simulationId: "sim-share",
     scenarioType: "side_hustle",
   });
+});
+
+test("commercial provider helpers gate BYOK and calculate selected credit costs", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    canUseByokProvider?: (input: {
+      user?: { tier: "basic" | "pro" | "business"; features: string[] };
+      provider?: PublicModelProviderDto;
+    }) => boolean;
+    resolveCommercialSimulationCost?: (input: {
+      deepAgentMode: boolean;
+      providerMode: "platform" | "byok";
+    }) => number;
+    buildCommercialSimulationTaskRequest?: (
+      userInput: UserInput,
+      input: {
+        deepAgentMode: boolean;
+        providerMode: "platform" | "byok";
+        startedAt: number;
+        modelSelection?: ModelSelection;
+      },
+    ) => unknown;
+  };
+
+  const activeProvider: PublicModelProviderDto = {
+    id: "provider_1",
+    provider: "openai",
+    displayName: "OpenAI-compatible",
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyMask: "sk-liv...3456",
+    status: "active",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  };
+  const userInput: UserInput = {
+    type: "side_hustle",
+    projectIdea: "用AI帮求职者优化简历并按次收费",
+  };
+
+  assert.equal(appModule.canUseByokProvider?.({
+    user: { tier: "pro", features: ["custom_model_provider"] },
+    provider: activeProvider,
+  }), true);
+  assert.equal(appModule.canUseByokProvider?.({
+    user: { tier: "basic", features: [] },
+    provider: activeProvider,
+  }), false);
+  assert.equal(appModule.resolveCommercialSimulationCost?.({
+    deepAgentMode: true,
+    providerMode: "platform",
+  }), 3);
+  assert.equal(appModule.resolveCommercialSimulationCost?.({
+    deepAgentMode: true,
+    providerMode: "byok",
+  }), 2);
+  assert.deepEqual(appModule.buildCommercialSimulationTaskRequest?.(userInput, {
+    deepAgentMode: true,
+    providerMode: "byok",
+    startedAt: 123,
+    modelSelection: {
+      userCredentialId: "provider_1",
+      mode: "deep",
+    },
+    createIdempotencyKey: (startedAt: number) => `simulation_${startedAt}_test-id`,
+  }), {
+    userInput,
+    interactionMode: "enabled",
+    providerMode: "byok",
+    modelSelection: {
+      userCredentialId: "provider_1",
+      mode: "deep",
+    },
+    idempotencyKey: "simulation_123_test-id",
+  });
+});
+
+test("model configuration path only shows admin-enabled platform models", async () => {
+  const { default: App } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/account/models" },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App
+      initialLanguage="en-US"
+      initialCommercialUser={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "pro",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      initialPlatformModels={[
+        {
+          id: "anthropic_sonnet_balanced",
+          label: "Claude Sonnet Balanced",
+          providerLabel: "Anthropic",
+          modelId: "claude-sonnet-4-20250514",
+          quality: "balanced",
+        },
+      ]}
+    />);
+
+    assert.match(html, /Claude Sonnet Balanced/);
+    assert.doesNotMatch(html, /Gemini Flash Balanced/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+test("commercial start action notices guide signed-out and low-credit users", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    resolveCommercialStartActionNotice?: (input: {
+      commercialMode: boolean;
+      startAttempted: boolean;
+      hasUser: boolean;
+      availableCredits: number;
+      requiredCredits: number;
+      language?: "zh-CN" | "en-US";
+    }) => unknown;
+  };
+
+  assert.equal(appModule.resolveCommercialStartActionNotice?.({
+    commercialMode: true,
+    startAttempted: false,
+    hasUser: false,
+    availableCredits: 0,
+    requiredCredits: 3,
+    language: "en-US",
+  }), undefined);
+  assert.deepEqual(appModule.resolveCommercialStartActionNotice?.({
+    commercialMode: true,
+    startAttempted: true,
+    hasUser: false,
+    availableCredits: 0,
+    requiredCredits: 3,
+    language: "en-US",
+  }), {
+    tone: "login",
+    title: "Sign in required",
+    message: "Sign in or create an account before starting a paid simulation.",
+    primaryHref: "/login",
+    primaryLabel: "Sign in",
+    secondaryHref: "/register",
+    secondaryLabel: "Create account",
+  });
+  assert.deepEqual(appModule.resolveCommercialStartActionNotice?.({
+    commercialMode: true,
+    startAttempted: true,
+    hasUser: true,
+    availableCredits: 1,
+    requiredCredits: 3,
+    language: "zh-CN",
+  }), {
+    tone: "credits",
+    title: "额度不足",
+    message: "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。",
+    primaryHref: "/account",
+    primaryLabel: "去账号页兑换",
+  });
+  assert.equal(appModule.resolveCommercialStartActionNotice?.({
+    commercialMode: true,
+    startAttempted: true,
+    hasUser: true,
+    availableCredits: 3,
+    requiredCredits: 3,
+    language: "zh-CN",
+  }), undefined);
 });
 
 function makeSimulation(id: string, createdAt = "2026-07-04T00:00:00.000Z"): Simulation {

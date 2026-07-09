@@ -323,6 +323,23 @@ export interface AdminSettingItemDto {
 
 export interface AdminSettingsDto {
   items: AdminSettingItemDto[];
+  platformModels?: {
+    available: Array<{
+      id: string;
+      label: string;
+      providerLabel?: string;
+      modelId: string;
+      quality?: "fast" | "balanced" | "deep";
+    }>;
+    enabled: Array<{
+      id: string;
+      label: string;
+      providerLabel?: string;
+      modelId: string;
+      quality?: "fast" | "balanced" | "deep";
+    }>;
+    enabledModelProfileIds: string[];
+  };
 }
 
 export interface AdminAuditLogDto {
@@ -432,6 +449,23 @@ export async function fetchAdminSettings(
 ): Promise<AdminSettingsDto> {
   const body = await requestAdminJson("/api/admin/settings", {}, fetchImpl);
   assertObjectWithProperty(body, "settings", "Invalid admin settings response");
+  return body.settings as unknown as AdminSettingsDto;
+}
+
+export async function updateAdminPlatformModels(
+  enabledModelProfileIds: string[],
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminSettingsDto> {
+  const body = await requestAdminJson(
+    "/api/admin/settings/platform-models",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabledModelProfileIds }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "settings", "Invalid platform model settings response");
   return body.settings as unknown as AdminSettingsDto;
 }
 

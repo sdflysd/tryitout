@@ -38,11 +38,14 @@ import type {
   CommercialSimulationReportRecord,
   CommercialSimulationTaskRecord,
   JsonObject,
+  SimulationStepRunCostRecord,
   UserCreditAccountRecord,
 } from "./types.js";
 import { assessUserInputSafety } from "../simulations/safety.js";
 import type {
   InteractionMode,
+  ModelSelection,
+  SimulationProgressStep,
   SimulationType,
   UserInput,
 } from "../../types.js";
@@ -54,6 +57,12 @@ import {
   type ProviderMode,
   type UserTier,
 } from "../../contracts/commercial.js";
+import { validateModelSelection } from "../ai/model-selection.schema.js";
+import {
+  PLATFORM_MODEL_SETTING_KEY,
+  filterPlatformModelOptions,
+  normalizePlatformModelProfileIds,
+} from "../../model-options.js";
 
 export const COMMERCIAL_SESSION_COOKIE_NAME = "tryitout_session";
 
@@ -137,6 +146,10 @@ type AdjustAdminUserCreditsBody = {
   metadata?: JsonObject;
 };
 
+type UpdatePlatformModelsBody = {
+  enabledModelProfileIds: string[];
+};
+
 type SaveModelProviderBody = {
   provider: string;
   displayName: string;
@@ -146,6 +159,25 @@ type SaveModelProviderBody = {
   modelBalanced?: string;
   modelDeep?: string;
 };
+
+type CommercialSimulationTaskStatusDto = CommercialSimulationTaskRecord & {
+  currentStageIndex?: number;
+  currentStepName?: SimulationProgressStep;
+  progressPercent?: number;
+  progressMessage?: string;
+};
+
+const SIMULATION_PROGRESS_STEPS = new Set<SimulationProgressStep>([
+  "safety_check",
+  "generate_agents",
+  "initialize_world_state",
+  "simulate_stage",
+  "generate_world_event",
+  "generate_agent_actions",
+  "arbitrate_stage",
+  "generate_report",
+  "generate_route_comparison",
+]);
 
 export async function handleRegisterRequest(
   body: unknown,
@@ -343,6 +375,19 @@ export async function handleGetModelProviderRequest(
     status: 200,
     body: {
       provider: await service.getPublicProvider(auth.user.id),
+    },
+  };
+}
+
+export async function handleGetPlatformModelsRequest(
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ models: ReturnType<typeof filterPlatformModelOptions> }>> {
+  const setting = await deps.repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
+  const enabledModelProfileIds = normalizePlatformModelProfileIds(setting?.value);
+  return {
+    status: 200,
+    body: {
+      models: filterPlatformModelOptions(enabledModelProfileIds),
     },
   };
 }
@@ -565,6 +610,35 @@ export async function handleGetAdminSettingsRequest(
   }
 }
 
+export async function handleUpdateAdminPlatformModelsRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ settings: Awaited<ReturnType<CommercialAdminService["getSettings"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseUpdatePlatformModelsBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        settings: await deps.adminService.updatePlatformModels({
+          actorUserId: auth.user.id,
+          enabledModelProfileIds: parsed.value.enabledModelProfileIds,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
 export async function handleCreateAdminAccessCodeBatchRequest(
   request: CommercialApiRequest,
   deps: CommercialApiDeps,
@@ -710,6 +784,7 @@ export async function handleCreateCommercialTaskRequest(
       userInput: parsed.value.userInput,
       interactionMode: parsed.value.interactionMode,
       providerMode: parsed.value.providerMode,
+      modelSelection: parsed.value.modelSelection,
       priority: parsed.value.priority,
       queueWeight: parsed.value.queueWeight,
       idempotencyKey: parsed.value.idempotencyKey,
@@ -733,7 +808,7 @@ export async function handleGetCommercialTaskStatusRequest(
   taskId: string,
   request: CommercialApiRequest,
   deps: CommercialApiDeps,
-): Promise<CommercialApiResult<{ task: CommercialSimulationTaskRecord } | CommercialApiErrorBody>> {
+): Promise<CommercialApiResult<{ task: CommercialSimulationTaskStatusDto } | CommercialApiErrorBody>> {
   const auth = await requireUser(request, deps);
   if (auth.ok === false) {
     return auth.result;
@@ -746,7 +821,29 @@ export async function handleGetCommercialTaskStatusRequest(
     }
     return {
       status: 200,
-      body: { task },
+      body: { task: await decorateTaskProgress(task, deps.repository) },
+    };
+  } catch (error) {
+    return mapTaskError(error);
+  }
+}
+
+export async function handleGetActiveCommercialTaskRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ task?: CommercialSimulationTaskStatusDto } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const task = await deps.taskService.getActiveTaskForUser(auth.user.id);
+    return {
+      status: 200,
+      body: {
+        task: task ? await decorateTaskProgress(task, deps.repository) : undefined,
+      },
     };
   } catch (error) {
     return mapTaskError(error);
@@ -1099,6 +1196,32 @@ function parseAdjustAdminUserCreditsBody(
   };
 }
 
+function parseUpdatePlatformModelsBody(
+  body: unknown,
+):
+  | { ok: true; value: UpdatePlatformModelsBody }
+  | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (!Array.isArray(body.enabledModelProfileIds)) {
+    return { ok: false, error: "enabledModelProfileIds must be an array" };
+  }
+  const enabledModelProfileIds: string[] = [];
+  for (const item of body.enabledModelProfileIds) {
+    if (typeof item !== "string" || !item.trim()) {
+      return { ok: false, error: "enabledModelProfileIds must contain strings" };
+    }
+    if (!enabledModelProfileIds.includes(item)) {
+      enabledModelProfileIds.push(item);
+    }
+  }
+  return {
+    ok: true,
+    value: { enabledModelProfileIds },
+  };
+}
+
 function parseSaveModelProviderBody(
   body: unknown,
 ): { ok: true; value: SaveModelProviderBody } | { ok: false; error: string } {
@@ -1154,6 +1277,7 @@ function parseCreateTaskBody(
         userInput: UserInput;
         interactionMode?: InteractionMode;
         providerMode?: ProviderMode;
+        modelSelection?: ModelSelection;
         priority?: number;
         queueWeight?: number;
         idempotencyKey: string;
@@ -1174,6 +1298,7 @@ function parseCreateTaskBody(
   assertUserInputShape(userInput);
   const interactionMode = body.interactionMode;
   const providerMode = body.providerMode;
+  const modelSelection = body.modelSelection;
   const priority = body.priority;
   const queueWeight = body.queueWeight;
   let parsedInteractionMode: InteractionMode | undefined;
@@ -1192,6 +1317,10 @@ function parseCreateTaskBody(
   }
   if (typeof body.idempotencyKey !== "string" || !body.idempotencyKey.trim()) {
     return { ok: false, error: "idempotencyKey is required" };
+  }
+  const parsedModelSelection = validateModelSelection(modelSelection);
+  if (parsedModelSelection.ok === false) {
+    return { ok: false, error: parsedModelSelection.error };
   }
   let parsedPriority: number | undefined;
   if (priority !== undefined) {
@@ -1223,6 +1352,9 @@ function parseCreateTaskBody(
       userInput,
       interactionMode: parsedInteractionMode,
       providerMode: parsedProviderMode,
+      modelSelection: Object.keys(parsedModelSelection.value).length > 0
+        ? parsedModelSelection.value
+        : undefined,
       priority: parsedPriority,
       queueWeight: parsedQueueWeight,
       idempotencyKey: body.idempotencyKey,
@@ -1333,6 +1465,8 @@ function mapTaskError(
         ? 402
         : error.code === "task_not_found"
           ? 404
+          : error.code === "provider_not_allowed"
+            ? 403
           : error.code === "active_task_exists" ||
               error.code === "invalid_task_transition"
             ? 409
@@ -1346,6 +1480,78 @@ function mapTaskError(
     return mapCreditError(error);
   }
   throw error;
+}
+
+async function decorateTaskProgress(
+  task: CommercialSimulationTaskRecord,
+  repository: CommercialRepository,
+): Promise<CommercialSimulationTaskStatusDto> {
+  const stepRuns = await repository.listSimulationStepRunCosts(task.id);
+  const latestProgressRun = findLatestProgressStepRun(stepRuns);
+  const progressPercent = readProgressPercent(latestProgressRun?.metadata);
+  const progressMessage = readProgressMessage(latestProgressRun?.metadata);
+
+  return {
+    ...task,
+    ...(latestProgressRun && isSimulationProgressStep(latestProgressRun.stepName)
+      ? { currentStepName: latestProgressRun.stepName }
+      : {}),
+    ...(typeof latestProgressRun?.stageIndex === "number"
+      ? { currentStageIndex: latestProgressRun.stageIndex }
+      : {}),
+    progressPercent: progressPercent ?? getCommercialTaskProgressPercent(task.status),
+    ...(progressMessage !== undefined ? { progressMessage } : {}),
+  };
+}
+
+function findLatestProgressStepRun(
+  runs: SimulationStepRunCostRecord[],
+): SimulationStepRunCostRecord | undefined {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index];
+    if (
+      isSimulationProgressStep(run.stepName) ||
+      readProgressPercent(run.metadata) !== undefined ||
+      readProgressMessage(run.metadata) !== undefined
+    ) {
+      return run;
+    }
+  }
+  return undefined;
+}
+
+function isSimulationProgressStep(value: string): value is SimulationProgressStep {
+  return SIMULATION_PROGRESS_STEPS.has(value as SimulationProgressStep);
+}
+
+function readProgressPercent(metadata: JsonObject | undefined): number | undefined {
+  const value = metadata?.progressPercent;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, value))
+    : undefined;
+}
+
+function readProgressMessage(metadata: JsonObject | undefined): string | undefined {
+  const value = metadata?.progressMessage;
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function getCommercialTaskProgressPercent(
+  status: CommercialSimulationTaskRecord["status"],
+): number {
+  switch (status) {
+    case "queued":
+      return 5;
+    case "running":
+      return 50;
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "refunded":
+      return 100;
+    default:
+      return 0;
+  }
 }
 
 function mapAdminError(

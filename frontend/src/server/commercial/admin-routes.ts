@@ -15,6 +15,7 @@ import {
   handleListAdminAuditLogsRequest,
   handleListAdminTasksRequest,
   handleListAdminUsersRequest,
+  handleUpdateAdminPlatformModelsRequest,
   type CommercialApiResult,
 } from "./commercial-api.js";
 
@@ -120,6 +121,17 @@ export function registerCommercialAdminRoutes(
       return sendDisabled(res);
     }
     const result = await handleGetAdminSettingsRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/settings/platform-models", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleUpdateAdminPlatformModelsRequest(
+      toCommercialRequest(req),
+      services,
+    );
     sendCommercialApiResult(res, result);
   });
 

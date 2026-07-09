@@ -27,6 +27,12 @@ test("ordinary tasks use weight 1 and deep tasks use weight 3", () => {
 });
 
 test("queue job includes task identity, modes, weight, priority, and idempotency key", () => {
+  const userInput = {
+    type: "life_choice" as const,
+    decisionContext: "Should I quit my job?",
+    optionA: "Stay",
+    optionB: "Quit",
+  };
   const job = toSimulationQueueJob(
     makeTask({
       id: "task_1",
@@ -36,20 +42,36 @@ test("queue job includes task identity, modes, weight, priority, and idempotency
       priority: 7,
       queueWeight: 4,
       idempotencyKey: "idem_1",
+      modelSelection: { userCredentialId: "provider_1", mode: "deep" },
       queuedAt: "queued",
     }),
+    { userInput },
   );
 
   assert.deepEqual(job, {
     taskId: "task_1",
     userId: "user_1",
+    userInput,
     interactionMode: "enabled",
     providerMode: "byok",
     weight: 4,
     priority: 7,
     idempotencyKey: "idem_1",
+    modelSelection: { userCredentialId: "provider_1", mode: "deep" },
     queuedAt: "queued",
   });
+});
+
+test("queue rejects jobs without runnable user input", async () => {
+  const queue = new InMemorySimulationQueue({ maxActiveWeight: 3 });
+
+  await assert.rejects(
+    queue.enqueue({
+      ...job({ taskId: "missing_input" }),
+      userInput: undefined as never,
+    }),
+    /userInput/,
+  );
 });
 
 test("weighted limiter claims jobs only within budget", () => {
@@ -96,9 +118,9 @@ test("releasing jobs lowers active weight and stale claim release is safe", () =
 
 test("in-memory queue claims queued jobs by priority within weighted budget", async () => {
   const queue = new InMemorySimulationQueue({ maxActiveWeight: 4 });
-  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "deep_low", interactionMode: "enabled", priority: 1 })));
-  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "light_high", interactionMode: "legacy", priority: 10 })));
-  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "deep_high", interactionMode: "enabled", priority: 9 })));
+  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "deep_low", interactionMode: "enabled", priority: 1 }), { userInput: userInput() }));
+  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "light_high", interactionMode: "legacy", priority: 10 }), { userInput: userInput() }));
+  await queue.enqueue(toSimulationQueueJob(makeTask({ id: "deep_high", interactionMode: "enabled", priority: 9 }), { userInput: userInput() }));
 
   const first = await queue.claimNext();
   const second = await queue.claimNext();
@@ -210,11 +232,21 @@ function job(
   return {
     taskId: overrides.taskId,
     userId: "user_1",
+    userInput: userInput(),
     interactionMode: "legacy" as const,
     providerMode: "platform" as const,
     weight: overrides.weight ?? 1,
     priority: overrides.priority ?? 0,
     idempotencyKey: `${overrides.taskId}_idempotency`,
     queuedAt: CREATED_AT,
+  };
+}
+
+function userInput() {
+  return {
+    type: "life_choice" as const,
+    decisionContext: "Should I quit my job?",
+    optionA: "Stay",
+    optionB: "Quit",
   };
 }

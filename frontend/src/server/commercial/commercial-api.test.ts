@@ -19,12 +19,14 @@ import {
   handleGetAdminOverviewRequest,
   handleGetAdminQueueRequest,
   handleGetAdminSettingsRequest,
+  handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleDeleteModelProviderRequest,
   handleGetModelProviderRequest,
+  handleGetPlatformModelsRequest,
   handleListAdminAccessCodeBatchesRequest,
   handleListAdminAuditLogsRequest,
   handleListAdminTasksRequest,
@@ -35,6 +37,7 @@ import {
   handleRegisterRequest,
   handleSaveModelProviderRequest,
   handleTestModelProviderRequest,
+  handleUpdateAdminPlatformModelsRequest,
 } from "./commercial-api.js";
 import { CommercialTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
@@ -268,6 +271,95 @@ test("commercial task creation holds credits and returns task status", async () 
   assert.equal(status.body.task.userId, "user_1");
 });
 
+test("commercial task creation preserves selected platform model in queue job", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  await deps.repository.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["anthropic_sonnet_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  const created = await handleCreateCommercialTaskRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken },
+      body: {
+        userInput: makeUserInput(),
+        interactionMode: "enabled",
+        providerMode: "platform",
+        modelSelection: { modelProfileId: "anthropic_sonnet_balanced" },
+        idempotencyKey: "task-key-1",
+      },
+    }),
+    deps,
+  );
+
+  assert.equal(created.status, 202);
+  const claim = await deps.queue.claimNext();
+  assert.deepEqual(claim?.job.modelSelection, {
+    modelProfileId: "anthropic_sonnet_balanced",
+  });
+});
+
+test("commercial task status includes latest worker step progress", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  const task = await createPaidTask(deps, sessionToken);
+  await deps.taskService.markRunning({ taskId: task.id });
+  await deps.repository.appendSimulationStepRunCost({
+    id: "simulation_step_run_1",
+    taskId: task.id,
+    stepName: "generate_agent_actions",
+    stageIndex: 2,
+    status: "started",
+    startedAt: "2026-07-07T00:03:00.000Z",
+    metadata: {
+      progressPercent: 43,
+      progressMessage: "第 2 阶段 Agent 行动生成开始。",
+    },
+  });
+
+  const status = await handleGetCommercialTaskStatusRequest(
+    task.id,
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(status.status, 200);
+  assert.equal("task" in status.body, true);
+  if (!("task" in status.body)) return;
+  assert.equal(status.body.task.id, task.id);
+  assert.equal(status.body.task.currentStepName, "generate_agent_actions");
+  assert.equal(status.body.task.currentStageIndex, 2);
+  assert.equal(status.body.task.progressPercent, 43);
+  assert.equal(status.body.task.progressMessage, "第 2 阶段 Agent 行动生成开始。");
+});
+
+test("active commercial task endpoint returns the current user's queued task", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  const task = await createPaidTask(deps, sessionToken);
+
+  const missing = await handleGetActiveCommercialTaskRequest(request(), deps);
+  const active = await handleGetActiveCommercialTaskRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(missing.status, 401);
+  assert.equal(active.status, 200);
+  assert.equal("task" in active.body, true);
+  if (!("task" in active.body)) return;
+  assert.equal(active.body.task?.id, task.id);
+  assert.equal(active.body.task?.status, "queued");
+  assert.equal(active.body.task?.userId, "user_1");
+});
+
 test("task report is returned only to the task owner after completion", async () => {
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
@@ -499,6 +591,38 @@ test("admin read endpoints reject non-admin sessions and return real safe operat
   assert.equal(settings.body.settings.items.find((item) => item.key === "queue.paused")?.configured, true);
 });
 
+test("admin platform model settings drive the public platform model list", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+
+  assert.deepEqual(
+    (await handleGetPlatformModelsRequest(deps)).body,
+    { models: [] },
+  );
+
+  const updated = await handleUpdateAdminPlatformModelsRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: {
+        enabledModelProfileIds: ["anthropic_sonnet_balanced"],
+      },
+    }),
+    deps,
+  );
+  const publicModels = await handleGetPlatformModelsRequest(deps);
+
+  assert.equal(updated.status, 200);
+  assert.equal("settings" in updated.body, true);
+  if (!("settings" in updated.body)) return;
+  assert.deepEqual(updated.body.settings.platformModels.enabledModelProfileIds, [
+    "anthropic_sonnet_balanced",
+  ]);
+  assert.deepEqual(
+    publicModels.body.models.map((model) => model.id),
+    ["anthropic_sonnet_balanced"],
+  );
+});
+
 test("admin can create a single copyable access code without exposing stored hashes", async () => {
   const deps = makeDeps();
   const adminSession = await loginAdmin(deps);
@@ -716,10 +840,11 @@ function makeDeps() {
     hashAccessCode,
     now,
   });
+  const queue = new InMemorySimulationQueue({ maxActiveWeight: 6 });
   const taskService = new CommercialTaskService({
     repository,
     creditService,
-    queue: new InMemorySimulationQueue({ maxActiveWeight: 6 }),
+    queue,
     createId,
     now,
   });
@@ -764,6 +889,7 @@ function makeDeps() {
     authService,
     creditService,
     modelProviderService,
+    queue,
     repository,
     taskService,
   };

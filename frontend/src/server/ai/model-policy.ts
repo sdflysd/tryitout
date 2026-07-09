@@ -18,7 +18,7 @@ function defaultStep(
 ): StepModelConfig {
   return {
     modelProfileId: profileId,
-    allowUserOverride: false,
+    allowUserOverride: true,
     quality,
     requiredCapabilities: { maxOutputTokens },
     maxOutputTokens,

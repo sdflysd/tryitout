@@ -12,7 +12,7 @@ export type SimulationProgressStep =
   | "generate_report"
   | "generate_route_comparison";
 
-export type SimulationProgressStatus = "started" | "completed" | "failed";
+export type SimulationProgressStatus = "queued" | "started" | "completed" | "failed";
 
 export interface SimulationProgressEvent {
   simulationId: string;

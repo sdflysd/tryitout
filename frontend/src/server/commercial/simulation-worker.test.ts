@@ -58,7 +58,17 @@ test("worker claims a job only when weighted capacity allows", async () => {
     idempotencyKey: "task-key-2",
     creditHoldLedgerId: "hold_2",
   }));
-  await scenario.queue.enqueue(toSimulationQueueJob((await scenario.repo.getCommercialTask("task_2"))!));
+  await scenario.queue.enqueue(toSimulationQueueJob(
+    (await scenario.repo.getCommercialTask("task_2"))!,
+    {
+      userInput: {
+        type: "life_choice",
+        decisionContext: "Should I quit my job?",
+        optionA: "Stay",
+        optionB: "Quit",
+      },
+    },
+  ));
 
   const run = await runSimulationQueueOnce({
     queue: scenario.queue,

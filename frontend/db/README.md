@@ -9,6 +9,7 @@ Apply migrations in lexical order from `frontend/db/migrations`.
 Current order:
 
 1. `001_platformized_commercial.sql` creates the initial commercial platform schema.
+2. `002_add_simulation_task_model_selection.sql` adds per-task model selection metadata for existing databases.
 
 Do not enable `COMMERCIAL_MODE_ENABLED=true` against a production service until every migration for the deployed commit has been applied successfully.
 
@@ -46,6 +47,7 @@ Example:
 
 ```bash
 psql "$DATABASE_URL" -f frontend/db/migrations/001_platformized_commercial.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/002_add_simulation_task_model_selection.sql
 ```
 
 ## Reset Workflow
@@ -58,6 +60,7 @@ Example:
 dropdb tryitout
 createdb tryitout
 psql "$DATABASE_URL" -f frontend/db/migrations/001_platformized_commercial.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/002_add_simulation_task_model_selection.sql
 ```
 
 Never run a drop/reset workflow against staging or production. Production recovery should use backups, point-in-time restore, or forward migrations.
