@@ -130,7 +130,7 @@ test("worker records task-run attempt", async () => {
   assert.equal(runs[0]?.workerId, "worker_1");
   assert.equal(runs[0]?.attempt, 1);
   assert.equal(runs[0]?.status, "completed");
-  assert.equal(runs[0]?.completedAt, "2026-07-07T00:04:00.000Z");
+  assert.equal(runs[0]?.completedAt, "2026-07-07T00:05:00.000Z");
 });
 
 test("worker records a running task-run attempt before simulation work", async () => {

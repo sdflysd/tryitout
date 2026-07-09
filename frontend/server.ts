@@ -21,6 +21,7 @@ import {
   resolveSimulationTaskRouteMode,
   shouldBlockLegacySimulationRoute,
 } from "./src/server/commercial/commercial-routing.js";
+import { isAdminRole } from "./src/contracts/commercial.js";
 import { registerCommercialAdminRoutes } from "./src/server/commercial/admin-routes.js";
 import {
   handleCancelCommercialTaskRequest,
@@ -47,7 +48,6 @@ import { assessUserInputSafety } from "./src/server/simulations/safety.js";
 import {
   handleCancelSimulationTaskRequest,
   handleCreateSimulationTaskRequest,
-  handleGetSimulationCostSummaryRequest,
   handleGetSimulationReportRequest,
   handleGetSimulationTaskStatusRequest,
   handleResumeSimulationTaskRequest,
@@ -506,14 +506,6 @@ app.get("/api/simulation-tasks/:id/report", async (req, res) => {
   res.status(result.status).json(result.body);
 });
 
-app.get("/api/admin/simulation-tasks/:id/cost-summary", async (req, res) => {
-  // TODO: Protect admin routes before production deployment.
-  const result = await handleGetSimulationCostSummaryRequest(req.params.id, {
-    service: taskService,
-  });
-  res.status(result.status).json(result.body);
-});
-
 // API: Run multi-agent simulation for Side Hustle, Dating, or Life Choice
 app.post("/api/simulations", async (req, res) => {
   if (shouldBlockLegacySimulationRoute(req.path, process.env)) {
@@ -638,6 +630,37 @@ app.post("/api/simulations/stream", async (req, res) => {
     res.end();
   }
 });
+
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "API route not found" });
+});
+
+app.get(["/admin", "/admin/*"], async (req, res, next) => {
+  await handleAdminPageRequest(req, res, next);
+});
+
+async function handleAdminPageRequest(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): Promise<void> {
+  if (!commercialServices.enabled) {
+    res.status(404).send("Admin console is unavailable");
+    return;
+  }
+
+  const result = await handleGetMeRequest(toCommercialRequest(req), commercialServices);
+  if (result.status === 401) {
+    res.redirect("/login");
+    return;
+  }
+  if (result.status !== 200 || !("user" in result.body) || !isAdminRole(result.body.user.role)) {
+    res.status(403).send("Admin privileges required");
+    return;
+  }
+
+  next();
+}
 
 // Configure Vite or Static files serving
 async function startServer() {

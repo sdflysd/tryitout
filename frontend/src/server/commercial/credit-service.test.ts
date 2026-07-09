@@ -12,6 +12,7 @@ import {
 } from "./repository.js";
 import type {
   AccessCodeRecord,
+  CommercialUserRecord,
   CommercialSimulationTaskRecord,
   CreditLedgerEntryRecord,
   UserCreditAccountRecord,
@@ -62,6 +63,69 @@ test("redeeming an active access code increases balance, writes ledger, and reco
   assert.deepEqual(
     await repo.findAccessCodeRedemptionByCodeId(created.record.id),
     result.redemption,
+  );
+});
+
+test("redeeming an entitlement access code updates effective user tier and features", async () => {
+  const { repo, service, accessCodeService } = await createScenario({
+    user: {
+      tier: "pro",
+      features: ["priority_queue"],
+    },
+  });
+  const created = await accessCodeService.createSingleAccessCode({
+    credits: 25,
+    tier: "business",
+    features: ["deep_mode", "custom_model_provider"],
+  });
+
+  await service.redeemAccessCode({
+    userId: "user_1",
+    rawCode: created.rawCode,
+    idempotencyKey: "redeem-key-1",
+  });
+
+  const user = await repo.getEffectiveUser("user_1", "2026-07-07T00:02:00.000Z");
+  assert.equal(user?.tier, "business");
+  assert.deepEqual(user?.features, [
+    "priority_queue",
+    "deep_mode",
+    "custom_model_provider",
+  ]);
+  assert.equal((await repo.getUser("user_1"))?.tier, "pro");
+});
+
+test("redeeming a timed entitlement code records an expiring grant without changing baseline rights", async () => {
+  const { repo, service, accessCodeService } = await createScenario({
+    user: {
+      tier: "basic",
+      features: [],
+    },
+  });
+  const created = await accessCodeService.createSingleAccessCode({
+    credits: 10,
+    tier: "business",
+    features: ["custom_model_provider"],
+    entitlementDurationDays: 30,
+  });
+
+  const result = await service.redeemAccessCode({
+    userId: "user_1",
+    rawCode: created.rawCode,
+    idempotencyKey: "redeem-key-1",
+  });
+
+  assert.equal(result.redemption.entitlementStartsAt, "2026-07-07T00:01:00.000Z");
+  assert.equal(result.redemption.entitlementExpiresAt, "2026-08-06T00:01:00.000Z");
+  assert.equal((await repo.getUser("user_1"))?.tier, "basic");
+  assert.deepEqual((await repo.getUser("user_1"))?.features, []);
+  assert.equal(
+    (await repo.getEffectiveUser("user_1", "2026-08-05T00:00:00.000Z"))?.tier,
+    "business",
+  );
+  assert.equal(
+    (await repo.getEffectiveUser("user_1", "2026-08-07T00:00:00.000Z"))?.tier,
+    "basic",
   );
 });
 
@@ -708,7 +772,9 @@ test("admin adjustment cannot make balance negative", async () => {
 });
 
 async function createScenario(
-  accountOverrides: Partial<UserCreditAccountRecord> = {},
+  options: Partial<UserCreditAccountRecord> & {
+    user?: Partial<CommercialUserRecord>;
+  } = {},
 ): Promise<{
   repo: InMemoryCommercialRepository;
   service: CreditService;
@@ -717,6 +783,7 @@ async function createScenario(
   const repo = new InMemoryCommercialRepository();
   const ids = new TestIds();
   const now = new TestClock(NOW_VALUES);
+  const { user: userOverrides, ...accountOverrides } = options;
   const accessCodeService = new AccessCodeService({
     repository: repo,
     accessCodePepper: ACCESS_CODE_PEPPER,
@@ -732,6 +799,19 @@ async function createScenario(
     now: () => now.next(),
   });
 
+  await repo.saveUser({
+    id: "user_1",
+    email: "user@example.test",
+    emailNormalized: "user@example.test",
+    passwordHash: "hash",
+    role: "user",
+    tier: "basic",
+    status: "active",
+    features: [],
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+    ...userOverrides,
+  });
   await repo.saveCreditAccount({
     userId: "user_1",
     balance: 0,

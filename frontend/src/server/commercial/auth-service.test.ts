@@ -231,6 +231,36 @@ test("getUserForSessionToken rejects expired and revoked sessions", async () => 
   );
 });
 
+test("getUserForSessionToken returns effective access-code entitlements", async () => {
+  const { repo, service } = makeService({ sessionToken: "entitled-session-token" });
+  await service.register({
+    email: "user@example.test",
+    password: "commercial-secret",
+  });
+  await service.login({
+    email: "user@example.test",
+    password: "commercial-secret",
+  });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-06T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-08T00:00:00.000Z",
+    redeemedAt: "2026-07-06T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const user = await service.getUserForSessionToken("entitled-session-token");
+
+  assert.equal(user?.tier, "business");
+  assert.deepEqual(user?.features, ["custom_model_provider"]);
+  assert.equal((await repo.getUser("user_1"))?.tier, "basic");
+});
+
 test("getUserForSessionToken rejects invalid session and clock dates", async () => {
   const invalidSession = makeService({
     now: () => NOW,

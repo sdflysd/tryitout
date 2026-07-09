@@ -30,6 +30,66 @@ test("basic users without BYOK entitlement cannot save their own API key provide
   assert.deepEqual(await repo.listUserModelProviders("user_1"), []);
 });
 
+test("expired BYOK entitlement grants cannot save API key providers", async () => {
+  const { repo, service } = createScenario({
+    randomBytes: (length) => Buffer.alloc(length, 2),
+  });
+  await repo.saveUser(makeUser({ tier: "basic", features: [] }));
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-01T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-06T00:00:00.000Z",
+    redeemedAt: "2026-07-01T00:00:00.000Z",
+    metadata: {},
+  });
+
+  await assert.rejects(
+    service.saveProvider({
+      userId: "user_1",
+      provider: "openai",
+      displayName: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-basic-secret123456",
+    }),
+    (error) => hasProviderCode(error, "provider_not_allowed"),
+  );
+});
+
+test("active BYOK entitlement grants allow API key providers without changing baseline rights", async () => {
+  const { repo, service } = createScenario({
+    randomBytes: (length) => Buffer.alloc(length, 2),
+  });
+  await repo.saveUser(makeUser({ tier: "basic", features: [] }));
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-01T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-08T00:00:00.000Z",
+    redeemedAt: "2026-07-01T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const saved = await service.saveProvider({
+    userId: "user_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "sk-basic-secret123456",
+  });
+
+  assert.equal(saved.status, "active");
+  assert.equal((await repo.getUser("user_1"))?.tier, "basic");
+});
+
 test("eligible users save encrypted provider keys and receive only masked DTOs", async () => {
   const { repo, service } = createScenario({
     randomBytes: (length) => Buffer.alloc(length, 1),

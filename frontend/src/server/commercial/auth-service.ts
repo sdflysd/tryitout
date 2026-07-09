@@ -217,7 +217,7 @@ export class CommercialAuthService {
       return undefined;
     }
 
-    const user = await this.repository.getUser(session.userId);
+    const user = await this.repository.getEffectiveUser(session.userId, now);
     if (!user || user.status !== "active") {
       return undefined;
     }

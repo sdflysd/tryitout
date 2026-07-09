@@ -172,7 +172,7 @@ export class CreditService {
       }),
       createdAt: nowIso,
     };
-    const redemption: AccessCodeRedemptionRecord = {
+    const redemption: AccessCodeRedemptionRecord = omitUndefined({
       id: this.createId("access_code_redemption"),
       accessCodeId: code.id,
       userId: input.userId,
@@ -180,9 +180,14 @@ export class CreditService {
       credits: code.credits,
       tierGranted: code.tier,
       featuresGranted: [...code.features],
+      entitlementStartsAt: nowIso,
+      entitlementExpiresAt: calculateEntitlementExpiresAt(
+        nowDate,
+        code.entitlementDurationDays,
+      ),
       redeemedAt: nowIso,
       metadata: input.metadata ?? {},
-    };
+    });
 
     const redeemed = await this.writeRedeemWithIdempotencyRecovery(
       input.idempotencyKey,
@@ -933,6 +938,25 @@ function isExpiredOrInvalid(expiresAt: string | undefined, now: Date): boolean {
 
   const expiresAtMs = Date.parse(expiresAt);
   return !Number.isFinite(expiresAtMs) || expiresAtMs <= now.getTime();
+}
+
+function calculateEntitlementExpiresAt(
+  startsAt: Date,
+  durationDays: number | undefined,
+): string | undefined {
+  if (durationDays === undefined) {
+    return undefined;
+  }
+
+  return new Date(
+    startsAt.getTime() + durationDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+}
+
+function omitUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as T;
 }
 
 function validateRequired(value: string, label: string): void {

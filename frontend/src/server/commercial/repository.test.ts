@@ -606,6 +606,18 @@ test("repository atomically adjusts credits with audit log", async () => {
 
 test("repository atomically redeems access code with credit ledger and account", async () => {
   const repo = new InMemoryCommercialRepository();
+  await repo.saveUser({
+    id: "user_1",
+    email: "user@example.test",
+    emailNormalized: "user@example.test",
+    passwordHash: "hash",
+    role: "user",
+    tier: "pro",
+    status: "active",
+    features: ["priority_queue"],
+    createdAt: "created",
+    updatedAt: "created",
+  });
   await repo.saveCreditAccount(makeCreditAccount("user_1"));
   await repo.saveAccessCode({
     id: "code_1",
@@ -614,8 +626,8 @@ test("repository atomically redeems access code with credit ledger and account",
     codeMask: "TEST-****-001",
     status: "active",
     credits: 10,
-    tier: "pro",
-    features: ["priority_queue"],
+    tier: "business",
+    features: ["deep_mode", "custom_model_provider"],
     createdAt: "created",
   });
 
@@ -627,8 +639,8 @@ test("repository atomically redeems access code with credit ledger and account",
       codeMask: "TEST-****-001",
       status: "redeemed",
       credits: 10,
-      tier: "pro",
-      features: ["priority_queue"],
+      tier: "business",
+      features: ["deep_mode", "custom_model_provider"],
       redeemedByUserId: "user_1",
       redeemedAt: "redeemed",
       createdAt: "created",
@@ -639,8 +651,8 @@ test("repository atomically redeems access code with credit ledger and account",
       userId: "user_1",
       creditLedgerId: "ledger_1",
       credits: 10,
-      tierGranted: "pro",
-      featuresGranted: ["priority_queue"],
+      tierGranted: "business",
+      featuresGranted: ["deep_mode", "custom_model_provider"],
       redeemedAt: "redeemed",
       metadata: {},
     },
@@ -661,6 +673,16 @@ test("repository atomically redeems access code with credit ledger and account",
   assert.equal(result?.account.balance, 10);
   assert.equal((await repo.getAccessCode("code_1"))?.status, "redeemed");
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 10);
+  assert.equal((await repo.getUser("user_1"))?.tier, "pro");
+  assert.deepEqual((await repo.getUser("user_1"))?.features, [
+    "priority_queue",
+  ]);
+  assert.equal((await repo.getEffectiveUser("user_1"))?.tier, "business");
+  assert.deepEqual((await repo.getEffectiveUser("user_1"))?.features, [
+    "priority_queue",
+    "deep_mode",
+    "custom_model_provider",
+  ]);
   assert.equal(
     (await repo.findCreditLedgerEntryByIdempotencyKey("redeem_1"))?.id,
     "ledger_1",
@@ -669,6 +691,60 @@ test("repository atomically redeems access code with credit ledger and account",
     (await repo.findAccessCodeRedemptionByCodeId("code_1"))?.creditLedgerId,
     "ledger_1",
   );
+});
+
+test("repository computes effective user entitlements from active access-code grants", async () => {
+  const repo = new InMemoryCommercialRepository();
+  await repo.saveUser({
+    ...makeUser(),
+    tier: "basic",
+    features: ["priority_queue"],
+  });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_business",
+    accessCodeId: "code_business",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-01T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-10T00:00:00.000Z",
+    redeemedAt: "2026-07-01T00:00:00.000Z",
+    metadata: {},
+  });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_pro",
+    accessCodeId: "code_pro",
+    userId: "user_1",
+    credits: 5,
+    tierGranted: "pro",
+    featuresGranted: ["deep_mode"],
+    entitlementStartsAt: "2026-07-05T00:00:00.000Z",
+    entitlementExpiresAt: "2026-08-05T00:00:00.000Z",
+    redeemedAt: "2026-07-05T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const duringBusiness = await repo.getEffectiveUser(
+    "user_1",
+    "2026-07-09T00:00:00.000Z",
+  );
+  assert.equal(duringBusiness?.tier, "business");
+  assert.deepEqual(duringBusiness?.features, [
+    "priority_queue",
+    "custom_model_provider",
+    "deep_mode",
+  ]);
+
+  const afterBusinessExpiry = await repo.getEffectiveUser(
+    "user_1",
+    "2026-07-11T00:00:00.000Z",
+  );
+  assert.equal(afterBusinessExpiry?.tier, "pro");
+  assert.deepEqual(afterBusinessExpiry?.features, [
+    "priority_queue",
+    "deep_mode",
+  ]);
 });
 
 test("repository redeemAccessCodeWithCreditLedger validates ledger uniqueness before mutating", async () => {

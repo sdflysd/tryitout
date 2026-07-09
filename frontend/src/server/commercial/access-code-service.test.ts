@@ -116,6 +116,7 @@ test("creating codes records batch source, grants, features, and expirations", a
     tier: "business",
     features: ["custom_model_provider"],
     expiresAt: "2026-09-01T00:00:00.000Z",
+    entitlementDurationDays: 30,
     metadata: { ticketId: "T-123" },
   });
 
@@ -129,12 +130,14 @@ test("creating codes records batch source, grants, features, and expirations", a
   assert.equal(batch?.tier, "business");
   assert.deepEqual(batch?.features, ["custom_model_provider"]);
   assert.equal(batch?.expiresAt, "2026-09-01T00:00:00.000Z");
+  assert.equal(batch?.entitlementDurationDays, 30);
   assert.deepEqual(batch?.metadata, { ticketId: "T-123" });
   assert.equal(record?.status, "active");
   assert.equal(record?.credits, 7);
   assert.equal(record?.tier, "business");
   assert.deepEqual(record?.features, ["custom_model_provider"]);
   assert.equal(record?.expiresAt, "2026-09-01T00:00:00.000Z");
+  assert.equal(record?.entitlementDurationDays, 30);
 });
 
 test("code lookup uses normalized hash and returns only redeemable active codes", async () => {
@@ -206,6 +209,18 @@ test("markRedeemed records redemption metadata without mutating credit balances"
   const service = createService(repo, {
     nowValues: [CREATED_AT, REDEEMED_AT],
   });
+  await repo.saveUser({
+    id: "user_1",
+    email: "user@example.test",
+    emailNormalized: "user@example.test",
+    passwordHash: "hash",
+    role: "user",
+    tier: "basic",
+    status: "active",
+    features: [],
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   const created = await service.createSingleAccessCode({
     credits: 13,
     tier: "pro",
@@ -226,6 +241,12 @@ test("markRedeemed records redemption metadata without mutating credit balances"
   assert.equal(storedCode?.status, "redeemed");
   assert.equal(storedCode?.redeemedByUserId, "user_1");
   assert.equal(storedCode?.redeemedAt, REDEEMED_AT);
+  assert.equal((await repo.getUser("user_1"))?.tier, "basic");
+  assert.deepEqual((await repo.getUser("user_1"))?.features, []);
+  assert.equal((await repo.getEffectiveUser("user_1", REDEEMED_AT))?.tier, "pro");
+  assert.deepEqual((await repo.getEffectiveUser("user_1", REDEEMED_AT))?.features, [
+    "priority_queue",
+  ]);
   assert.deepEqual(redemption, {
     id: "access_code_redemption_1",
     accessCodeId: created.record.id,
@@ -234,6 +255,7 @@ test("markRedeemed records redemption metadata without mutating credit balances"
     credits: 13,
     tierGranted: "pro",
     featuresGranted: ["priority_queue"],
+    entitlementStartsAt: REDEEMED_AT,
     redeemedAt: REDEEMED_AT,
     metadata: { source: "checkout" },
   });
@@ -354,6 +376,16 @@ test("service reports invalid input and missing records with domain errors", asy
       credits: 1,
       features: [],
       expiresAt: "not-a-date",
+    }),
+    (error) => hasServiceCode(error, "invalid_access_code_input"),
+  );
+  await assert.rejects(
+    service.createAccessCodeBatch({
+      name: "Bad entitlement duration",
+      codeCount: 1,
+      credits: 1,
+      features: [],
+      entitlementDurationDays: 0,
     }),
     (error) => hasServiceCode(error, "invalid_access_code_input"),
   );

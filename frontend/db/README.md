@@ -10,6 +10,10 @@ Current order:
 
 1. `001_platformized_commercial.sql` creates the initial commercial platform schema.
 2. `002_add_simulation_task_model_selection.sql` adds per-task model selection metadata for existing databases.
+3. `003_admin_management_overhaul.sql` adds admin user, access-code, and platform model operations.
+4. `004_access_code_restore_audit_actions.sql` updates access-code restore audit actions for existing databases.
+5. `005_backfill_access_code_redemption_entitlements.sql` backfills user tier and feature grants from prior access-code redemptions.
+6. `006_timed_access_code_entitlements.sql` adds post-redemption entitlement windows for time-limited access-code grants.
 
 Do not enable `COMMERCIAL_MODE_ENABLED=true` against a production service until every migration for the deployed commit has been applied successfully.
 
@@ -48,6 +52,10 @@ Example:
 ```bash
 psql "$DATABASE_URL" -f frontend/db/migrations/001_platformized_commercial.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/002_add_simulation_task_model_selection.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/003_admin_management_overhaul.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/004_access_code_restore_audit_actions.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/005_backfill_access_code_redemption_entitlements.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/006_timed_access_code_entitlements.sql
 ```
 
 ## Reset Workflow
@@ -61,6 +69,10 @@ dropdb tryitout
 createdb tryitout
 psql "$DATABASE_URL" -f frontend/db/migrations/001_platformized_commercial.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/002_add_simulation_task_model_selection.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/003_admin_management_overhaul.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/004_access_code_restore_audit_actions.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/005_backfill_access_code_redemption_entitlements.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/006_timed_access_code_entitlements.sql
 ```
 
 Never run a drop/reset workflow against staging or production. Production recovery should use backups, point-in-time restore, or forward migrations.

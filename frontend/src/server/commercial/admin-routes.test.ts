@@ -19,6 +19,7 @@ test("commercial admin routes register real platform endpoints", () => {
     { method: "POST", path: "/api/admin/users/bulk" },
     { method: "GET", path: "/api/admin/access-codes" },
     { method: "POST", path: "/api/admin/access-codes/:id/disable" },
+    { method: "POST", path: "/api/admin/access-codes/:id/restore" },
     { method: "DELETE", path: "/api/admin/access-codes/:id" },
     { method: "POST", path: "/api/admin/access-codes/bulk" },
     { method: "GET", path: "/api/admin/access-codes/batches" },

@@ -114,10 +114,7 @@ In commercial mode:
 - Legacy `/api/simulations` and `/api/simulations/stream` are blocked so unauthenticated users cannot bypass credits.
 - `/api/model-provider` endpoints store BYOK provider settings with encrypted keys and return only masked DTOs.
 - `/api/admin/*` commercial routes require admin or owner sessions.
-
-Deployment gate:
-
-- The legacy cost endpoint `/api/admin/simulation-tasks/:id/cost-summary` still carries a production TODO in `frontend/server.ts`. Protect it behind admin auth or disable it before exposing a commercial deployment.
+- The legacy `/api/admin/simulation-tasks/:id/cost-summary` endpoint is intentionally not exposed. Use authenticated `/api/admin/costs` and `/api/admin/tasks` for admin cost review.
 
 ## Worker Process
 

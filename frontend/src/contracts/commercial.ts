@@ -31,8 +31,10 @@ export const ADMIN_AUDIT_ACTIONS = [
   "access_code_batch_disabled",
   "access_code_batch_exported",
   "access_code_disabled",
+  "access_code_restored",
   "access_code_deleted",
   "access_codes_bulk_disabled",
+  "access_codes_bulk_restored",
   "access_codes_bulk_deleted",
   "user_credit_adjusted",
   "credits_adjusted",
@@ -73,11 +75,37 @@ export interface CommercialEntitlements {
   features: CommercialFeature[];
 }
 
+export interface CommercialEntitlementGrant {
+  tier?: UserTier;
+  features: CommercialFeature[];
+  startsAt?: string;
+  expiresAt?: string;
+}
+
 export function hasCommercialFeature(
   entitlements: CommercialEntitlements,
   feature: CommercialFeature,
 ): boolean {
   return entitlements.features.includes(feature);
+}
+
+export function resolveCommercialEntitlements(
+  baseline: CommercialEntitlements,
+  grants: CommercialEntitlementGrant[],
+  at: Date | string = new Date(),
+): CommercialEntitlements {
+  const atMs = dateValue(at);
+  const activeGrants = grants.filter((grant) => isGrantActive(grant, atMs));
+  const tier = activeGrants.reduce(
+    (current, grant) => highestTier(current, grant.tier),
+    baseline.tier,
+  );
+  const features = mergeUniqueFeatures(
+    baseline.features,
+    activeGrants.flatMap((grant) => grant.features),
+  );
+
+  return { tier, features };
 }
 
 export function isAdminRole(role: UserRole): boolean {
@@ -92,4 +120,52 @@ export function getSimulationCreditCost({
   providerMode: ProviderMode;
 }): number {
   return SIMULATION_CREDIT_COSTS[providerMode][interactionMode];
+}
+
+function highestTier(current: UserTier, candidate: UserTier | undefined): UserTier {
+  if (candidate === undefined) {
+    return current;
+  }
+
+  return USER_TIERS.indexOf(candidate) > USER_TIERS.indexOf(current)
+    ? candidate
+    : current;
+}
+
+function mergeUniqueFeatures(
+  current: CommercialFeature[],
+  granted: CommercialFeature[],
+): CommercialFeature[] {
+  return [...new Set([...current, ...granted])];
+}
+
+function isGrantActive(
+  grant: CommercialEntitlementGrant,
+  atMs: number,
+): boolean {
+  const startsAtMs = optionalDateValue(grant.startsAt);
+  const expiresAtMs = optionalDateValue(grant.expiresAt);
+
+  if (startsAtMs !== undefined && startsAtMs > atMs) {
+    return false;
+  }
+  if (expiresAtMs !== undefined && expiresAtMs <= atMs) {
+    return false;
+  }
+
+  return true;
+}
+
+function dateValue(value: Date | string): number {
+  const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isFinite(ms) ? ms : Number.NaN;
+}
+
+function optionalDateValue(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : Number.NaN;
 }

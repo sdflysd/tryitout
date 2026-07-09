@@ -70,6 +70,7 @@ export interface RedeemAccessCodeResultDto {
   account: CommercialCreditAccountDto;
   ledger: CommercialCreditLedgerEntryDto;
   redemption: CommercialAccessCodeRedemptionDto;
+  user: CommercialUserDto;
 }
 
 export interface PublicModelProviderDto {
@@ -184,6 +185,7 @@ export async function redeemAccessCode(
   assertObjectWithProperty(body, "account", "Invalid redemption response");
   assertObjectWithProperty(body, "ledger", "Invalid redemption response");
   assertObjectWithProperty(body, "redemption", "Invalid redemption response");
+  assertObjectWithProperty(body, "user", "Invalid redemption response");
 
   return body as unknown as RedeemAccessCodeResultDto;
 }

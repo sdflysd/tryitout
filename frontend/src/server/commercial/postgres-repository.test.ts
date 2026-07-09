@@ -624,6 +624,8 @@ test("postgres repository redeems access code transactionally after locking code
         redemption_credits: "10",
         redemption_tier_granted: "pro",
         redemption_features_granted: ["deep_mode"],
+        redemption_entitlement_starts_at: "redeemed",
+        redemption_entitlement_expires_at: null,
         redemption_redeemed_at: "redeemed",
         redemption_metadata: { source: "code" },
       },
@@ -653,6 +655,7 @@ test("postgres repository redeems access code transactionally after locking code
       credits: 10,
       tierGranted: "pro",
       featuresGranted: ["deep_mode"],
+      entitlementStartsAt: "redeemed",
       redeemedAt: "redeemed",
       metadata: { source: "code" },
     },
@@ -680,8 +683,17 @@ test("postgres repository redeems access code transactionally after locking code
   assert.match(queries[3].sql, /update user_credit_accounts/i);
   assert.match(queries[3].sql, /balance = balance \+ \$\d+/i);
   assert.match(queries[3].sql, /total_redeemed = total_redeemed \+ \$\d+/i);
+  assert.ok(
+    queries.every((query) => !/update users/i.test(query.sql)),
+  );
   assert.match(queries[4].sql, /insert into credit_ledger/i);
   assert.match(queries[5].sql, /insert into access_code_redemptions/i);
+  assert.match(queries[5].sql, /entitlement_starts_at/i);
+  assert.deepEqual(queries[5].params?.slice(7, 10), [
+    "redeemed",
+    null,
+    "redeemed",
+  ]);
   assert.equal(queries.at(-1)?.sql.trim().toLowerCase(), "commit");
   assert.equal(queries[2].params?.[2], "redeemed");
   assert.notEqual(queries[2].params?.[2], "stale-code-redeemed-at");
@@ -1757,6 +1769,7 @@ test("postgres repository maps access code batches writes and reads", async () =
     tier: "pro",
     features: ["deep_mode"],
     expiresAt: "expires",
+    entitlementDurationDays: 30,
     disabledAt: "disabled",
     notes: "notes",
     metadata: { channel: "email" },
@@ -1774,13 +1787,14 @@ test("postgres repository maps access code batches writes and reads", async () =
     "pro",
     JSON.stringify(["deep_mode"]),
     "expires",
+    30,
     "disabled",
     "notes",
     JSON.stringify({ channel: "email" }),
     "created",
   ]);
   assert.deepEqual(parsedJsonParam(writeQueries[0].params, 7), ["deep_mode"]);
-  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 11), {
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 12), {
     channel: "email",
   });
 
@@ -1795,6 +1809,7 @@ test("postgres repository maps access code batches writes and reads", async () =
       tier: null,
       features: ["deep_mode"],
       expires_at: null,
+      entitlement_duration_days: "30",
       disabled_at: null,
       notes: null,
       metadata: { channel: "email" },
@@ -1808,6 +1823,7 @@ test("postgres repository maps access code batches writes and reads", async () =
     codeCount: 2,
     credits: 10,
     features: ["deep_mode"],
+    entitlementDurationDays: 30,
     metadata: { channel: "email" },
     createdAt: "2026-07-07T00:00:00.000Z",
   });
@@ -1825,6 +1841,7 @@ test("postgres repository maps access codes writes and reads", async () => {
     tier: "pro",
     features: ["priority_queue"],
     expiresAt: "expires",
+    entitlementDurationDays: 7,
     redeemedByUserId: "user_1",
     redeemedAt: "redeemed",
     disabledAt: "disabled",
@@ -1842,6 +1859,7 @@ test("postgres repository maps access codes writes and reads", async () => {
     "pro",
     JSON.stringify(["priority_queue"]),
     "expires",
+    7,
     "user_1",
     "redeemed",
     "disabled",
@@ -1863,6 +1881,7 @@ test("postgres repository maps access codes writes and reads", async () => {
       tier: null,
       features: [],
       expires_at: null,
+      entitlement_duration_days: "7",
       redeemed_by_user_id: null,
       redeemed_at: null,
       disabled_at: null,
@@ -1878,6 +1897,7 @@ test("postgres repository maps access codes writes and reads", async () => {
     status: "active",
     credits: 10,
     features: [],
+    entitlementDurationDays: 7,
     createdAt: "2026-07-07T00:00:00.000Z",
   });
 });
@@ -1968,6 +1988,8 @@ test("postgres repository maps access code redemptions inserts and reads", async
     credits: 10,
     tierGranted: "pro",
     featuresGranted: ["deep_mode"],
+    entitlementStartsAt: "redeemed",
+    entitlementExpiresAt: "expires",
     redeemedAt: "redeemed",
     metadata: { source: "code" },
   });
@@ -1983,10 +2005,12 @@ test("postgres repository maps access code redemptions inserts and reads", async
     "pro",
     JSON.stringify(["deep_mode"]),
     "redeemed",
+    "expires",
+    "redeemed",
     JSON.stringify({ source: "code" }),
   ]);
   assert.deepEqual(parsedJsonParam(writeQueries[0].params, 6), ["deep_mode"]);
-  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 8), {
+  assert.deepEqual(parsedJsonParam(writeQueries[0].params, 10), {
     source: "code",
   });
 
@@ -1999,6 +2023,8 @@ test("postgres repository maps access code redemptions inserts and reads", async
       credits: "10",
       tier_granted: null,
       features_granted: [],
+      entitlement_starts_at: new Date("2026-07-07T00:00:00.000Z"),
+      entitlement_expires_at: new Date("2026-08-07T00:00:00.000Z"),
       redeemed_at: new Date("2026-07-07T00:00:00.000Z"),
       metadata: { source: "code" },
     },
@@ -2012,6 +2038,8 @@ test("postgres repository maps access code redemptions inserts and reads", async
       userId: "user_1",
       credits: 10,
       featuresGranted: [],
+      entitlementStartsAt: "2026-07-07T00:00:00.000Z",
+      entitlementExpiresAt: "2026-08-07T00:00:00.000Z",
       redeemedAt: "2026-07-07T00:00:00.000Z",
       metadata: { source: "code" },
     },
@@ -2032,6 +2060,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
       tier: "pro",
       features: ["deep_mode"],
       expiresAt: "expires",
+      entitlementDurationDays: 30,
       notes: "notes",
       metadata: { channel: "email" },
       createdAt: "created",
@@ -2047,6 +2076,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
         tier: "pro",
         features: ["deep_mode"],
         expiresAt: "expires",
+        entitlementDurationDays: 30,
         createdAt: "created",
       },
       {
@@ -2059,6 +2089,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
         tier: "pro",
         features: ["deep_mode"],
         expiresAt: "expires",
+        entitlementDurationDays: 30,
         createdAt: "created",
       },
     ],
@@ -2071,7 +2102,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
   assert.match(queries[0].sql, /jsonb_to_recordset/i);
   assert.doesNotMatch(queries[0].sql, /on conflict/i);
   assert.equal(queries[0].params?.[0], "batch_1");
-  assert.deepEqual(parsedJsonParam(queries[0].params, 13), [
+  assert.deepEqual(parsedJsonParam(queries[0].params, 14), [
     {
       id: "code_1",
       batchId: "batch_1",
@@ -2082,6 +2113,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
       tier: "pro",
       features: ["deep_mode"],
       expiresAt: "expires",
+      entitlementDurationDays: 30,
       redeemedByUserId: null,
       redeemedAt: null,
       disabledAt: null,
@@ -2098,6 +2130,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
       tier: "pro",
       features: ["deep_mode"],
       expiresAt: "expires",
+      entitlementDurationDays: 30,
       redeemedByUserId: null,
       redeemedAt: null,
       disabledAt: null,
@@ -2418,7 +2451,7 @@ test("postgres repository disables single access code with audit in one CTE quer
   ]);
 });
 
-test("postgres repository soft-deletes single unredeemed access code with audit", async () => {
+test("postgres repository soft-deletes single access code with audit", async () => {
   const { repo, queries } = createRowRepository([
     {
       id: "code_1",
@@ -2453,12 +2486,57 @@ test("postgres repository soft-deletes single unredeemed access code with audit"
   assert.match(queries[0].sql, /with updated_code as/i);
   assert.match(queries[0].sql, /update access_codes/i);
   assert.match(queries[0].sql, /set deleted_at = coalesce\(deleted_at, \$2\)/i);
-  assert.match(queries[0].sql, /redeemed_at is null/i);
-  assert.match(queries[0].sql, /status <> 'redeemed'/i);
   assert.match(queries[0].sql, /insert into admin_audit_logs/i);
   assert.deepEqual(queries[0].params?.slice(0, 4), [
     "code_1",
     "deleted",
+    "audit_1",
+    "admin_1",
+  ]);
+});
+
+test("postgres repository restores disabled access code with audit", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TEST-****-001",
+      status: "active",
+      credits: 10,
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: null,
+      deleted_at: null,
+      created_at: "created",
+    },
+  ]);
+
+  const result = await repo.restoreAccessCodeWithAudit("code_1", "restored", {
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_restored",
+    targetType: "access_code",
+    targetId: "code_1",
+    metadata: { reason: "risk cleared" },
+    createdAt: "restored",
+  });
+
+  assert.equal(result?.status, "active");
+  assert.equal(result?.disabledAt, undefined);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_code as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /set status = 'active', disabled_at = null/i);
+  assert.match(queries[0].sql, /status = 'disabled'/i);
+  assert.match(queries[0].sql, /redeemed_at is null/i);
+  assert.match(queries[0].sql, /deleted_at is null/i);
+  assert.match(queries[0].sql, /insert into admin_audit_logs/i);
+  assert.deepEqual(queries[0].params?.slice(0, 3), [
+    "code_1",
     "audit_1",
     "admin_1",
   ]);

@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import AdminApp from "./AdminApp.js";
+import AdminApp, { logoutAdminSession } from "./AdminApp.js";
 import {
   AdminClientError,
   bulkAdminAccessCodes,
@@ -99,6 +99,13 @@ test("AdminApp renders supplied operating metrics and monitoring tables", () => 
   assert.match(html, /Redemption Watch/);
 });
 
+test("AdminApp renders a logout action in the authenticated admin shell", () => {
+  const html = renderToStaticMarkup(<AdminApp overview={makeOverview()} />);
+
+  assert.match(html, /btn-admin-logout/);
+  assert.match(html, /退出登录/);
+});
+
 test("AdminApp can render an operations shell before overview data loads", () => {
   const html = renderToStaticMarkup(<AdminApp initialLanguage="en-US" />);
 
@@ -120,6 +127,24 @@ test("AdminApp renders a login callout when the admin session is missing", () =>
   assert.match(html, /请先登录管理员账号/);
   assert.match(html, /href="\/login"/);
   assert.match(html, /去登录/);
+});
+
+test("AdminApp does not render admin navigation or metrics for missing admin sessions", () => {
+  const html = renderToStaticMarkup(
+    <AdminApp
+      initialLoadError={new AdminClientError(
+        401,
+        "Authentication required",
+        "authentication_required",
+      )}
+    />,
+  );
+
+  assert.doesNotMatch(html, /管理后台导航/);
+  assert.doesNotMatch(html, /总用户数/);
+  assert.doesNotMatch(html, /近期失败/);
+  assert.doesNotMatch(html, /兑换监控/);
+  assert.doesNotMatch(html, /保护付费执行/);
 });
 
 test("AdminApp can render the access-code operations view", () => {
@@ -421,6 +446,41 @@ test("admin client sends user, access-code, and model config mutation requests",
       { input: "/api/admin/model-profiles/openrouter_balanced", method: "PATCH", credentials: "include" },
     ],
   );
+});
+
+test("AdminApp logout posts to auth logout and redirects to login", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLocation = globalThis.location;
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const assignedPaths: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    return jsonResponse({ ok: true });
+  };
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { assign: (path: string | URL) => assignedPaths.push(String(path)) },
+  });
+
+  try {
+    await logoutAdminSession();
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+
+  assert.deepEqual(
+    calls.map((call) => ({
+      input: call.input,
+      method: call.init?.method,
+      credentials: call.init?.credentials,
+    })),
+    [{ input: "/api/auth/logout", method: "POST", credentials: "include" }],
+  );
+  assert.deepEqual(assignedPaths, ["/login"]);
 });
 
 function makeOverview(): AdminOverviewDto {

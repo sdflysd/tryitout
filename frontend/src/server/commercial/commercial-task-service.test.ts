@@ -82,6 +82,54 @@ test("BYOK task creation requires access-code entitlement", async () => {
   );
 });
 
+test("BYOK task creation accepts active access-code entitlement grants", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-01T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-08T00:00:00.000Z",
+    redeemedAt: "2026-07-01T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const created = await service.createTask(makeCreateInput({
+    providerMode: "byok",
+    modelSelection: { userCredentialId: "provider_1", mode: "deep" },
+  }));
+
+  assert.equal(created.task.providerMode, "byok");
+  assert.equal((await queue.claimNext())?.job.providerMode, "byok");
+});
+
+test("BYOK task creation rejects expired access-code entitlement grants", async () => {
+  const { repo, service } = await createScenario({ balance: 10 });
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 10,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-01T00:00:00.000Z",
+    entitlementExpiresAt: "2026-07-06T00:00:00.000Z",
+    redeemedAt: "2026-07-01T00:00:00.000Z",
+    metadata: {},
+  });
+
+  await assert.rejects(
+    service.createTask(makeCreateInput({
+      providerMode: "byok",
+      modelSelection: { userCredentialId: "provider_1", mode: "deep" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+});
+
 test("platform task creation rejects models not enabled by admin", async () => {
   const { service } = await createScenario({ balance: 10 });
 

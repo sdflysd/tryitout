@@ -7,6 +7,7 @@ import {
   FileClock,
   Gauge,
   KeyRound,
+  LogOut,
   MessageSquareText,
   Settings,
   ShieldCheck,
@@ -36,6 +37,7 @@ import {
   fetchAdminOverview,
   type AdminOverviewDto,
 } from "./admin-client.js";
+import { logoutCommercialUser } from "../commercial-client.js";
 import { getAdminCopy, type AdminCopy } from "./admin-copy.js";
 
 interface AdminAppProps {
@@ -121,10 +123,13 @@ export default function AdminApp({
   );
   const [activeView, setActiveView] = useState<AdminNavLabel>(initialView);
   const [loadError, setLoadError] = useState<AdminClientError | Error | undefined>(initialLoadError);
+  const [logoutError, setLogoutError] = useState("");
   const [language, setLanguage] = useState<Language>(() => initialLanguage ?? getInitialAdminLanguage());
   const resolvedOverview = overview ?? EMPTY_OVERVIEW;
   const copy = getAdminCopy(language);
   const isLoading = overview === undefined;
+  const authenticationError =
+    loadError !== undefined && isAuthenticationError(loadError);
   const completionRate = formatPercent(resolvedOverview.tasks.completionRate);
   const failureRate = formatPercent(resolvedOverview.tasks.failureRate);
   const redemptionRate = formatPercent(
@@ -166,6 +171,19 @@ export default function AdminApp({
       cancelled = true;
     };
   }, [fetchOverview, initialOverview]);
+
+  if (authenticationError) {
+    return <AdminLoginGate copy={copy} />;
+  }
+
+  const handleLogout = async () => {
+    setLogoutError("");
+    try {
+      await logoutAdminSession();
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : "Logout failed");
+    }
+  };
 
   return (
     <div id="admin-app-shell" className="min-h-screen bg-[#f5f7fb] text-slate-950">
@@ -222,6 +240,15 @@ export default function AdminApp({
                 >
                   {getLanguageToggleLabel(language)}
                 </button>
+                <button
+                  id="btn-admin-logout"
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                  {copy.shell.logout}
+                </button>
                 <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{copy.shell.badges.commercialMode}</span>
                 <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">{copy.shell.badges.queueBacklog} {resolvedOverview.queue.backlog}</span>
                 <span className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">{copy.shell.badges.activeWeight} {resolvedOverview.queue.activeWeight ?? 0}/{resolvedOverview.queue.maxWeight ?? 0}</span>
@@ -231,6 +258,11 @@ export default function AdminApp({
           </header>
 
           <div className="space-y-5 p-5">
+            {logoutError && (
+              <section className="border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">
+                {logoutError}
+              </section>
+            )}
             {(isLoading || loadError !== undefined) && (
               <section className="border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
                 {loadError !== undefined ? (
@@ -263,6 +295,38 @@ export default function AdminApp({
         </main>
       </div>
     </div>
+  );
+}
+
+export async function logoutAdminSession(
+  location: Pick<Location, "assign"> | undefined = globalThis.location,
+): Promise<void> {
+  await logoutCommercialUser();
+  location?.assign("/login");
+}
+
+function AdminLoginGate({ copy }: { copy: AdminCopy }) {
+  return (
+    <main id="admin-login-gate" className="grid min-h-screen place-items-center bg-[#f5f7fb] px-4 text-slate-950">
+      <section className="w-full max-w-md border border-slate-200 bg-white p-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
+            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <div className="text-sm font-black tracking-tight">tryitout admin</div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{copy.brandSubtitle}</div>
+          </div>
+        </div>
+        <p className="mt-5 text-sm font-bold text-slate-700">{copy.shell.loginRequired}</p>
+        <a
+          href="/login"
+          className="mt-4 inline-flex min-h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white"
+        >
+          {copy.shell.loginAction}
+        </a>
+      </section>
+    </main>
   );
 }
 

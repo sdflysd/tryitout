@@ -376,6 +376,7 @@ export default function AccountPanel({
             copy={copy}
             providerMode={providerMode}
             byokAvailable={byokAvailable}
+            canConfigureByok={canConfigureByok}
             modelProvider={modelProvider}
             selectedModelProfileId={selectedModelProfileId}
             selectedCredentialId={selectedCredentialId}
@@ -384,7 +385,7 @@ export default function AccountPanel({
             onModelProfileChange={onModelProfileChange}
             onCredentialChange={onCredentialChange}
           />
-          {canConfigureByok ? (
+          {canConfigureByok && providerMode === "byok" ? (
             <ByokProviderForm
               copy={copy}
               modelProvider={modelProvider}
@@ -408,9 +409,9 @@ export default function AccountPanel({
               onDeleteModelProvider={onDeleteModelProvider}
               onSaveModelProvider={onSaveModelProvider}
             />
-          ) : (
+          ) : !canConfigureByok ? (
             <ByokLockedPanel copy={copy} />
-          )}
+          ) : null}
         </div>
 
         {(statusMessage || errorMessage) && (
@@ -494,6 +495,7 @@ export default function AccountPanel({
                 copy={copy}
                 providerMode={providerMode}
                 byokAvailable={byokAvailable}
+                canConfigureByok={canConfigureByok}
                 modelProvider={modelProvider}
                 selectedModelProfileId={selectedModelProfileId}
                 selectedCredentialId={selectedCredentialId}
@@ -626,6 +628,7 @@ function ModelSourceSelector({
   copy,
   providerMode,
   byokAvailable,
+  canConfigureByok,
   modelProvider,
   selectedModelProfileId,
   selectedCredentialId,
@@ -637,6 +640,7 @@ function ModelSourceSelector({
   copy: typeof ACCOUNT_PANEL_COPY[Language];
   providerMode: ProviderMode;
   byokAvailable: boolean;
+  canConfigureByok: boolean;
   modelProvider?: PublicModelProviderDto;
   selectedModelProfileId?: string;
   selectedCredentialId?: string;
@@ -672,18 +676,18 @@ function ModelSourceSelector({
           providerMode === "byok"
             ? "border-cyan-200/40 bg-cyan-200/10 font-black text-cyan-100"
             : "border-white/10 bg-white/7 font-bold text-white/62"
-        } ${byokAvailable ? "" : "opacity-75"}`}>
+        } ${canConfigureByok ? "" : "opacity-75"}`}>
           <input
             type="radio"
             name="accountProviderMode"
             value="byok"
             checked={providerMode === "byok"}
-            disabled={!byokAvailable}
+            disabled={!canConfigureByok}
             onChange={() => onProviderModeChange?.("byok")}
             className="accent-cyan-200"
           />
           <span>{copy.useMyApiKey}</span>
-          {!byokAvailable && (
+          {!canConfigureByok && (
             <span className="ml-auto rounded-sm border border-white/10 bg-white/7 px-1.5 py-0.5 text-[9px] font-black text-white/42">
               {copy.configureApiKey}
             </span>
@@ -791,7 +795,7 @@ function ModelSourceSelector({
         </label>
       )}
 
-      {!byokAvailable && (
+      {!canConfigureByok && (
         <p className="mt-2 text-[11px] font-bold leading-relaxed text-white/46">
           {copy.byokUnavailable}
         </p>

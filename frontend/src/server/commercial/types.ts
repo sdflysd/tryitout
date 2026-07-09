@@ -93,6 +93,7 @@ export interface AccessCodeBatchRecord {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   disabledAt?: string;
   notes?: string;
   metadata: JsonObject;
@@ -109,6 +110,7 @@ export interface AccessCodeRecord {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   redeemedByUserId?: string;
   redeemedAt?: string;
   disabledAt?: string;
@@ -124,6 +126,8 @@ export interface AccessCodeRedemptionRecord {
   credits: number;
   tierGranted?: UserTier;
   featuresGranted: CommercialFeature[];
+  entitlementStartsAt?: string;
+  entitlementExpiresAt?: string;
   redeemedAt: string;
   metadata: JsonObject;
 }

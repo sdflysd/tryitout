@@ -1,6 +1,7 @@
 import {
   ADMIN_AUDIT_ACTIONS,
   type AdminAuditAction,
+  resolveCommercialEntitlements,
 } from "../../contracts/commercial.js";
 import type {
   AccessCodeBatchRecord,
@@ -37,6 +38,10 @@ export interface RedeemAccessCodeWithCreditLedgerResult extends CreditLedgerTran
 export interface CommercialRepository {
   saveUser(user: CommercialUserRecord): Promise<void>;
   getUser(userId: string): Promise<CommercialUserRecord | undefined>;
+  getEffectiveUser(
+    userId: string,
+    at?: Date | string,
+  ): Promise<CommercialUserRecord | undefined>;
   listUsers(): Promise<CommercialUserRecord[]>;
   findUserByEmail(email: string): Promise<CommercialUserRecord | undefined>;
   createUserWithCreditAccount(
@@ -129,6 +134,11 @@ export interface CommercialRepository {
   disableAccessCodeWithAudit(
     codeId: string,
     disabledAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined>;
+  restoreAccessCodeWithAudit(
+    codeId: string,
+    restoredAt: string,
     auditLog: AdminAuditLogRecord,
   ): Promise<AccessCodeRecord | undefined>;
   softDeleteAccessCodeWithAudit(
@@ -229,6 +239,35 @@ export class InMemoryCommercialRepository implements CommercialRepository {
 
   async getUser(userId: string): Promise<CommercialUserRecord | undefined> {
     return this.users.get(userId);
+  }
+
+  async getEffectiveUser(
+    userId: string,
+    at: Date | string = new Date(),
+  ): Promise<CommercialUserRecord | undefined> {
+    const user = this.users.get(userId);
+    if (!user) {
+      return undefined;
+    }
+
+    const entitlements = resolveCommercialEntitlements(
+      { tier: user.tier, features: user.features },
+      this.accessCodeRedemptions
+        .filter((redemption) => redemption.userId === userId)
+        .map((redemption) => ({
+          tier: redemption.tierGranted,
+          features: redemption.featuresGranted,
+          startsAt: redemption.entitlementStartsAt ?? redemption.redeemedAt,
+          expiresAt: redemption.entitlementExpiresAt,
+        })),
+      at,
+    );
+
+    return {
+      ...user,
+      tier: entitlements.tier,
+      features: entitlements.features,
+    };
   }
 
   async listUsers(): Promise<CommercialUserRecord[]> {
@@ -789,6 +828,37 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return updatedCode;
   }
 
+  async restoreAccessCodeWithAudit(
+    codeId: string,
+    _restoredAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+
+    const code = this.accessCodes.get(codeId);
+    if (!code || code.deletedAt !== undefined) {
+      return undefined;
+    }
+
+    const updatedCode =
+      code.status === "disabled" &&
+      code.redeemedAt === undefined
+        ? omitUndefined({
+            ...code,
+            status: "active" as const,
+            disabledAt: undefined,
+          })
+        : code;
+
+    if (updatedCode !== code) {
+      this.accessCodes.set(codeId, updatedCode);
+    }
+    appendById(this.auditLogs, auditLog, "admin_audit_logs.id");
+    return updatedCode;
+  }
+
   async softDeleteAccessCodeWithAudit(
     codeId: string,
     deletedAt: string,
@@ -801,10 +871,6 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     const code = this.accessCodes.get(codeId);
     if (!code) {
       return undefined;
-    }
-
-    if (code.redeemedAt !== undefined || code.status === "redeemed") {
-      return code;
     }
 
     const updatedCode = {
@@ -1205,6 +1271,12 @@ function linkMetadata(
     ...(metadata ?? {}),
     ...linkage,
   };
+}
+
+function omitUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as T;
 }
 
 function assertAdminAuditAction(action: string): asserts action is AdminAuditAction {

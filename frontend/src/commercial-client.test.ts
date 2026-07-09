@@ -76,6 +76,10 @@ test("logout, me, credits, and redeem use commercial endpoints with credentials"
             redeemedAt: "2026-07-07T00:00:00.000Z",
             metadata: {},
           },
+          user: makeUser({
+            tier: "business",
+            features: ["priority_queue", "custom_model_provider"],
+          }),
         }),
         { status: 200 },
       );
@@ -168,7 +172,16 @@ test("commercial client manages masked BYOK provider endpoints", async () => {
   assert.equal(JSON.stringify(provider).includes("sk-live-secret123456"), false);
 });
 
-function makeUser() {
+type TestUser = ReturnType<typeof baseUser>;
+
+function makeUser(overrides: Partial<TestUser> = {}): TestUser {
+  return {
+    ...baseUser(),
+    ...overrides,
+  };
+}
+
+function baseUser() {
   return {
     id: "user_1",
     email: "buyer@example.test",

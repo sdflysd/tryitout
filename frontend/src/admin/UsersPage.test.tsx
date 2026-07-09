@@ -39,8 +39,6 @@ test("UsersPage renders user, credit, redemption, task, and activity controls", 
     "Create User",
     "Bulk Operations",
     "Available Credit Adjustment",
-    "Duplicate-prevention operation ID",
-    "Confirm adjustment",
     "Disable",
     "Edit",
     "Delete",
@@ -78,14 +76,12 @@ test("UsersPage renders Chinese operator copy", () => {
     "创建用户",
     "批量操作",
     "可用额度调整",
-    "防重复操作 ID",
-    "确认调整",
   ]) {
     assert.match(html, new RegExp(text));
   }
 });
 
-test("UsersPage renders selection and user mutation controls", () => {
+test("UsersPage keeps mutation forms out of the default table workflow", () => {
   const html = renderToStaticMarkup(
     <UsersPage users={[makeUser(), makeUser({
       id: "user_2",
@@ -97,12 +93,14 @@ test("UsersPage renders selection and user mutation controls", () => {
 
   assert.match(html, /aria-label="Select alice@example.test"/);
   assert.match(html, /aria-label="Select bob@example.test"/);
-  assert.match(html, /name="bulk-operation"/);
-  assert.match(html, /name="create-email"/);
-  assert.match(html, /name="edit-role"/);
-  assert.match(html, /name="edit-tier"/);
-  assert.match(html, /Projected available balance/);
-  assert.match(html, /Frozen credits are shown for context and are not changed here/);
+  assert.doesNotMatch(html, /name="bulk-operation"/);
+  assert.doesNotMatch(html, /name="create-email"/);
+  assert.doesNotMatch(html, /name="edit-role"/);
+  assert.doesNotMatch(html, /Projected available balance/);
+  assert.doesNotMatch(html, /Frozen credits are shown for context and are not changed here/);
+  assert.match(html, /Create User/);
+  assert.match(html, /Bulk Operations/);
+  assert.match(html, /Available Credit Adjustment/);
 });
 
 test("admin client adjusts user credits through the admin endpoint", async () => {

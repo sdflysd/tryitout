@@ -53,6 +53,7 @@ export interface CreateAccessCodeBatchInput {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   notes?: string;
   metadata?: JsonObject;
 }
@@ -65,6 +66,7 @@ export interface CreateSingleAccessCodeInput {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   notes?: string;
   metadata?: JsonObject;
 }
@@ -113,6 +115,7 @@ export class AccessCodeService {
       tier: input.tier,
       features: [...input.features],
       expiresAt: input.expiresAt,
+      entitlementDurationDays: input.entitlementDurationDays,
       notes: input.notes,
       metadata: input.metadata ?? {},
       createdAt: nowIso,
@@ -158,6 +161,7 @@ export class AccessCodeService {
         tier: input.tier,
         features: [...input.features],
         expiresAt: input.expiresAt,
+        entitlementDurationDays: input.entitlementDurationDays,
         createdAt: nowIso,
       };
       codes.push({ rawCode, record });
@@ -222,7 +226,7 @@ export class AccessCodeService {
     this.assertRedeemable(code, nowDate);
 
     const nowIso = nowDate.toISOString();
-    const redemption: AccessCodeRedemptionRecord = {
+    const redemption: AccessCodeRedemptionRecord = stripUndefined({
       id: this.createId("access_code_redemption"),
       accessCodeId,
       userId,
@@ -230,9 +234,14 @@ export class AccessCodeService {
       credits: code.credits,
       tierGranted: code.tier,
       featuresGranted: [...code.features],
+      entitlementStartsAt: nowIso,
+      entitlementExpiresAt: calculateEntitlementExpiresAt(
+        nowDate,
+        code.entitlementDurationDays,
+      ),
       redeemedAt: nowIso,
       metadata: metadata ?? {},
-    };
+    });
 
     const redeemed = await this.repository.redeemAccessCode(
       {
@@ -349,6 +358,7 @@ export class AccessCodeService {
       code.status !== "active" ||
       code.redeemedAt !== undefined ||
       code.disabledAt !== undefined ||
+      code.deletedAt !== undefined ||
       isExpiredOrInvalid(code.expiresAt, now)
     ) {
       throw new AccessCodeServiceError(
@@ -414,6 +424,16 @@ function validateBatchInput(input: CreateAccessCodeBatchInput): void {
       "Expiration must be a valid date string",
     );
   }
+  if (
+    input.entitlementDurationDays !== undefined &&
+    (!Number.isInteger(input.entitlementDurationDays) ||
+      input.entitlementDurationDays < 1)
+  ) {
+    throw new AccessCodeServiceError(
+      "invalid_access_code_input",
+      "Entitlement duration must be a positive integer number of days",
+    );
+  }
 }
 
 function isExpiredOrInvalid(expiresAt: string | undefined, now: Date): boolean {
@@ -428,4 +448,23 @@ function isExpiredOrInvalid(expiresAt: string | undefined, now: Date): boolean {
 function isValidDateString(value: string): boolean {
   const date = new Date(value);
   return Number.isFinite(date.getTime());
+}
+
+function calculateEntitlementExpiresAt(
+  startsAt: Date,
+  durationDays: number | undefined,
+): string | undefined {
+  if (durationDays === undefined) {
+    return undefined;
+  }
+
+  return new Date(
+    startsAt.getTime() + durationDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as T;
 }

@@ -13,6 +13,7 @@ import {
   ShieldAlert,
   Trash2,
   UserCog,
+  X,
 } from "lucide-react";
 
 import { type Language } from "../language.js";
@@ -49,6 +50,8 @@ const FEATURES: AdminCommercialFeatureDto[] = [
   "custom_model_provider",
   "admin_ops",
 ];
+
+type UserPanel = "create" | "edit" | "bulk" | "credits";
 
 export default function UsersPage({
   users,
@@ -95,6 +98,7 @@ export default function UsersPage({
   });
   const [statusMessage, setStatusMessage] = useState("");
   const [selectedUserId, setSelectedUserId] = useState(users?.[0]?.id ?? "");
+  const [activePanel, setActivePanel] = useState<UserPanel | undefined>();
   const selectedUser = rows.find((user) => user.id === selectedUserId) ?? rows[0];
   const visibleRows = rows.filter((user) => {
     const haystack = `${user.email} ${user.id}`.toLowerCase();
@@ -190,6 +194,7 @@ export default function UsersPage({
     });
     setRows((currentRows) => [created, ...currentRows.filter((user) => user.id !== created.id)]);
     setSelectedUserId(created.id);
+    setActivePanel(undefined);
     setStatusMessage(copy.users.actions.created);
   };
 
@@ -206,6 +211,7 @@ export default function UsersPage({
       reason: editForm.reason,
     });
     replaceRow(updated);
+    setActivePanel(undefined);
     setStatusMessage(copy.users.actions.updated);
   };
 
@@ -246,6 +252,7 @@ export default function UsersPage({
     const refreshed = await fetchUsers();
     setRows(refreshed);
     setSelectedIds([]);
+    setActivePanel(undefined);
     setStatusMessage(copy.users.actions.bulkDone(result.updatedUserIds.length));
   };
 
@@ -296,7 +303,33 @@ export default function UsersPage({
               <p className="text-xs font-semibold text-slate-500">{copy.users.description}</p>
             </div>
           </div>
-          <div className="text-xs font-bold text-slate-500">{copy.users.tracked(rows.length)}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-xs font-bold text-slate-500">{copy.users.tracked(rows.length)}</div>
+            <button
+              type="button"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-950 px-3 text-xs font-black text-white"
+              onClick={() => setActivePanel("create")}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              {copy.users.actions.create}
+            </button>
+            <button
+              type="button"
+              className="admin-secondary-button"
+              onClick={() => setActivePanel("bulk")}
+            >
+              <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
+              {copy.users.actions.bulkTitle}
+            </button>
+            <button
+              type="button"
+              className="admin-secondary-button"
+              onClick={() => setActivePanel("credits")}
+            >
+              <CreditCard className="h-3.5 w-3.5" aria-hidden="true" />
+              {copy.users.creditAdjustment.title}
+            </button>
+          </div>
         </div>
         <div className="grid gap-3 border-b border-slate-200 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_auto]">
           <Field label={copy.users.filters.search}>
@@ -384,6 +417,7 @@ export default function UsersPage({
                           features: user.features ?? [],
                           reason: "",
                         });
+                        setActivePanel("edit");
                       }}>
                         <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
                         {copy.users.actions.edit}
@@ -410,198 +444,14 @@ export default function UsersPage({
             </tbody>
           </table>
         </div>
+        {statusMessage && (
+          <div className="border-t border-slate-200 px-4 py-3 text-xs font-bold text-slate-500">
+            {statusMessage}
+          </div>
+        )}
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-3">
-        <form onSubmit={(event) => void handleCreateUser(event)} className="border border-slate-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <Plus className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">{copy.users.actions.create}</h2>
-          </div>
-          <div className="grid gap-3">
-            <Field label={copy.users.form.email}>
-              <input name="create-email" className="admin-input" value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} />
-            </Field>
-            <Field label={copy.users.form.password}>
-              <input name="create-password" className="admin-input" type="password" value={createForm.password} onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })} />
-            </Field>
-            <RoleTierFields
-              copy={copy}
-              role={createForm.role}
-              tier={createForm.tier}
-              onRole={(role) => setCreateForm({ ...createForm, role })}
-              onTier={(tier) => setCreateForm({ ...createForm, tier })}
-            />
-            <FeatureCheckboxes
-              copy={copy}
-              selected={createForm.features}
-              onChange={(feature, checked) => setCreateForm({
-                ...createForm,
-                features: setSelectedFeatures(createForm.features, feature, checked),
-              })}
-            />
-            <Field label={copy.users.form.initialCredits}>
-              <input className="admin-input" type="number" value={createForm.initialCredits} onChange={(event) => setCreateForm({ ...createForm, initialCredits: Number(event.target.value) })} />
-            </Field>
-            <Field label={copy.users.form.reason}>
-              <textarea className="admin-input min-h-16" value={createForm.reason} onChange={(event) => setCreateForm({ ...createForm, reason: event.target.value })} />
-            </Field>
-          </div>
-          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            {copy.users.actions.create}
-          </button>
-        </form>
-
-        <form onSubmit={(event) => void handleSaveEdit(event)} className="border border-slate-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <UserCog className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">{copy.users.actions.edit}</h2>
-          </div>
-          <Field label={copy.users.creditAdjustment.targetUser}>
-            <select
-              className="admin-input"
-              value={selectedUser?.id ?? selectedUserId}
-              onChange={(event) => {
-                const nextUser = rows.find((user) => user.id === event.target.value);
-                setSelectedUserId(event.target.value);
-                if (nextUser) {
-                  setEditForm({
-                    role: nextUser.role ?? "user",
-                    tier: nextUser.tier,
-                    features: nextUser.features ?? [],
-                    reason: editForm.reason,
-                  });
-                }
-              }}
-            >
-              {rows.map((user) => <option key={user.id} value={user.id}>{user.email}</option>)}
-            </select>
-          </Field>
-          <div className="mt-3 grid gap-3">
-            <RoleTierFields
-              copy={copy}
-              role={editForm.role}
-              tier={editForm.tier}
-              onRole={(role) => setEditForm({ ...editForm, role })}
-              onTier={(tier) => setEditForm({ ...editForm, tier })}
-            />
-            <FeatureCheckboxes
-              copy={copy}
-              selected={editForm.features}
-              onChange={(feature, checked) => setEditForm({
-                ...editForm,
-                features: setSelectedFeatures(editForm.features, feature, checked),
-              })}
-            />
-            <Field label={copy.users.form.reason}>
-              <textarea className="admin-input min-h-16" value={editForm.reason} onChange={(event) => setEditForm({ ...editForm, reason: event.target.value })} />
-            </Field>
-          </div>
-          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            {copy.users.actions.saveEdit}
-          </button>
-        </form>
-
-        <form onSubmit={(event) => void handleBulk(event)} className="border border-slate-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">{copy.users.actions.bulkTitle}</h2>
-          </div>
-          <div className="grid gap-3">
-            <Field label={copy.users.actions.bulkOperation}>
-              <select name="bulk-operation" className="admin-input" value={bulkForm.operation} onChange={(event) => setBulkForm({ ...bulkForm, operation: event.target.value as AdminBulkUsersInputDto["operation"] })}>
-                <option value="disable">{copy.users.actions.disable}</option>
-                <option value="restore">{copy.users.actions.restore}</option>
-                <option value="delete">{copy.users.actions.delete}</option>
-                <option value="update_entitlements">{copy.users.actions.saveEdit}</option>
-              </select>
-            </Field>
-            <RoleTierFields
-              copy={copy}
-              role={bulkForm.role}
-              tier={bulkForm.tier}
-              onRole={(role) => setBulkForm({ ...bulkForm, role })}
-              onTier={(tier) => setBulkForm({ ...bulkForm, tier })}
-            />
-            <FeatureCheckboxes
-              copy={copy}
-              selected={bulkForm.features}
-              onChange={(feature, checked) => setBulkForm({
-                ...bulkForm,
-                features: setSelectedFeatures(bulkForm.features, feature, checked),
-              })}
-            />
-            <Field label={copy.users.actions.bulkReason}>
-              <textarea className="admin-input min-h-16" value={bulkForm.reason} onChange={(event) => setBulkForm({ ...bulkForm, reason: event.target.value })} />
-            </Field>
-          </div>
-          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            {copy.users.actions.applyBulk}
-          </button>
-        </form>
-      </section>
-
-      <section className="grid gap-5 xl:grid-cols-[minmax(340px,0.8fr)_minmax(0,1.2fr)]">
-        <form onSubmit={(event) => void handleAdjustCredits(event)} className="border border-slate-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <CreditCard className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-sm font-black text-slate-950">{copy.users.creditAdjustment.title}</h2>
-          </div>
-          <div className="grid gap-3">
-            <p className="text-xs font-semibold leading-5 text-slate-600">{copy.users.creditAdjustment.explanation}</p>
-            <p className="text-xs font-semibold leading-5 text-slate-600">{copy.users.creditAdjustment.positiveNegative}</p>
-            <div className="grid gap-2 md:grid-cols-3">
-              <ActivityCell label={copy.users.creditAdjustment.currentAvailable} value={selectedUser?.availableCredits ?? 0} />
-              <ActivityCell label={copy.users.creditAdjustment.frozenContext} value={selectedUser?.frozenCredits ?? 0} />
-              <ActivityCell label={copy.users.creditAdjustment.projectedAvailable} value={(selectedUser?.availableCredits ?? 0) + adjustment.amount} />
-            </div>
-            <Field label={copy.users.creditAdjustment.targetUser}>
-              <select
-                className="admin-input"
-                value={selectedUser?.id ?? selectedUserId}
-                onChange={(event) => setSelectedUserId(event.target.value)}
-              >
-                {rows.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.email}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label={copy.users.creditAdjustment.amount}>
-                <input
-                  className="admin-input"
-                  type="number"
-                  value={adjustment.amount}
-                  onChange={(event) => setAdjustment({ ...adjustment, amount: Number(event.target.value) })}
-                />
-              </Field>
-              <Field label={copy.users.creditAdjustment.idempotencyKey}>
-                <input
-                  className="admin-input"
-                  value={adjustment.idempotencyKey}
-                  onChange={(event) => setAdjustment({ ...adjustment, idempotencyKey: event.target.value })}
-                  placeholder={copy.users.creditAdjustment.autoGenerated}
-                />
-              </Field>
-            </div>
-            <Field label={copy.users.creditAdjustment.reason}>
-              <textarea
-                className="admin-input min-h-20"
-                value={adjustment.reason}
-                onChange={(event) => setAdjustment({ ...adjustment, reason: event.target.value })}
-                placeholder="Paid support grant, refund, migration correction..."
-              />
-            </Field>
-          </div>
-          <button type="submit" className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-            {copy.users.creditAdjustment.submit}
-          </button>
-          {statusMessage && <p className="mt-3 text-xs font-bold text-slate-500">{statusMessage}</p>}
-        </form>
-
-        <section className="border border-slate-200 bg-white">
+      <section className="border border-slate-200 bg-white">
           <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-4">
             <div className="flex items-center gap-2">
               <History className="h-4 w-4 text-slate-500" aria-hidden="true" />
@@ -622,8 +472,32 @@ export default function UsersPage({
               <span>{copy.users.activity.notice}</span>
             </div>
           </div>
-        </section>
       </section>
+
+      <UserActionDrawer
+        panel={activePanel}
+        copy={copy}
+        rows={rows}
+        selectedUser={selectedUser}
+        selectedUserId={selectedUserId}
+        selectedIds={selectedIds}
+        adjustment={adjustment}
+        createForm={createForm}
+        editForm={editForm}
+        bulkForm={bulkForm}
+        statusMessage={statusMessage}
+        setAdjustment={setAdjustment}
+        setCreateForm={setCreateForm}
+        setEditForm={setEditForm}
+        setBulkForm={setBulkForm}
+        setSelectedUserId={setSelectedUserId}
+        setActivePanel={setActivePanel}
+        setSelectedFeatures={setSelectedFeatures}
+        handleCreateUser={handleCreateUser}
+        handleSaveEdit={handleSaveEdit}
+        handleBulk={handleBulk}
+        handleAdjustCredits={handleAdjustCredits}
+      />
     </div>
   );
 }
@@ -634,6 +508,297 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+interface UserActionDrawerProps {
+  panel: UserPanel | undefined;
+  copy: AdminCopy;
+  rows: AdminUserRowDto[];
+  selectedUser: AdminUserRowDto | undefined;
+  selectedUserId: string;
+  selectedIds: string[];
+  adjustment: {
+    amount: number;
+    idempotencyKey: string;
+    reason: string;
+  };
+  createForm: {
+    email: string;
+    password: string;
+    role: NonNullable<AdminUserRowDto["role"]>;
+    tier: AdminUserTierDto;
+    features: AdminCommercialFeatureDto[];
+    initialCredits: number;
+    reason: string;
+  };
+  editForm: {
+    role: NonNullable<AdminUserRowDto["role"]>;
+    tier: AdminUserTierDto;
+    features: AdminCommercialFeatureDto[];
+    reason: string;
+  };
+  bulkForm: {
+    operation: AdminBulkUsersInputDto["operation"];
+    role: NonNullable<AdminUserRowDto["role"]>;
+    tier: AdminUserTierDto;
+    features: AdminCommercialFeatureDto[];
+    reason: string;
+  };
+  statusMessage: string;
+  setAdjustment: (value: UserActionDrawerProps["adjustment"]) => void;
+  setCreateForm: (value: UserActionDrawerProps["createForm"]) => void;
+  setEditForm: (value: UserActionDrawerProps["editForm"]) => void;
+  setBulkForm: (value: UserActionDrawerProps["bulkForm"]) => void;
+  setSelectedUserId: (userId: string) => void;
+  setActivePanel: (panel: UserPanel | undefined) => void;
+  setSelectedFeatures: (
+    features: AdminCommercialFeatureDto[],
+    value: AdminCommercialFeatureDto,
+    checked: boolean,
+  ) => AdminCommercialFeatureDto[];
+  handleCreateUser: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  handleSaveEdit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  handleBulk: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  handleAdjustCredits: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+}
+
+function UserActionDrawer({
+  panel,
+  copy,
+  rows,
+  selectedUser,
+  selectedUserId,
+  selectedIds,
+  adjustment,
+  createForm,
+  editForm,
+  bulkForm,
+  statusMessage,
+  setAdjustment,
+  setCreateForm,
+  setEditForm,
+  setBulkForm,
+  setSelectedUserId,
+  setActivePanel,
+  setSelectedFeatures,
+  handleCreateUser,
+  handleSaveEdit,
+  handleBulk,
+  handleAdjustCredits,
+}: UserActionDrawerProps) {
+  if (panel === undefined) {
+    return null;
+  }
+
+  const title = {
+    create: copy.users.actions.create,
+    edit: copy.users.actions.edit,
+    bulk: copy.users.actions.bulkTitle,
+    credits: copy.users.creditAdjustment.title,
+  }[panel];
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/30">
+      <aside className="flex h-full w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl">
+        <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-5">
+          <div>
+            <div className="text-sm font-black text-slate-950">{title}</div>
+            {panel === "bulk" && (
+              <div className="mt-1 text-xs font-bold text-slate-500">
+                {copy.users.actions.selected(selectedIds.length)}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Close user action panel"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+            onClick={() => setActivePanel(undefined)}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {panel === "create" && (
+            <form onSubmit={(event) => void handleCreateUser(event)} className="grid gap-4">
+              <Field label={copy.users.form.email}>
+                <input name="create-email" className="admin-input" value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} />
+              </Field>
+              <Field label={copy.users.form.password}>
+                <input name="create-password" className="admin-input" type="password" value={createForm.password} onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })} />
+              </Field>
+              <RoleTierFields
+                copy={copy}
+                role={createForm.role}
+                tier={createForm.tier}
+                onRole={(role) => setCreateForm({ ...createForm, role })}
+                onTier={(tier) => setCreateForm({ ...createForm, tier })}
+              />
+              <FeatureCheckboxes
+                copy={copy}
+                selected={createForm.features}
+                onChange={(feature, checked) => setCreateForm({
+                  ...createForm,
+                  features: setSelectedFeatures(createForm.features, feature, checked),
+                })}
+              />
+              <Field label={copy.users.form.initialCredits}>
+                <input className="admin-input" type="number" value={createForm.initialCredits} onChange={(event) => setCreateForm({ ...createForm, initialCredits: Number(event.target.value) })} />
+              </Field>
+              <Field label={copy.users.form.reason}>
+                <textarea className="admin-input min-h-20" value={createForm.reason} onChange={(event) => setCreateForm({ ...createForm, reason: event.target.value })} />
+              </Field>
+              <DrawerSubmitButton>{copy.users.actions.create}</DrawerSubmitButton>
+            </form>
+          )}
+
+          {panel === "edit" && (
+            <form onSubmit={(event) => void handleSaveEdit(event)} className="grid gap-4">
+              <Field label={copy.users.creditAdjustment.targetUser}>
+                <select
+                  className="admin-input"
+                  value={selectedUser?.id ?? selectedUserId}
+                  onChange={(event) => {
+                    const nextUser = rows.find((user) => user.id === event.target.value);
+                    setSelectedUserId(event.target.value);
+                    if (nextUser) {
+                      setEditForm({
+                        role: nextUser.role ?? "user",
+                        tier: nextUser.tier,
+                        features: nextUser.features ?? [],
+                        reason: editForm.reason,
+                      });
+                    }
+                  }}
+                >
+                  {rows.map((user) => <option key={user.id} value={user.id}>{user.email}</option>)}
+                </select>
+              </Field>
+              <RoleTierFields
+                copy={copy}
+                role={editForm.role}
+                tier={editForm.tier}
+                onRole={(role) => setEditForm({ ...editForm, role })}
+                onTier={(tier) => setEditForm({ ...editForm, tier })}
+              />
+              <FeatureCheckboxes
+                copy={copy}
+                selected={editForm.features}
+                onChange={(feature, checked) => setEditForm({
+                  ...editForm,
+                  features: setSelectedFeatures(editForm.features, feature, checked),
+                })}
+              />
+              <Field label={copy.users.form.reason}>
+                <textarea className="admin-input min-h-20" value={editForm.reason} onChange={(event) => setEditForm({ ...editForm, reason: event.target.value })} />
+              </Field>
+              <DrawerSubmitButton>{copy.users.actions.saveEdit}</DrawerSubmitButton>
+            </form>
+          )}
+
+          {panel === "bulk" && (
+            <form onSubmit={(event) => void handleBulk(event)} className="grid gap-4">
+              <Field label={copy.users.actions.bulkOperation}>
+                <select name="bulk-operation" className="admin-input" value={bulkForm.operation} onChange={(event) => setBulkForm({ ...bulkForm, operation: event.target.value as AdminBulkUsersInputDto["operation"] })}>
+                  <option value="disable">{copy.users.actions.disable}</option>
+                  <option value="restore">{copy.users.actions.restore}</option>
+                  <option value="delete">{copy.users.actions.delete}</option>
+                  <option value="update_entitlements">{copy.users.actions.saveEdit}</option>
+                </select>
+              </Field>
+              {bulkForm.operation === "update_entitlements" && (
+                <>
+                  <RoleTierFields
+                    copy={copy}
+                    role={bulkForm.role}
+                    tier={bulkForm.tier}
+                    onRole={(role) => setBulkForm({ ...bulkForm, role })}
+                    onTier={(tier) => setBulkForm({ ...bulkForm, tier })}
+                  />
+                  <FeatureCheckboxes
+                    copy={copy}
+                    selected={bulkForm.features}
+                    onChange={(feature, checked) => setBulkForm({
+                      ...bulkForm,
+                      features: setSelectedFeatures(bulkForm.features, feature, checked),
+                    })}
+                  />
+                </>
+              )}
+              <Field label={copy.users.actions.bulkReason}>
+                <textarea className="admin-input min-h-20" value={bulkForm.reason} onChange={(event) => setBulkForm({ ...bulkForm, reason: event.target.value })} />
+              </Field>
+              <DrawerSubmitButton>{copy.users.actions.applyBulk}</DrawerSubmitButton>
+            </form>
+          )}
+
+          {panel === "credits" && (
+            <form onSubmit={(event) => void handleAdjustCredits(event)} className="grid gap-4">
+              <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold leading-5 text-slate-600">{copy.users.creditAdjustment.explanation}</p>
+                <p className="text-xs font-semibold leading-5 text-slate-600">{copy.users.creditAdjustment.positiveNegative}</p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-3">
+                <ActivityCell label={copy.users.creditAdjustment.currentAvailable} value={selectedUser?.availableCredits ?? 0} />
+                <ActivityCell label={copy.users.creditAdjustment.frozenContext} value={selectedUser?.frozenCredits ?? 0} />
+                <ActivityCell label={copy.users.creditAdjustment.projectedAvailable} value={(selectedUser?.availableCredits ?? 0) + adjustment.amount} />
+              </div>
+              <Field label={copy.users.creditAdjustment.targetUser}>
+                <select
+                  className="admin-input"
+                  value={selectedUser?.id ?? selectedUserId}
+                  onChange={(event) => setSelectedUserId(event.target.value)}
+                >
+                  {rows.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.email}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label={copy.users.creditAdjustment.amount}>
+                  <input
+                    className="admin-input"
+                    type="number"
+                    value={adjustment.amount}
+                    onChange={(event) => setAdjustment({ ...adjustment, amount: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label={copy.users.creditAdjustment.idempotencyKey}>
+                  <input
+                    className="admin-input"
+                    value={adjustment.idempotencyKey}
+                    onChange={(event) => setAdjustment({ ...adjustment, idempotencyKey: event.target.value })}
+                    placeholder={copy.users.creditAdjustment.autoGenerated}
+                  />
+                </Field>
+              </div>
+              <Field label={copy.users.creditAdjustment.reason}>
+                <textarea
+                  className="admin-input min-h-24"
+                  value={adjustment.reason}
+                  onChange={(event) => setAdjustment({ ...adjustment, reason: event.target.value })}
+                  placeholder="Paid support grant, refund, migration correction..."
+                />
+              </Field>
+              <DrawerSubmitButton>{copy.users.creditAdjustment.submit}</DrawerSubmitButton>
+              {statusMessage && <p className="text-xs font-bold text-slate-500">{statusMessage}</p>}
+            </form>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function DrawerSubmitButton({ children }: { children: ReactNode }) {
+  return (
+    <button type="submit" className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
+      {children}
+    </button>
   );
 }
 

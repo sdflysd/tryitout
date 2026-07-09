@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import AccessCodesPage, {
   getAccessCodeCreateFailureMessage,
+  getAccessCodeOperationFailureMessage,
 } from "./AccessCodesPage.js";
 import {
   AdminClientError,
@@ -15,6 +16,7 @@ import {
   disableAdminAccessCodeBatch,
   fetchAdminAccessCodes,
   fetchAdminAccessCodeBatches,
+  restoreAdminAccessCode,
 } from "./admin-client.js";
 import type {
   AdminAccessCodeBatchDto,
@@ -97,6 +99,15 @@ test("AccessCodesPage formats access-code creation failures in the active langua
   assert.equal(message, "创建失败：name is required");
 });
 
+test("AccessCodesPage formats access-code operation failures in the active language", () => {
+  const message = getAccessCodeOperationFailureMessage(
+    "zh-CN",
+    new AdminClientError(400, "admin_audit_logs action check failed", "invalid_admin_input"),
+  );
+
+  assert.equal(message, "操作失败：admin_audit_logs action check failed");
+});
+
 test("AccessCodesPage renders a business-ready creation form", () => {
   const html = renderToStaticMarkup(
     <AccessCodesPage initialBatches={[]} language="en-US" />,
@@ -108,7 +119,8 @@ test("AccessCodesPage renders a business-ready creation form", () => {
     "Credits per code",
     "Tier grant",
     "Features",
-    "Expiration",
+    "Redemption deadline",
+    "Entitlement duration \\(days\\)",
     "Source",
     "Operator notes",
   ]) {
@@ -151,8 +163,12 @@ test("AccessCodesPage renders individual code actions and selection controls", (
   );
 
   assert.match(html, /aria-label="Select TIO-\*\*\*\*-\*\*\*\*-JK23"/);
+  assert.match(html, /aria-label="Select all visible access codes"/);
+  assert.match(html, /Search code, batch, or user/);
+  assert.match(html, /Status filter/);
   assert.match(html, /name="access-code-bulk-operation"/);
   assert.match(html, /Disable/);
+  assert.match(html, /Restore/);
   assert.match(html, /Delete/);
   assert.doesNotMatch(html, /rawCode/);
 });
@@ -177,11 +193,14 @@ test("admin client creates and disables access-code batches through admin endpoi
       features: ["priority_queue"],
       source: "sales-led",
       expiresAt: "2026-08-01T00:00:00.000Z",
+      entitlementDurationDays: 30,
       notes: "Q3 launch",
     });
     const disabled = await disableAdminAccessCodeBatch("batch_1", "campaign ended");
 
     assert.equal(created.codes[0]?.rawCode, "TIO-ABCD-EFGH-JK23");
+    assert.equal(created.batch.entitlementDurationDays, 30);
+    assert.equal(created.codes[0]?.entitlementDurationDays, 30);
     assert.equal(disabled.disabledCodeCount, 8);
   } finally {
     globalThis.fetch = originalFetch;
@@ -206,6 +225,20 @@ test("admin client creates and disables access-code batches through admin endpoi
       },
     ],
   );
+  assert.deepEqual(
+    JSON.parse(String(calls[0]?.init?.body)),
+    {
+      name: "Founding Customers",
+      codeCount: 2,
+      credits: 25,
+      tier: "pro",
+      features: ["priority_queue"],
+      source: "sales-led",
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      entitlementDurationDays: 30,
+      notes: "Q3 launch",
+    },
+  );
 });
 
 test("admin client manages individual access codes through admin endpoints", async () => {
@@ -218,6 +251,9 @@ test("admin client manages individual access codes through admin endpoints", asy
     if (String(input).endsWith("/disable")) {
       return jsonResponse({ accessCode: { ...makeAccessCode(), status: "disabled", disabledAt: "2026-07-08T00:00:00.000Z" } });
     }
+    if (String(input).endsWith("/restore")) {
+      return jsonResponse({ accessCode: { ...makeAccessCode(), status: "active" } });
+    }
     if (init?.method === "DELETE") {
       return jsonResponse({ accessCode: { ...makeAccessCode(), deletedAt: "2026-07-08T00:00:00.000Z" } });
     }
@@ -226,6 +262,7 @@ test("admin client manages individual access codes through admin endpoints", asy
 
   const listed = await fetchAdminAccessCodes(fetchImpl as typeof fetch);
   await disableAdminAccessCode("code_1", "risk", fetchImpl as typeof fetch);
+  await restoreAdminAccessCode("code_1", "risk cleared", fetchImpl as typeof fetch);
   await deleteAdminAccessCode("code_1", "void", fetchImpl as typeof fetch);
   await bulkAdminAccessCodes({ accessCodeIds: ["code_1"], operation: "delete", reason: "cleanup" }, fetchImpl as typeof fetch);
 
@@ -235,6 +272,7 @@ test("admin client manages individual access codes through admin endpoints", asy
     [
       { input: "/api/admin/access-codes", method: undefined, credentials: "include" },
       { input: "/api/admin/access-codes/code_1/disable", method: "POST", credentials: "include" },
+      { input: "/api/admin/access-codes/code_1/restore", method: "POST", credentials: "include" },
       { input: "/api/admin/access-codes/code_1", method: "DELETE", credentials: "include" },
       { input: "/api/admin/access-codes/bulk", method: "POST", credentials: "include" },
     ],
@@ -264,6 +302,7 @@ function makeBatch(): AdminAccessCodeBatchDto {
     tier: "pro",
     features: ["priority_queue", "deep_mode"],
     expiresAt: "2026-08-01T00:00:00.000Z",
+    entitlementDurationDays: 30,
     notes: "Q3 launch",
     createdAt: "2026-07-07T00:00:00.000Z",
     status: "active",
@@ -286,6 +325,7 @@ function makeCreatedBatch(): AdminCreateAccessCodeBatchResultDto {
       tier: "pro",
       features: ["priority_queue"],
       expiresAt: "2026-08-01T00:00:00.000Z",
+      entitlementDurationDays: 30,
       notes: "VIP recovery",
       metadata: {},
       createdAt: "2026-07-07T00:01:00.000Z",
@@ -300,6 +340,7 @@ function makeCreatedBatch(): AdminCreateAccessCodeBatchResultDto {
         tier: "pro",
         features: ["priority_queue"],
         expiresAt: "2026-08-01T00:00:00.000Z",
+        entitlementDurationDays: 30,
         createdAt: "2026-07-07T00:01:00.000Z",
       },
       {
@@ -311,6 +352,7 @@ function makeCreatedBatch(): AdminCreateAccessCodeBatchResultDto {
         tier: "pro",
         features: ["priority_queue"],
         expiresAt: "2026-08-01T00:00:00.000Z",
+        entitlementDurationDays: 30,
         createdAt: "2026-07-07T00:01:00.000Z",
       },
     ],
@@ -328,6 +370,7 @@ function makeAccessCode(overrides: Partial<AdminAccessCodeRowDto> = {}): AdminAc
     tier: "pro",
     features: ["priority_queue"],
     expiresAt: "2026-08-01T00:00:00.000Z",
+    entitlementDurationDays: 30,
     redeemedByUserId: "user_1",
     redeemedByUserEmail: "alice@example.test",
     redeemedAt: "2026-07-07T00:02:00.000Z",

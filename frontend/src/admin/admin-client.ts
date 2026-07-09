@@ -68,6 +68,7 @@ export interface AdminAccessCodeBatchDto {
   tier?: AdminUserTierDto;
   features: AdminCommercialFeatureDto[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   disabledAt?: string;
   notes?: string;
   createdAt: string;
@@ -88,6 +89,7 @@ export interface AdminCreatedAccessCodeDto {
   tier?: AdminUserTierDto;
   features: AdminCommercialFeatureDto[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   createdAt: string;
 }
 
@@ -99,6 +101,7 @@ export interface AdminCreateAccessCodeBatchInputDto {
   tier?: AdminUserTierDto;
   features: AdminCommercialFeatureDto[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   notes?: string;
   metadata?: Record<string, unknown>;
 }
@@ -114,6 +117,7 @@ export interface AdminCreateAccessCodeBatchResultDto {
     tier?: AdminUserTierDto;
     features: AdminCommercialFeatureDto[];
     expiresAt?: string;
+    entitlementDurationDays?: number;
     disabledAt?: string;
     notes?: string;
     metadata: Record<string, unknown>;
@@ -220,6 +224,7 @@ export interface AdminAccessCodeRowDto {
   tier?: AdminUserTierDto;
   features: AdminCommercialFeatureDto[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   redeemedByUserId?: string;
   redeemedByUserEmail?: string;
   redeemedAt?: string;
@@ -235,7 +240,7 @@ export interface AdminListAccessCodesDto {
 
 export interface AdminBulkAccessCodesInputDto {
   accessCodeIds: string[];
-  operation: "disable" | "delete";
+  operation: "disable" | "restore" | "delete";
   reason: string;
 }
 
@@ -620,6 +625,24 @@ export async function disableAdminAccessCode(
 ): Promise<AdminAccessCodeRowDto> {
   const body = await requestAdminJson(
     `/api/admin/access-codes/${encodeURIComponent(accessCodeId)}/disable`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "accessCode", "Invalid access-code response");
+  return body.accessCode as unknown as AdminAccessCodeRowDto;
+}
+
+export async function restoreAdminAccessCode(
+  accessCodeId: string,
+  reason: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAccessCodeRowDto> {
+  const body = await requestAdminJson(
+    `/api/admin/access-codes/${encodeURIComponent(accessCodeId)}/restore`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },

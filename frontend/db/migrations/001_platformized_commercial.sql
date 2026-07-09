@@ -57,12 +57,16 @@ CREATE TABLE access_code_batches (
   tier text,
   features jsonb NOT NULL DEFAULT '[]'::jsonb,
   expires_at timestamptz,
+  entitlement_duration_days integer,
   disabled_at timestamptz,
   notes text,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT access_code_batches_code_count_check CHECK (code_count > 0),
   CONSTRAINT access_code_batches_credits_check CHECK (credits > 0),
+  CONSTRAINT access_code_batches_entitlement_duration_days_check CHECK (
+    entitlement_duration_days IS NULL OR entitlement_duration_days > 0
+  ),
   CONSTRAINT access_code_batches_tier_check CHECK (tier IS NULL OR tier IN ('basic', 'pro', 'business')),
   CONSTRAINT access_code_batches_features_array_check CHECK (jsonb_typeof(features) = 'array'),
   CONSTRAINT access_code_batches_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
@@ -78,6 +82,7 @@ CREATE TABLE access_codes (
   tier text,
   features jsonb NOT NULL DEFAULT '[]'::jsonb,
   expires_at timestamptz,
+  entitlement_duration_days integer,
   redeemed_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
   redeemed_at timestamptz,
   disabled_at timestamptz,
@@ -86,6 +91,9 @@ CREATE TABLE access_codes (
   CONSTRAINT access_codes_code_hash_unique UNIQUE (code_hash),
   CONSTRAINT access_codes_status_check CHECK (status IN ('active', 'redeemed', 'disabled', 'expired')),
   CONSTRAINT access_codes_credits_check CHECK (credits > 0),
+  CONSTRAINT access_codes_entitlement_duration_days_check CHECK (
+    entitlement_duration_days IS NULL OR entitlement_duration_days > 0
+  ),
   CONSTRAINT access_codes_tier_check CHECK (tier IS NULL OR tier IN ('basic', 'pro', 'business')),
   CONSTRAINT access_codes_features_array_check CHECK (jsonb_typeof(features) = 'array')
 );
@@ -98,12 +106,19 @@ CREATE TABLE access_code_redemptions (
   credits integer NOT NULL,
   tier_granted text,
   features_granted jsonb NOT NULL DEFAULT '[]'::jsonb,
+  entitlement_starts_at timestamptz,
+  entitlement_expires_at timestamptz,
   redeemed_at timestamptz NOT NULL DEFAULT now(),
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   CONSTRAINT access_code_redemptions_code_unique UNIQUE (access_code_id),
   CONSTRAINT access_code_redemptions_credits_check CHECK (credits > 0),
   CONSTRAINT access_code_redemptions_tier_check CHECK (
     tier_granted IS NULL OR tier_granted IN ('basic', 'pro', 'business')
+  ),
+  CONSTRAINT access_code_redemptions_entitlement_window_check CHECK (
+    entitlement_expires_at IS NULL
+    OR entitlement_starts_at IS NULL
+    OR entitlement_expires_at > entitlement_starts_at
   ),
   CONSTRAINT access_code_redemptions_features_array_check CHECK (jsonb_typeof(features_granted) = 'array'),
   CONSTRAINT access_code_redemptions_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
@@ -364,8 +379,10 @@ CREATE TABLE admin_audit_logs (
       'access_code_batch_disabled',
       'access_code_batch_exported',
       'access_code_disabled',
+      'access_code_restored',
       'access_code_deleted',
       'access_codes_bulk_disabled',
+      'access_codes_bulk_restored',
       'access_codes_bulk_deleted',
       'user_credit_adjusted',
       'credits_adjusted',

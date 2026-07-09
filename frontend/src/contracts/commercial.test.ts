@@ -11,6 +11,7 @@ import {
   SIMULATION_CREDIT_COSTS,
   USER_ROLES,
   USER_TIERS,
+  resolveCommercialEntitlements,
   getSimulationCreditCost,
   hasCommercialFeature,
   isAdminRole,
@@ -42,8 +43,10 @@ test("commercial constants expose platform account, credit, task, and audit stat
     "access_code_batch_disabled",
     "access_code_batch_exported",
     "access_code_disabled",
+    "access_code_restored",
     "access_code_deleted",
     "access_codes_bulk_disabled",
+    "access_codes_bulk_restored",
     "access_codes_bulk_deleted",
     "user_credit_adjusted",
     "credits_adjusted",
@@ -81,6 +84,64 @@ test("feature and admin helpers read commercial entitlement state", () => {
   assert.equal(isAdminRole("user"), false);
   assert.equal(isAdminRole("admin"), true);
   assert.equal(isAdminRole("owner"), true);
+});
+
+test("commercial entitlements resolve highest active tier and active feature union", () => {
+  const entitlements = resolveCommercialEntitlements(
+    { tier: "basic", features: ["priority_queue"] },
+    [
+      {
+        tier: "business",
+        features: ["custom_model_provider"],
+        startsAt: "2026-07-01T00:00:00.000Z",
+        expiresAt: "2026-07-10T00:00:00.000Z",
+      },
+      {
+        tier: "pro",
+        features: ["deep_mode"],
+        startsAt: "2026-07-05T00:00:00.000Z",
+        expiresAt: "2026-08-05T00:00:00.000Z",
+      },
+      {
+        tier: "business",
+        features: ["admin_ops"],
+        startsAt: "2026-06-01T00:00:00.000Z",
+        expiresAt: "2026-07-01T00:00:00.000Z",
+      },
+    ],
+    "2026-07-09T00:00:00.000Z",
+  );
+
+  assert.equal(entitlements.tier, "business");
+  assert.deepEqual(entitlements.features, [
+    "priority_queue",
+    "custom_model_provider",
+    "deep_mode",
+  ]);
+});
+
+test("commercial entitlements fall back after higher grant expires", () => {
+  const entitlements = resolveCommercialEntitlements(
+    { tier: "basic", features: [] },
+    [
+      {
+        tier: "business",
+        features: ["custom_model_provider"],
+        startsAt: "2026-07-01T00:00:00.000Z",
+        expiresAt: "2026-07-10T00:00:00.000Z",
+      },
+      {
+        tier: "pro",
+        features: ["deep_mode"],
+        startsAt: "2026-07-05T00:00:00.000Z",
+        expiresAt: "2026-08-05T00:00:00.000Z",
+      },
+    ],
+    "2026-07-11T00:00:00.000Z",
+  );
+
+  assert.equal(entitlements.tier, "pro");
+  assert.deepEqual(entitlements.features, ["deep_mode"]);
 });
 
 test("commercial features include platform operations flags", () => {

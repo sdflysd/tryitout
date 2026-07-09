@@ -248,6 +248,36 @@ test("lists users with account and task summaries without leaking password hashe
   assert.equal("passwordHash" in users.items[0]!, false);
 });
 
+test("lists users with effective access-code entitlements", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", {
+      tier: "basic",
+      features: [],
+    }),
+    makeCreditAccount("user_1"),
+  );
+  await repo.saveAccessCodeRedemption({
+    id: "redemption_1",
+    accessCodeId: "code_1",
+    userId: "user_1",
+    credits: 30,
+    tierGranted: "business",
+    featuresGranted: ["custom_model_provider"],
+    entitlementStartsAt: "2026-07-07T00:00:00.000Z",
+    entitlementExpiresAt: "2026-08-06T00:00:00.000Z",
+    redeemedAt: "2026-07-07T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const users = await service.listUsers();
+
+  assert.equal(users.items[0]?.tier, "business");
+  assert.deepEqual(users.items[0]?.features, ["custom_model_provider"]);
+  assert.equal((await repo.getUser("user_1"))?.tier, "basic");
+  assert.deepEqual((await repo.getUser("user_1"))?.features, []);
+});
+
 test("admin creates users with explicit role, tier, features, initial credits, and audit trail", async () => {
   const { repo, service } = createScenario();
 
@@ -411,6 +441,7 @@ test("creates access-code batches through the code service and audits creation w
     tier: "pro",
     features: ["priority_queue", "deep_mode"],
     expiresAt: "2026-08-01T00:00:00.000Z",
+    entitlementDurationDays: 30,
     notes: "Q3 launch",
     metadata: { channel: "crm" },
     requestContext: {
@@ -427,6 +458,9 @@ test("creates access-code batches through the code service and audits creation w
   );
   assert.equal(JSON.stringify(await repo.getAccessCode("access_code_1")).includes(RAW_CODES[0]), false);
   assert.equal(result.codes[0]?.codeMask, "TIO-****-****-JK23");
+  assert.equal(result.batch.entitlementDurationDays, 30);
+  assert.equal(result.codes[0]?.entitlementDurationDays, 30);
+  assert.equal((await repo.getAccessCode("access_code_1"))?.entitlementDurationDays, 30);
   assert.equal("codeHash" in result.codes[0]!, false);
   assert.deepEqual(await repo.listAdminAuditLogs(), [
     {
@@ -443,6 +477,7 @@ test("creates access-code batches through the code service and audits creation w
         tier: "pro",
         features: ["priority_queue", "deep_mode"],
         expiresAt: "2026-08-01T00:00:00.000Z",
+        entitlementDurationDays: 30,
         notes: "Q3 launch",
         channel: "crm",
       },
@@ -451,6 +486,30 @@ test("creates access-code batches through the code service and audits creation w
       createdAt: "2026-07-07T00:01:00.000Z",
     },
   ]);
+});
+
+test("admin access-code summaries expose entitlement duration separately from redemption expiry", async () => {
+  const { service } = createScenario();
+
+  await service.createAccessCodeBatch({
+    actorUserId: "admin_1",
+    name: "Thirty day business",
+    source: "sales",
+    codeCount: 1,
+    credits: 25,
+    tier: "business",
+    features: ["custom_model_provider"],
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    entitlementDurationDays: 30,
+  });
+
+  const batches = await service.listAccessCodeBatches();
+  const codes = await service.listAccessCodes();
+
+  assert.equal(batches[0]?.expiresAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(batches[0]?.entitlementDurationDays, 30);
+  assert.equal(codes.items[0]?.expiresAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(codes.items[0]?.entitlementDurationDays, 30);
 });
 
 test("disables access-code batches through the code service and preserves audit metadata", async () => {
@@ -823,7 +882,7 @@ test("lists individual access codes with batch and redemption context only", asy
   assert.equal(JSON.stringify(result).includes("hash_"), false);
 });
 
-test("admin disables and deletes individual unredeemed access codes with audits", async () => {
+test("admin disables, restores, and deletes individual access codes with audits", async () => {
   const { repo, service } = createScenario();
   await repo.saveAccessCode({
     id: "code_1",
@@ -851,6 +910,11 @@ test("admin disables and deletes individual unredeemed access codes with audits"
     accessCodeId: "code_1",
     reason: "fraud risk",
   });
+  const restored = await service.restoreAccessCode({
+    actorUserId: "admin_1",
+    accessCodeId: "code_1",
+    reason: "risk cleared",
+  });
   const deleted = await service.deleteAccessCode({
     actorUserId: "admin_1",
     accessCodeId: "code_2",
@@ -858,9 +922,12 @@ test("admin disables and deletes individual unredeemed access codes with audits"
   });
 
   assert.equal(disabled.status, "disabled");
-  assert.equal(deleted.deletedAt, "2026-07-07T00:01:00.000Z");
-  assert.equal((await repo.getAccessCode("code_1"))?.status, "disabled");
-  assert.equal((await repo.getAccessCode("code_2"))?.deletedAt, "2026-07-07T00:01:00.000Z");
+  assert.equal(restored.status, "active");
+  assert.equal(restored.disabledAt, undefined);
+  assert.equal(deleted.deletedAt, "2026-07-07T00:02:00.000Z");
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "active");
+  assert.equal((await repo.getAccessCode("code_1"))?.disabledAt, undefined);
+  assert.equal((await repo.getAccessCode("code_2"))?.deletedAt, "2026-07-07T00:02:00.000Z");
   assert.deepEqual(
     (await repo.listAdminAuditLogs()).map((log) => ({
       action: log.action,
@@ -872,6 +939,11 @@ test("admin disables and deletes individual unredeemed access codes with audits"
         action: "access_code_disabled",
         targetId: "code_1",
         metadata: { reason: "fraud risk" },
+      },
+      {
+        action: "access_code_restored",
+        targetId: "code_1",
+        metadata: { reason: "risk cleared" },
       },
       {
         action: "access_code_deleted",
@@ -915,7 +987,7 @@ test("admin batch user operations update role, tier, features, and delete users"
   assert.equal(users.find((user) => user.id === "user_2")?.status, "deleted");
 });
 
-test("admin access-code bulk operations skip redeemed codes", async () => {
+test("admin access-code bulk delete hides redeemed codes and restore skips redeemed codes", async () => {
   const { repo, service } = createScenario();
   await repo.saveAccessCode({
     id: "code_active",
@@ -926,6 +998,17 @@ test("admin access-code bulk operations skip redeemed codes", async () => {
     credits: 10,
     features: [],
     createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_disabled",
+    batchId: "batch_1",
+    codeHash: "hash_disabled",
+    codeMask: "TIO-****-****-0003",
+    status: "disabled",
+    credits: 10,
+    features: [],
+    disabledAt: "2026-07-07T00:01:00.000Z",
+    createdAt: "2026-07-07T00:01:00.000Z",
   });
   await repo.saveAccessCode({
     id: "code_redeemed",
@@ -940,20 +1023,29 @@ test("admin access-code bulk operations skip redeemed codes", async () => {
     createdAt: "2026-07-07T00:02:00.000Z",
   });
 
-  const result = await service.bulkAccessCodeOperation({
+  const deleted = await service.bulkAccessCodeOperation({
     actorUserId: "admin_1",
     accessCodeIds: ["code_active", "code_redeemed", "missing"],
     operation: "delete",
     reason: "campaign cleanup",
   });
+  const restored = await service.bulkAccessCodeOperation({
+    actorUserId: "admin_1",
+    accessCodeIds: ["code_disabled", "code_redeemed"],
+    operation: "restore",
+    reason: "campaign reopened",
+  });
 
-  assert.deepEqual(result.updatedCodeIds, ["code_active"]);
-  assert.deepEqual(result.skipped, [
-    { id: "code_redeemed", reason: "redeemed" },
+  assert.deepEqual(deleted.updatedCodeIds, ["code_active", "code_redeemed"]);
+  assert.deepEqual(deleted.skipped, [
     { id: "missing", reason: "not_found" },
   ]);
+  assert.deepEqual(restored.updatedCodeIds, ["code_disabled"]);
+  assert.deepEqual(restored.skipped, [{ id: "code_redeemed", reason: "redeemed" }]);
   assert.equal((await repo.getAccessCode("code_active"))?.deletedAt, "2026-07-07T00:00:00.000Z");
-  assert.equal((await repo.getAccessCode("code_redeemed"))?.deletedAt, undefined);
+  assert.equal((await repo.getAccessCode("code_redeemed"))?.deletedAt, "2026-07-07T00:00:00.000Z");
+  assert.equal((await repo.getAccessCode("code_disabled"))?.status, "active");
+  assert.equal((await repo.getAccessCode("code_disabled"))?.disabledAt, undefined);
   assert.equal((await repo.listAdminAuditLogs())[0]?.action, "access_codes_bulk_deleted");
 });
 

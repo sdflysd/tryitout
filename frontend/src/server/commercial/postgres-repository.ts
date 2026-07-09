@@ -138,6 +138,102 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return mapOptional(rows[0], mapCommercialUser);
   }
 
+  async getEffectiveUser(
+    userId: string,
+    at: Date | string = new Date(),
+  ): Promise<CommercialUserRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        with target_user as (
+          select
+            id, email, email_normalized, password_hash, role, tier, status,
+            features, last_login_at, created_at, updated_at,
+            case tier
+              when 'business' then 2
+              when 'pro' then 1
+              else 0
+            end as baseline_tier_rank
+          from users
+          where id = $1
+        ),
+        active_grants as (
+          select
+            id,
+            tier_granted,
+            features_granted,
+            redeemed_at,
+            case tier_granted
+              when 'business' then 2
+              when 'pro' then 1
+              when 'basic' then 0
+              else null
+            end as tier_rank
+          from access_code_redemptions
+          where user_id = $1
+            and (entitlement_starts_at is null or entitlement_starts_at <= $2)
+            and (entitlement_expires_at is null or entitlement_expires_at > $2)
+        ),
+        grant_tier as (
+          select max(tier_rank) as tier_rank
+          from active_grants
+        ),
+        first_grant_features as (
+          select distinct on (feature.value)
+            feature.value as feature,
+            grant_row.redeemed_at,
+            grant_row.id,
+            feature.position
+          from active_grants grant_row
+          cross join lateral jsonb_array_elements_text(grant_row.features_granted)
+            with ordinality as feature(value, position)
+          order by feature.value, grant_row.redeemed_at, grant_row.id, feature.position
+        ),
+        grant_features as (
+          select coalesce(
+            jsonb_agg(feature order by redeemed_at, id, position),
+            '[]'::jsonb
+          ) as features
+          from first_grant_features
+        ),
+        merged_features as (
+          select coalesce(jsonb_agg(feature order by first_position), '[]'::jsonb) as features
+          from (
+            select feature, min(position) as first_position
+            from target_user
+            cross join grant_features
+            cross join lateral jsonb_array_elements_text(target_user.features || grant_features.features)
+              with ordinality as merged(feature, position)
+            group by feature
+          ) deduped_features
+        )
+        select
+          target_user.id,
+          target_user.email,
+          target_user.email_normalized,
+          target_user.password_hash,
+          target_user.role,
+          case greatest(
+            target_user.baseline_tier_rank,
+            coalesce(grant_tier.tier_rank, target_user.baseline_tier_rank)
+          )
+            when 2 then 'business'
+            when 1 then 'pro'
+            else 'basic'
+          end as tier,
+          target_user.status,
+          merged_features.features,
+          target_user.last_login_at,
+          target_user.created_at,
+          target_user.updated_at
+        from target_user
+        cross join grant_tier
+        cross join merged_features
+      `,
+      [userId, timestampParam(at)],
+    );
+    return mapOptional(rows[0], mapCommercialUser);
+  }
+
   async listUsers(): Promise<CommercialUserRecord[]> {
     const { rows } = await this.query<DbRow>(
       `
@@ -756,11 +852,12 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         insert into access_code_batches (
           id, created_by_user_id, name, source, code_count, credits, tier,
-          features, expires_at, disabled_at, notes, metadata, created_at
+          features, expires_at, entitlement_duration_days, disabled_at, notes,
+          metadata, created_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb,
-          $13
+          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12,
+          $13::jsonb, $14
         )
         on conflict (id) do update set
           created_by_user_id = excluded.created_by_user_id,
@@ -771,6 +868,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           tier = excluded.tier,
           features = excluded.features,
           expires_at = excluded.expires_at,
+          entitlement_duration_days = excluded.entitlement_duration_days,
           disabled_at = excluded.disabled_at,
           notes = excluded.notes,
           metadata = excluded.metadata,
@@ -786,6 +884,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         batch.tier ?? null,
         toJsonb(batch.features),
         batch.expiresAt ?? null,
+        batch.entitlementDurationDays ?? null,
         batch.disabledAt ?? null,
         batch.notes ?? null,
         toJsonb(batch.metadata),
@@ -799,7 +898,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, created_by_user_id, name, source, code_count, credits, tier,
-          features, expires_at, disabled_at, notes, metadata, created_at
+          features, expires_at, entitlement_duration_days, disabled_at, notes,
+          metadata, created_at
         from access_code_batches
         order by created_at desc, id asc
       `,
@@ -818,17 +918,19 @@ export class PostgresCommercialRepository implements CommercialRepository {
         with inserted_batch as (
           insert into access_code_batches (
             id, created_by_user_id, name, source, code_count, credits, tier,
-            features, expires_at, disabled_at, notes, metadata, created_at
+            features, expires_at, entitlement_duration_days, disabled_at, notes,
+            metadata, created_at
           )
           values (
-            $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb,
-            $13
+            $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12,
+            $13::jsonb, $14
           )
           returning id
         )
         insert into access_codes (
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, created_at
         )
         select
           code.id,
@@ -840,12 +942,13 @@ export class PostgresCommercialRepository implements CommercialRepository {
           code.tier,
           code.features,
           code."expiresAt",
+          code."entitlementDurationDays",
           code."redeemedByUserId",
           code."redeemedAt",
           code."disabledAt",
           code."createdAt"
         from inserted_batch
-        join jsonb_to_recordset($14::jsonb) as code(
+        join jsonb_to_recordset($15::jsonb) as code(
           id text,
           "batchId" text,
           "codeHash" text,
@@ -855,6 +958,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           tier text,
           features jsonb,
           "expiresAt" timestamptz,
+          "entitlementDurationDays" integer,
           "redeemedByUserId" text,
           "redeemedAt" timestamptz,
           "disabledAt" timestamptz,
@@ -871,6 +975,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         batch.tier ?? null,
         toJsonb(batch.features),
         batch.expiresAt ?? null,
+        batch.entitlementDurationDays ?? null,
         batch.disabledAt ?? null,
         batch.notes ?? null,
         toJsonb(batch.metadata),
@@ -887,7 +992,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, created_by_user_id, name, source, code_count, credits, tier,
-          features, expires_at, disabled_at, notes, metadata, created_at
+          features, expires_at, entitlement_duration_days, disabled_at, notes,
+          metadata, created_at
         from access_code_batches
         where id = $1
       `,
@@ -901,11 +1007,12 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         insert into access_codes (
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
-          created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14
+          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13,
+          $14, $15
         )
         on conflict (id) do update set
           batch_id = excluded.batch_id,
@@ -916,6 +1023,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           tier = excluded.tier,
           features = excluded.features,
           expires_at = excluded.expires_at,
+          entitlement_duration_days = excluded.entitlement_duration_days,
           redeemed_by_user_id = excluded.redeemed_by_user_id,
           redeemed_at = excluded.redeemed_at,
           disabled_at = excluded.disabled_at,
@@ -932,6 +1040,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         code.tier ?? null,
         toJsonb(code.features),
         code.expiresAt ?? null,
+        code.entitlementDurationDays ?? null,
         code.redeemedByUserId ?? null,
         code.redeemedAt ?? null,
         code.disabledAt ?? null,
@@ -948,8 +1057,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
-          created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from access_codes
         where code_hash = $1
           and deleted_at is null
@@ -966,8 +1075,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
-          created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from access_codes
         where id = $1
           and deleted_at is null
@@ -982,8 +1091,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
-          created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from access_codes
         where deleted_at is null
         order by created_at desc, id asc
@@ -997,8 +1106,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
-          created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from access_codes
         where batch_id = $1
           and deleted_at is null
@@ -1016,9 +1125,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         insert into access_code_redemptions (
           id, access_code_id, user_id, credit_ledger_id, credits, tier_granted,
-          features_granted, redeemed_at, metadata
+          features_granted, entitlement_starts_at, entitlement_expires_at,
+          redeemed_at, metadata
         )
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
       `,
       [
         redemption.id,
@@ -1028,6 +1138,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         redemption.credits,
         redemption.tierGranted ?? null,
         toJsonb(redemption.featuresGranted),
+        redemption.entitlementStartsAt ?? null,
+        redemption.entitlementExpiresAt ?? null,
         redemption.redeemedAt,
         toJsonb(redemption.metadata),
       ],
@@ -1060,7 +1172,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         inserted_redemption as (
           insert into access_code_redemptions (
             id, access_code_id, user_id, credit_ledger_id, credits,
-            tier_granted, features_granted, redeemed_at, metadata
+            tier_granted, features_granted, entitlement_starts_at,
+            entitlement_expires_at, redeemed_at, metadata
           )
           select
             $4,
@@ -1071,7 +1184,9 @@ export class PostgresCommercialRepository implements CommercialRepository {
             updated_code.tier,
             updated_code.features,
             $7,
-            $8::jsonb
+            $8,
+            $9,
+            $10::jsonb
           from updated_code
           returning id
         )
@@ -1085,6 +1200,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         redemption.id,
         redemption.userId,
         redemption.creditLedgerId ?? null,
+        redemption.entitlementStartsAt ?? redemption.redeemedAt,
+        redemption.entitlementExpiresAt ?? null,
         redemption.redeemedAt,
         toJsonb(redemption.metadata),
       ],
@@ -1202,15 +1319,18 @@ export class PostgresCommercialRepository implements CommercialRepository {
         `
           insert into access_code_redemptions (
             id, access_code_id, user_id, credit_ledger_id, credits,
-            tier_granted, features_granted, redeemed_at, metadata
+            tier_granted, features_granted, entitlement_starts_at,
+            entitlement_expires_at, redeemed_at, metadata
           )
-          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
           returning
             id as redemption_id, access_code_id as redemption_access_code_id,
             user_id as redemption_user_id,
             credit_ledger_id as redemption_credit_ledger_id,
             credits as redemption_credits, tier_granted as redemption_tier_granted,
             features_granted as redemption_features_granted,
+            entitlement_starts_at as redemption_entitlement_starts_at,
+            entitlement_expires_at as redemption_entitlement_expires_at,
             redeemed_at as redemption_redeemed_at,
             metadata as redemption_metadata
         `,
@@ -1222,6 +1342,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
           codeCredits,
           codeTier ?? null,
           toJsonb(codeFeatures),
+          redemption.entitlementStartsAt ?? redemption.redeemedAt,
+          redemption.entitlementExpiresAt ?? null,
           redemption.redeemedAt,
           toJsonb(redemption.metadata),
         ],
@@ -1239,7 +1361,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, access_code_id, user_id, credit_ledger_id, credits, tier_granted,
-          features_granted, redeemed_at, metadata
+          features_granted, entitlement_starts_at, entitlement_expires_at,
+          redeemed_at, metadata
         from access_code_redemptions
         where access_code_id = $1
       `,
@@ -1264,14 +1387,16 @@ export class PostgresCommercialRepository implements CommercialRepository {
             and disabled_at is null
           returning
             id, batch_id, code_hash, code_mask, status, credits, tier,
-            features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, deleted_at, created_at
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
         ),
         target_code as (
           select
             id, batch_id, code_hash, code_mask, status, credits, tier,
-            features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, deleted_at, created_at
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
           from access_codes
           where id = $1
             and deleted_at is null
@@ -1287,8 +1412,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         )
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at,
-          deleted_at, created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from updated_code
         where exists (select 1 from inserted_audit)
         union all
@@ -1296,8 +1421,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
           target_code.id, target_code.batch_id, target_code.code_hash,
           target_code.code_mask, target_code.status, target_code.credits,
           target_code.tier, target_code.features, target_code.expires_at,
+          target_code.entitlement_duration_days,
           target_code.redeemed_by_user_id, target_code.redeemed_at,
-          target_code.disabled_at, target_code.deleted_at, target_code.created_at
+          target_code.disabled_at, target_code.deleted_at,
+          target_code.created_at
         from target_code
         where not exists (select 1 from updated_code)
           and exists (select 1 from inserted_audit)
@@ -1331,18 +1458,18 @@ export class PostgresCommercialRepository implements CommercialRepository {
           update access_codes
           set deleted_at = coalesce(deleted_at, $2)
           where id = $1
-            and status <> 'redeemed'
-            and redeemed_at is null
           returning
             id, batch_id, code_hash, code_mask, status, credits, tier,
-            features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, deleted_at, created_at
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
         ),
         target_code as (
           select
             id, batch_id, code_hash, code_mask, status, credits, tier,
-            features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, deleted_at, created_at
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
           from access_codes
           where id = $1
         ),
@@ -1357,8 +1484,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         )
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at,
-          deleted_at, created_at
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
         from updated_code
         where exists (select 1 from inserted_audit)
         union all
@@ -1366,14 +1493,91 @@ export class PostgresCommercialRepository implements CommercialRepository {
           target_code.id, target_code.batch_id, target_code.code_hash,
           target_code.code_mask, target_code.status, target_code.credits,
           target_code.tier, target_code.features, target_code.expires_at,
+          target_code.entitlement_duration_days,
           target_code.redeemed_by_user_id, target_code.redeemed_at,
-          target_code.disabled_at, target_code.deleted_at, target_code.created_at
+          target_code.disabled_at, target_code.deleted_at,
+          target_code.created_at
         from target_code
         where not exists (select 1 from updated_code)
       `,
       [
         codeId,
         deletedAt,
+        auditLog.id,
+        auditLog.actorUserId ?? null,
+        auditLog.action,
+        auditLog.targetType,
+        auditLog.targetId ?? null,
+        toJsonb(auditLog.metadata),
+        auditLog.ipHash ?? null,
+        auditLog.userAgent ?? null,
+        auditLog.createdAt,
+      ],
+    );
+
+    return mapOptional(rows[0], mapAccessCode);
+  }
+
+  async restoreAccessCodeWithAudit(
+    codeId: string,
+    _restoredAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        with updated_code as (
+          update access_codes
+          set status = 'active', disabled_at = null
+          where id = $1
+            and status = 'disabled'
+            and redeemed_at is null
+            and deleted_at is null
+          returning
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
+        ),
+        target_code as (
+          select
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, entitlement_duration_days,
+            redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+            created_at
+          from access_codes
+          where id = $1
+            and deleted_at is null
+        ),
+        inserted_audit as (
+          insert into admin_audit_logs (
+            id, actor_user_id, action, target_type, target_id, metadata,
+            ip_hash, user_agent, created_at
+          )
+          select $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10
+          from target_code
+          returning id
+        )
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, entitlement_duration_days, redeemed_by_user_id,
+          redeemed_at, disabled_at, deleted_at, created_at
+        from updated_code
+        where exists (select 1 from inserted_audit)
+        union all
+        select
+          target_code.id, target_code.batch_id, target_code.code_hash,
+          target_code.code_mask, target_code.status, target_code.credits,
+          target_code.tier, target_code.features, target_code.expires_at,
+          target_code.entitlement_duration_days,
+          target_code.redeemed_by_user_id, target_code.redeemed_at,
+          target_code.disabled_at, target_code.deleted_at,
+          target_code.created_at
+        from target_code
+        where not exists (select 1 from updated_code)
+          and exists (select 1 from inserted_audit)
+      `,
+      [
+        codeId,
         auditLog.id,
         auditLog.actorUserId ?? null,
         auditLog.action,
@@ -1405,7 +1609,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
           where id = $1
           returning
             id, created_by_user_id, name, source, code_count, credits, tier,
-            features, expires_at, disabled_at, notes, metadata, created_at
+            features, expires_at, entitlement_duration_days, disabled_at,
+            notes, metadata, created_at
         ),
         updated_codes as (
           update access_codes
@@ -1452,6 +1657,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           updated_batch.tier,
           updated_batch.features,
           updated_batch.expires_at,
+          updated_batch.entitlement_duration_days,
           updated_batch.disabled_at,
           updated_batch.notes,
           updated_batch.metadata,
@@ -2356,6 +2562,10 @@ function toJsonb(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+function timestampParam(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 function nullableJsonb(value: unknown | undefined): string | null {
   return value === undefined ? null : toJsonb(value);
 }
@@ -2387,6 +2597,7 @@ function toAccessCodeJson(code: AccessCodeRecord): JsonObject {
     tier: code.tier ?? null,
     features: code.features,
     expiresAt: code.expiresAt ?? null,
+    entitlementDurationDays: code.entitlementDurationDays ?? null,
     redeemedByUserId: code.redeemedByUserId ?? null,
     redeemedAt: code.redeemedAt ?? null,
     disabledAt: code.disabledAt ?? null,
@@ -2728,6 +2939,16 @@ function mapAliasedAccessCodeRedemption(row: DbRow): AccessCodeRedemptionRecord 
       | AccessCodeRedemptionRecord["tierGranted"]
       | undefined,
   );
+  assignIfDefined(
+    record,
+    "entitlementStartsAt",
+    optionalTimestampField(row, "redemption_entitlement_starts_at", table),
+  );
+  assignIfDefined(
+    record,
+    "entitlementExpiresAt",
+    optionalTimestampField(row, "redemption_entitlement_expires_at", table),
+  );
   return record;
 }
 
@@ -2766,6 +2987,7 @@ function mapAccessCodeBatch(row: DbRow): AccessCodeBatchRecord {
   assignIfDefined(record, "source", optionalStringField(row, "source", table));
   assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeBatchRecord["tier"]);
   assignIfDefined(record, "expiresAt", optionalTimestampField(row, "expires_at", table));
+  assignIfDefined(record, "entitlementDurationDays", optionalNumberField(row, "entitlement_duration_days", table));
   assignIfDefined(record, "disabledAt", optionalTimestampField(row, "disabled_at", table));
   assignIfDefined(record, "notes", optionalStringField(row, "notes", table));
   return record;
@@ -2785,6 +3007,7 @@ function mapAccessCode(row: DbRow): AccessCodeRecord {
   };
   assignIfDefined(record, "tier", optionalStringField(row, "tier", table) as AccessCodeRecord["tier"]);
   assignIfDefined(record, "expiresAt", optionalTimestampField(row, "expires_at", table));
+  assignIfDefined(record, "entitlementDurationDays", optionalNumberField(row, "entitlement_duration_days", table));
   assignIfDefined(record, "redeemedByUserId", optionalStringField(row, "redeemed_by_user_id", table));
   assignIfDefined(record, "redeemedAt", optionalTimestampField(row, "redeemed_at", table));
   assignIfDefined(record, "disabledAt", optionalTimestampField(row, "disabled_at", table));
@@ -2805,6 +3028,8 @@ function mapAccessCodeRedemption(row: DbRow): AccessCodeRedemptionRecord {
   };
   assignIfDefined(record, "creditLedgerId", optionalStringField(row, "credit_ledger_id", table));
   assignIfDefined(record, "tierGranted", optionalStringField(row, "tier_granted", table) as AccessCodeRedemptionRecord["tierGranted"]);
+  assignIfDefined(record, "entitlementStartsAt", optionalTimestampField(row, "entitlement_starts_at", table));
+  assignIfDefined(record, "entitlementExpiresAt", optionalTimestampField(row, "entitlement_expires_at", table));
   return record;
 }
 

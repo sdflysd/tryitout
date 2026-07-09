@@ -7,6 +7,7 @@ import {
   ClipboardCopy,
   KeyRound,
   PackagePlus,
+  ShieldCheck,
   ShieldOff,
 } from "lucide-react";
 
@@ -20,6 +21,7 @@ import {
   disableAdminAccessCodeBatch,
   fetchAdminAccessCodes,
   fetchAdminAccessCodeBatches,
+  restoreAdminAccessCode,
   type AdminAccessCodeRowDto,
   type AdminBulkAccessCodesInputDto,
   type AdminAccessCodeBatchDto,
@@ -38,6 +40,7 @@ interface AccessCodesPageProps {
   fetchBatches?: () => Promise<AdminAccessCodeBatchDto[]>;
   fetchAccessCodes?: () => Promise<{ total: number; items: AdminAccessCodeRowDto[] }>;
   disableAccessCode?: (accessCodeId: string, reason: string) => Promise<AdminAccessCodeRowDto>;
+  restoreAccessCode?: (accessCodeId: string, reason: string) => Promise<AdminAccessCodeRowDto>;
   deleteAccessCode?: (accessCodeId: string, reason: string) => Promise<AdminAccessCodeRowDto>;
   bulkAccessCodes?: (input: AdminBulkAccessCodesInputDto) => Promise<{ updatedCodeIds: string[]; skipped: Array<{ id: string; reason: string }> }>;
   language?: Language;
@@ -57,6 +60,7 @@ export default function AccessCodesPage({
   fetchBatches = fetchAdminAccessCodeBatches,
   fetchAccessCodes = fetchAdminAccessCodes,
   disableAccessCode = disableAdminAccessCode,
+  restoreAccessCode = restoreAdminAccessCode,
   deleteAccessCode = deleteAdminAccessCode,
   bulkAccessCodes = bulkAdminAccessCodes,
   language,
@@ -65,10 +69,14 @@ export default function AccessCodesPage({
   const [batches, setBatches] = useState<AdminAccessCodeBatchDto[]>(initialBatches ?? []);
   const [accessCodes, setAccessCodes] = useState<AdminAccessCodeRowDto[]>(initialAccessCodes ?? []);
   const [selectedCodeIds, setSelectedCodeIds] = useState<string[]>([]);
+  const [inventoryQuery, setInventoryQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | AdminAccessCodeRowDto["status"]>("all");
   const [bulkForm, setBulkForm] = useState({
     operation: "disable" as AdminBulkAccessCodesInputDto["operation"],
     reason: "",
   });
+  const [pendingCodeIds, setPendingCodeIds] = useState<string[]>([]);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [creationResult, setCreationResult] = useState(initialCreationResult);
   const [isLoading, setIsLoading] = useState(initialBatches === undefined);
   const [loadError, setLoadError] = useState("");
@@ -80,6 +88,7 @@ export default function AccessCodesPage({
     tier: "pro",
     features: ["priority_queue"],
     expiresAt: "",
+    entitlementDurationDays: 30,
     notes: "",
   });
   const [statusMessage, setStatusMessage] = useState("");
@@ -88,6 +97,25 @@ export default function AccessCodesPage({
     () => creationResult?.codes.map((code) => code.rawCode).join("\n") ?? "",
     [creationResult],
   );
+  const visibleAccessCodes = accessCodes.filter((code) => {
+    const query = inventoryQuery.trim().toLowerCase();
+    const haystack = [
+      code.codeMask,
+      code.id,
+      code.batchName,
+      code.batchId,
+      code.redeemedByUserEmail,
+      code.redeemedByUserId,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const matchesQuery = query === "" || haystack.includes(query);
+    const matchesStatus = statusFilter === "all" || code.status === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+  const allVisibleSelected = visibleAccessCodes.length > 0 &&
+    visibleAccessCodes.every((code) => selectedCodeIds.includes(code.id));
 
   useEffect(() => {
     if (initialBatches !== undefined && initialAccessCodes !== undefined) {
@@ -145,6 +173,9 @@ export default function AccessCodesPage({
         ...form,
         name: form.name.trim(),
         expiresAt: form.expiresAt?.trim() || undefined,
+        entitlementDurationDays: normalizeOptionalPositiveInteger(
+          form.entitlementDurationDays,
+        ),
         notes: form.notes?.trim() || undefined,
         source: form.source?.trim() || undefined,
       });
@@ -161,6 +192,7 @@ export default function AccessCodesPage({
           tier: code.tier,
           features: code.features,
           expiresAt: code.expiresAt,
+          entitlementDurationDays: code.entitlementDurationDays,
           createdAt: code.createdAt,
         })),
         ...current,
@@ -179,31 +211,72 @@ export default function AccessCodesPage({
   };
 
   const handleDisable = async (batchId: string) => {
-    const result = await disableAdminAccessCodeBatch(batchId, "disabled from admin console");
-    setBatches((current) =>
-      current.map((batch) =>
-        batch.id === batchId
-          ? {
-              ...batch,
-              status: "disabled",
-              disabledAt: result.batch.disabledAt,
-              disabledCount: batch.activeCount + batch.disabledCount,
-              activeCount: 0,
-            }
-          : batch,
-      ),
-    );
-    setStatusMessage(copy.accessCodes.status.disabled(result.disabledCodeCount));
+    setStatusMessage(copy.accessCodes.status.updating);
+    try {
+      const result = await disableAdminAccessCodeBatch(batchId, "disabled from admin console");
+      setBatches((current) =>
+        current.map((batch) =>
+          batch.id === batchId
+            ? {
+                ...batch,
+                status: "disabled",
+                disabledAt: result.batch.disabledAt,
+                disabledCount: batch.activeCount + batch.disabledCount,
+                activeCount: 0,
+              }
+            : batch,
+        ),
+      );
+      setStatusMessage(copy.accessCodes.status.disabled(result.disabledCodeCount));
+    } catch (error) {
+      setStatusMessage(getAccessCodeOperationFailureMessage(language, error));
+    }
   };
 
   const handleDisableCode = async (codeId: string) => {
-    const updated = await disableAccessCode(codeId, "disabled from admin console");
-    replaceCode(updated);
+    setCodePending(codeId, true);
+    setStatusMessage(copy.accessCodes.status.updating);
+    try {
+      const updated = await disableAccessCode(codeId, "disabled from admin console");
+      replaceCode(updated);
+      await refreshBatches();
+      setStatusMessage(copy.accessCodes.status.codeDisabled);
+    } catch (error) {
+      setStatusMessage(getAccessCodeOperationFailureMessage(language, error));
+    } finally {
+      setCodePending(codeId, false);
+    }
+  };
+
+  const handleRestoreCode = async (codeId: string) => {
+    setCodePending(codeId, true);
+    setStatusMessage(copy.accessCodes.status.updating);
+    try {
+      const updated = await restoreAccessCode(codeId, "restored from admin console");
+      replaceCode(updated);
+      await refreshBatches();
+      setStatusMessage(copy.accessCodes.status.codeRestored);
+    } catch (error) {
+      setStatusMessage(getAccessCodeOperationFailureMessage(language, error));
+    } finally {
+      setCodePending(codeId, false);
+    }
   };
 
   const handleDeleteCode = async (codeId: string) => {
-    const updated = await deleteAccessCode(codeId, "deleted from admin console");
-    replaceCode(updated);
+    setCodePending(codeId, true);
+    setStatusMessage(copy.accessCodes.status.updating);
+    try {
+      const updated = await deleteAccessCode(codeId, "deleted from admin console");
+      setAccessCodes((current) => current.filter((code) => code.id !== updated.id));
+      setSelectedCodeIds((current) => current.filter((id) => id !== updated.id));
+      await refreshBatches();
+      setStatusMessage(copy.accessCodes.status.codeDeleted);
+    } catch (error) {
+      setStatusMessage(getAccessCodeOperationFailureMessage(language, error));
+    } finally {
+      setCodePending(codeId, false);
+    }
   };
 
   const handleBulkCodes = async (event: FormEvent<HTMLFormElement>) => {
@@ -212,15 +285,29 @@ export default function AccessCodesPage({
       setStatusMessage(copy.accessCodes.actions.selectFirst);
       return;
     }
-    const result = await bulkAccessCodes({
-      accessCodeIds: selectedCodeIds,
-      operation: bulkForm.operation,
-      reason: bulkForm.reason || "admin bulk action",
-    });
-    const refreshed = await fetchAccessCodes();
-    setAccessCodes(refreshed.items);
-    setSelectedCodeIds([]);
-    setStatusMessage(copy.accessCodes.actions.bulkUpdated(result.updatedCodeIds.length));
+    setIsBulkUpdating(true);
+    setStatusMessage(copy.accessCodes.status.updating);
+    try {
+      const result = await bulkAccessCodes({
+        accessCodeIds: selectedCodeIds,
+        operation: bulkForm.operation,
+        reason: bulkForm.reason || "admin bulk action",
+      });
+      const refreshed = await fetchAccessCodes();
+      setAccessCodes(refreshed.items);
+      await refreshBatches();
+      setSelectedCodeIds([]);
+      setStatusMessage(copy.accessCodes.actions.bulkUpdated(result.updatedCodeIds.length, result.skipped.length));
+    } catch (error) {
+      setStatusMessage(getAccessCodeOperationFailureMessage(language, error));
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const refreshBatches = async () => {
+    const refreshedBatches = await fetchBatches();
+    setBatches(refreshedBatches);
   };
 
   const replaceCode = (updated: AdminAccessCodeRowDto) => {
@@ -235,6 +322,28 @@ export default function AccessCodesPage({
         ? current.filter((id) => id !== codeId)
         : [...current, codeId],
     );
+  };
+
+  const toggleAllVisibleCodes = () => {
+    const visibleIds = visibleAccessCodes.map((code) => code.id);
+    setSelectedCodeIds((current) => {
+      if (visibleIds.length === 0) {
+        return current;
+      }
+      if (visibleIds.every((id) => current.includes(id))) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+      return [...current, ...visibleIds.filter((id) => !current.includes(id))];
+    });
+  };
+
+  const setCodePending = (codeId: string, pending: boolean) => {
+    setPendingCodeIds((current) => {
+      if (pending) {
+        return current.includes(codeId) ? current : [...current, codeId];
+      }
+      return current.filter((id) => id !== codeId);
+    });
   };
 
   return (
@@ -299,6 +408,22 @@ export default function AccessCodesPage({
             <Field label={copy.accessCodes.form.expiration}>
               <input value={form.expiresAt ?? ""} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} className="admin-input" placeholder="2026-08-01T00:00:00.000Z" />
             </Field>
+            <Field label={copy.accessCodes.form.entitlementDurationDays}>
+              <input
+                type="number"
+                value={form.entitlementDurationDays ?? ""}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    entitlementDurationDays: event.target.value === ""
+                      ? undefined
+                      : Number(event.target.value),
+                  })}
+                className="admin-input"
+                min={1}
+                placeholder="30"
+              />
+            </Field>
             <Field label={copy.accessCodes.form.operatorNotes}>
               <textarea value={form.notes ?? ""} onChange={(event) => setForm({ ...form, notes: event.target.value })} className="admin-input min-h-20" placeholder="CRM campaign, contract id, support ticket..." />
             </Field>
@@ -353,6 +478,33 @@ export default function AccessCodesPage({
           <div className="text-xs font-bold text-slate-500">{copy.accessCodes.actions.selected(selectedCodeIds.length)}</div>
         </div>
 
+        <div className="grid gap-3 border-b border-slate-200 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_auto]">
+          <Field label={copy.accessCodes.filters.search}>
+            <input
+              className="admin-input"
+              value={inventoryQuery}
+              onChange={(event) => setInventoryQuery(event.target.value)}
+              placeholder="TIO-****, batch, user..."
+            />
+          </Field>
+          <Field label={copy.accessCodes.filters.status}>
+            <select
+              className="admin-input"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+            >
+              <option value="all">{copy.accessCodes.filters.allStatuses}</option>
+              <option value="active">{copy.status.active}</option>
+              <option value="redeemed">redeemed</option>
+              <option value="disabled">{copy.status.disabled}</option>
+              <option value="expired">expired</option>
+            </select>
+          </Field>
+          <div className="flex items-end text-xs font-black text-slate-500">
+            {copy.accessCodes.inventory.visible(visibleAccessCodes.length, accessCodes.length)}
+          </div>
+        </div>
+
         <form onSubmit={(event) => void handleBulkCodes(event)} className="grid gap-3 border-b border-slate-200 px-4 py-3 md:grid-cols-[180px_minmax(220px,1fr)_auto]">
           <Field label={copy.accessCodes.actions.bulkAction}>
             <select
@@ -362,6 +514,7 @@ export default function AccessCodesPage({
               onChange={(event) => setBulkForm({ ...bulkForm, operation: event.target.value as AdminBulkAccessCodesInputDto["operation"] })}
             >
               <option value="disable">{copy.accessCodes.actions.disable}</option>
+              <option value="restore">{copy.accessCodes.actions.restore}</option>
               <option value="delete">{copy.accessCodes.actions.delete}</option>
             </select>
           </Field>
@@ -374,8 +527,8 @@ export default function AccessCodesPage({
             />
           </Field>
           <div className="flex items-end">
-            <button type="submit" className="inline-flex min-h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white">
-              {copy.accessCodes.actions.applyBulk}
+            <button type="submit" disabled={isBulkUpdating} className="inline-flex min-h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {isBulkUpdating ? copy.accessCodes.actions.working : copy.accessCodes.actions.applyBulk}
             </button>
           </div>
         </form>
@@ -384,7 +537,14 @@ export default function AccessCodesPage({
           <table className="w-full min-w-[1220px] text-left text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.13em] text-slate-500">
               <tr>
-                <th className="px-4 py-2 font-black">{copy.accessCodes.columns.select}</th>
+                <th className="px-4 py-2 font-black">
+                  <input
+                    type="checkbox"
+                    aria-label={copy.accessCodes.actions.selectAllVisible}
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisibleCodes}
+                  />
+                </th>
                 <th className="px-4 py-2 font-black">{copy.accessCodes.columns.codeMask}</th>
                 <th className="px-4 py-2 font-black">{copy.accessCodes.columns.batch}</th>
                 <th className="px-4 py-2 font-black">{copy.accessCodes.columns.credits}</th>
@@ -397,7 +557,7 @@ export default function AccessCodesPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {accessCodes.map((code) => (
+              {visibleAccessCodes.map((code) => (
                 <tr key={code.id}>
                   <td className="px-4 py-3">
                     <input
@@ -425,26 +585,40 @@ export default function AccessCodesPage({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleDisableCode(code.id)}
-                        className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[10px] font-black text-rose-700"
-                      >
-                        <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
-                        {copy.accessCodes.actions.disable}
-                      </button>
+                      {code.status === "disabled" ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleRestoreCode(code.id)}
+                          disabled={pendingCodeIds.includes(code.id)}
+                          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-[10px] font-black text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                          {pendingCodeIds.includes(code.id) ? copy.accessCodes.actions.working : copy.accessCodes.actions.restore}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleDisableCode(code.id)}
+                          disabled={code.status !== "active" || pendingCodeIds.includes(code.id)}
+                          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[10px] font-black text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+                          {pendingCodeIds.includes(code.id) ? copy.accessCodes.actions.working : copy.accessCodes.actions.disable}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => void handleDeleteCode(code.id)}
-                        className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-[10px] font-black text-slate-700"
+                        disabled={pendingCodeIds.includes(code.id)}
+                        className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-[10px] font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        {copy.accessCodes.actions.delete}
+                        {pendingCodeIds.includes(code.id) ? copy.accessCodes.actions.working : copy.accessCodes.actions.delete}
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {accessCodes.length === 0 && (
+              {visibleAccessCodes.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-xs font-bold text-slate-500">
                     {copy.accessCodes.inventory.empty}
@@ -544,6 +718,17 @@ export function getAccessCodeCreateFailureMessage(
   return getAdminCopy(language).accessCodes.status.createFailed(message);
 }
 
+export function getAccessCodeOperationFailureMessage(
+  language: Language | undefined,
+  error: unknown,
+): string {
+  const message =
+    error instanceof AdminClientError || error instanceof Error
+      ? error.message
+      : "Unknown error";
+  return getAdminCopy(language).accessCodes.status.operationFailed(message);
+}
+
 function Field({
   label,
   children,
@@ -571,6 +756,7 @@ function toBatchDto(
     tier: result.batch.tier,
     features: result.batch.features,
     expiresAt: result.batch.expiresAt,
+    entitlementDurationDays: result.batch.entitlementDurationDays,
     disabledAt: result.batch.disabledAt,
     notes: result.batch.notes,
     createdAt: result.batch.createdAt,
@@ -581,6 +767,14 @@ function toBatchDto(
     expiredCount: 0,
     redemptionRate: 0,
   };
+}
+
+function normalizeOptionalPositiveInteger(
+  value: number | undefined,
+): number | undefined {
+  return value !== undefined && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
 }
 
 function AccessCodeStatusBadge({

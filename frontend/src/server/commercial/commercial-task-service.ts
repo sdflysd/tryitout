@@ -143,7 +143,7 @@ export class CommercialTaskService {
       );
     }
 
-    const user = await this.repository.getUser(input.userId);
+    const user = await this.repository.getEffectiveUser(input.userId, this.currentIso());
     if (!user || user.status !== "active") {
       throw new CommercialTaskServiceError("user_not_active", "User is not active");
     }

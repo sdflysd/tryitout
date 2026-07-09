@@ -139,6 +139,7 @@ type CreateAdminAccessCodeBatchBody = {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   notes?: string;
   metadata?: JsonObject;
 };
@@ -187,7 +188,7 @@ type AdminReasonBody = {
 
 type BulkAdminAccessCodesBody = {
   accessCodeIds: string[];
-  operation: "disable" | "delete";
+  operation: "disable" | "restore" | "delete";
   reason: string;
 };
 
@@ -333,6 +334,7 @@ export async function handleRedeemAccessCodeRequest(
         account: UserCreditAccountRecord;
         ledger: CreditTransitionResult["ledger"];
         redemption: RedeemAccessCodeResult["redemption"];
+        user: CommercialAuthUser;
       }
     | CommercialApiErrorBody
   >
@@ -353,6 +355,8 @@ export async function handleRedeemAccessCodeRequest(
       idempotencyKey: parsed.value.idempotencyKey,
       metadata: parsed.value.metadata,
     });
+    const refreshedUser =
+      await deps.authService.getUserForSessionToken(getSessionToken(request) ?? "");
 
     return {
       status: 200,
@@ -360,6 +364,7 @@ export async function handleRedeemAccessCodeRequest(
         account: result.account,
         ledger: result.ledger,
         redemption: result.redemption,
+        user: refreshedUser ?? auth.user,
       },
     };
   } catch (error) {
@@ -778,6 +783,41 @@ export async function handleDisableAdminAccessCodeRequest(
       status: 200,
       body: {
         accessCode: await deps.adminService.disableAccessCode({
+          actorUserId: auth.user.id,
+          accessCodeId,
+          reason: parsed.value.reason,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleRestoreAdminAccessCodeRequest(
+  accessCodeId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { accessCode: Awaited<ReturnType<CommercialAdminService["restoreAccessCode"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdminReasonBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        accessCode: await deps.adminService.restoreAccessCode({
           actorUserId: auth.user.id,
           accessCodeId,
           reason: parsed.value.reason,
@@ -1754,8 +1794,12 @@ function parseBulkAdminAccessCodesBody(
   if (accessCodeIds.ok === false) return accessCodeIds;
   const reason = readRequiredString(body, "reason");
   if (reason.ok === false) return reason;
-  if (body.operation !== "disable" && body.operation !== "delete") {
-    return { ok: false, error: "operation must be disable or delete" };
+  if (
+    body.operation !== "disable" &&
+    body.operation !== "restore" &&
+    body.operation !== "delete"
+  ) {
+    return { ok: false, error: "operation must be disable, restore, or delete" };
   }
   return {
     ok: true,
@@ -1809,6 +1853,20 @@ function parseCreateAdminAccessCodeBatchBody(
   if (expiresAt.ok === false) {
     return expiresAt;
   }
+  let entitlementDurationDays: number | undefined;
+  if (body.entitlementDurationDays !== undefined) {
+    if (
+      typeof body.entitlementDurationDays !== "number" ||
+      !Number.isInteger(body.entitlementDurationDays) ||
+      body.entitlementDurationDays < 1
+    ) {
+      return {
+        ok: false,
+        error: "entitlementDurationDays must be a positive integer",
+      };
+    }
+    entitlementDurationDays = body.entitlementDurationDays;
+  }
   const notes = parseOptionalString(body.notes, "notes");
   if (notes.ok === false) {
     return notes;
@@ -1831,6 +1889,7 @@ function parseCreateAdminAccessCodeBatchBody(
       tier: tier.value,
       features: features.value,
       expiresAt: expiresAt.value,
+      entitlementDurationDays,
       notes: notes.value,
       metadata,
     },

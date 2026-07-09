@@ -54,7 +54,7 @@ test("account panel shows commercial identity, tier, balance, frozen credits, an
   assert.match(html, /sk-liv\.\.\.3456/);
 });
 
-test("model settings page renders BYOK provider settings for signed-in users", () => {
+test("model settings page renders BYOK provider settings when BYOK is selected", () => {
   const html = renderToStaticMarkup(
     <AccountPanel
       language="en-US"
@@ -78,6 +78,7 @@ test("model settings page renders BYOK provider settings for signed-in users", (
         totalCaptured: 0,
         updatedAt: "2026-07-07T00:00:00.000Z",
       }}
+      providerMode="byok"
       onSaveModelProvider={async () => undefined}
       onTestModelProvider={async () => undefined}
       onDeleteModelProvider={async () => undefined}
@@ -92,6 +93,86 @@ test("model settings page renders BYOK provider settings for signed-in users", (
   assert.match(html, /Deep model/);
   assert.match(html, /Save provider/);
   assert.match(html, /Test provider/);
+});
+
+test("model settings page keeps BYOK configuration collapsed until selected", () => {
+  const html = renderToStaticMarkup(
+    <AccountPanel
+      language="en-US"
+      modelPage
+      user={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "business",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      account={{
+        userId: "user_1",
+        balance: 18,
+        frozenCredits: 0,
+        totalRedeemed: 18,
+        totalCaptured: 0,
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      providerMode="platform"
+      byokAvailable={false}
+      onProviderModeChange={() => undefined}
+      onSaveModelProvider={async () => undefined}
+      onTestModelProvider={async () => undefined}
+      onDeleteModelProvider={async () => undefined}
+    />,
+  );
+
+  assert.match(html, /Use my API key/);
+  assert.doesNotMatch(html, /value="byok" checked="" disabled=""/);
+  assert.doesNotMatch(html, /BYOK access required/);
+  assert.doesNotMatch(html, /BYOK model settings/);
+  assert.doesNotMatch(html, /OpenAI-compatible base URL/);
+});
+
+test("model settings page shows BYOK configuration after BYOK is selected", () => {
+  const html = renderToStaticMarkup(
+    <AccountPanel
+      language="en-US"
+      modelPage
+      user={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "business",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      account={{
+        userId: "user_1",
+        balance: 18,
+        frozenCredits: 0,
+        totalRedeemed: 18,
+        totalCaptured: 0,
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      providerMode="byok"
+      byokAvailable={false}
+      onProviderModeChange={() => undefined}
+      onSaveModelProvider={async () => undefined}
+      onTestModelProvider={async () => undefined}
+      onDeleteModelProvider={async () => undefined}
+    />,
+  );
+
+  assert.match(html, /Use my API key/);
+  assert.match(html, /<input[^>]*checked=""[^>]*value="byok"/);
+  assert.doesNotMatch(html, /<input[^>]*disabled=""[^>]*checked=""[^>]*value="byok"/);
+  assert.match(html, /BYOK model settings/);
+  assert.match(html, /OpenAI-compatible base URL/);
 });
 
 test("model settings page renders Chinese model source and BYOK copy", () => {

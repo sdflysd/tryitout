@@ -336,6 +336,9 @@ test("buildShareCardOpenedEvent records share modal exposure separately from cop
 
 test("commercial provider helpers gate BYOK and calculate selected credit costs", async () => {
   const appModule = await import("./App.js") as typeof import("./App.js") & {
+    canConfigureByokProvider?: (input: {
+      user?: { tier: "basic" | "pro" | "business"; features: string[] };
+    }) => boolean;
     canUseByokProvider?: (input: {
       user?: { tier: "basic" | "pro" | "business"; features: string[] };
       provider?: PublicModelProviderDto;
@@ -355,6 +358,12 @@ test("commercial provider helpers gate BYOK and calculate selected credit costs"
     ) => unknown;
   };
 
+  assert.equal(appModule.canConfigureByokProvider?.({
+    user: { tier: "business", features: ["custom_model_provider"] },
+  }), true);
+  assert.equal(appModule.canUseByokProvider?.({
+    user: { tier: "business", features: ["custom_model_provider"] },
+  }), false);
   const activeProvider: PublicModelProviderDto = {
     id: "provider_1",
     provider: "openai",

@@ -204,7 +204,7 @@ export class ModelProviderService {
   }
 
   private async assertAllowed(userId: string): Promise<void> {
-    const user = await this.repository.getUser(userId);
+    const user = await this.repository.getEffectiveUser(userId, this.currentIso());
     if (
       !user ||
       user.status !== "active" ||

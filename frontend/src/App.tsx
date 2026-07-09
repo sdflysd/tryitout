@@ -315,6 +315,14 @@ export function canUseByokProvider({
   );
 }
 
+export function canConfigureByokProvider({
+  user,
+}: {
+  user?: Pick<CommercialUserDto, "tier" | "features">;
+}): boolean {
+  return Boolean(user && hasCommercialFeature(user, "custom_model_provider"));
+}
+
 export function resolveCommercialSimulationCost({
   deepAgentMode,
   providerMode,
@@ -695,16 +703,17 @@ export default function App({
     user: commercialUser,
     provider: commercialModelProvider,
   });
+  const byokConfigurable = canConfigureByokProvider({ user: commercialUser });
   const selectedPlatformModelId =
     platformModels.some((model) => model.id === selectedModelProfileId)
       ? selectedModelProfileId
       : platformModels[0]?.id;
 
   useEffect(() => {
-    if (!byokAvailable && providerMode === "byok") {
+    if (!byokConfigurable && providerMode === "byok") {
       setProviderMode("platform");
     }
-  }, [byokAvailable, providerMode]);
+  }, [byokConfigurable, providerMode]);
 
   useEffect(() => {
     if (platformModels.length === 0) {
@@ -1083,6 +1092,7 @@ export default function App({
     try {
       const result = await redeemAccessCode(input);
       setCommercialAccount(result.account);
+      setCommercialUser(result.user);
       setCommercialStatus(appCopy.commercialStatus.redeemed(result.redemption.credits));
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));

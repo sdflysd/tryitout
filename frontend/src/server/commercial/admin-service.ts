@@ -232,6 +232,7 @@ export interface AdminCreatedAccessCode {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   createdAt: string;
 }
 
@@ -318,6 +319,7 @@ export interface AdminAccessCodeBatchSummary {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   disabledAt?: string;
   notes?: string;
   createdAt: string;
@@ -339,6 +341,7 @@ export interface AdminAccessCodeRow {
   tier?: UserTier;
   features: CommercialFeature[];
   expiresAt?: string;
+  entitlementDurationDays?: number;
   redeemedByUserId?: string;
   redeemedByUserEmail?: string;
   redeemedAt?: string;
@@ -362,7 +365,7 @@ export interface AdminAccessCodeOperationInput {
 export interface AdminBulkAccessCodeOperationInput {
   actorUserId: string;
   accessCodeIds: string[];
-  operation: "disable" | "delete";
+  operation: "disable" | "restore" | "delete";
   reason: string;
   requestContext?: AdminRequestContext;
 }
@@ -723,6 +726,7 @@ export class CommercialAdminService {
     const accountByUserId = new Map(accounts.map((account) => [account.userId, account]));
     const tasksByUserId = groupBy(tasks, (task) => task.userId);
     const search = input.search?.trim().toLowerCase();
+    const now = this.currentDate();
 
     const filtered = users.filter((user) => {
       if (input.status !== undefined && user.status !== input.status) return false;
@@ -741,12 +745,24 @@ export class CommercialAdminService {
 
     const offset = input.offset ?? 0;
     const limit = input.limit ?? filtered.length;
+    const effectiveUsers = await Promise.all(
+      filtered.map((user) => this.repository.getEffectiveUser(user.id, now)),
+    );
+    const effectiveUserById = new Map(
+      effectiveUsers
+        .filter((user): user is CommercialUserRecord => user !== undefined)
+        .map((user) => [user.id, user]),
+    );
     return {
       total: filtered.length,
       items: filtered
         .slice(offset, offset + limit)
         .map((user) =>
-          toAdminUserSummary(user, accountByUserId.get(user.id), tasksByUserId.get(user.id) ?? []),
+          toAdminUserSummary(
+            effectiveUserById.get(user.id) ?? user,
+            accountByUserId.get(user.id),
+            tasksByUserId.get(user.id) ?? [],
+          ),
         ),
     };
   }
@@ -757,7 +773,8 @@ export class CommercialAdminService {
     if (!user) {
       throw new CommercialAdminServiceError("user_not_found", "User not found");
     }
-    const [account, tasks, ledger, accessCodes] = await Promise.all([
+    const [effectiveUser, account, tasks, ledger, accessCodes] = await Promise.all([
+      this.repository.getEffectiveUser(userId, this.currentDate()),
       this.repository.getCreditAccount(userId),
       this.repository.listCommercialTasks(userId),
       this.repository.listCreditLedgerEntries(userId),
@@ -765,7 +782,7 @@ export class CommercialAdminService {
     ]);
 
     return {
-      user: toAdminUserSummary(user, account, tasks),
+      user: toAdminUserSummary(effectiveUser ?? user, account, tasks),
       ...(account !== undefined ? { creditAccount: account } : {}),
       tasks,
       creditLedger: ledger,
@@ -1030,7 +1047,7 @@ export class CommercialAdminService {
     return toAdminAccessCodeRow(code, batch, user);
   }
 
-  async deleteAccessCode(input: AdminAccessCodeOperationInput): Promise<AdminAccessCodeRow> {
+  async restoreAccessCode(input: AdminAccessCodeOperationInput): Promise<AdminAccessCodeRow> {
     validateRequired(input.actorUserId, "Actor user id");
     validateRequired(input.accessCodeId, "Access code id");
     validateRequired(input.reason, "Reason");
@@ -1039,7 +1056,38 @@ export class CommercialAdminService {
       throw new CommercialAdminServiceError("access_code_not_found", "Access code not found");
     }
     if (code.status === "redeemed" || code.redeemedAt !== undefined) {
-      throw new CommercialAdminServiceError("invalid_admin_input", "Redeemed access codes cannot be deleted");
+      throw new CommercialAdminServiceError("invalid_admin_input", "Redeemed access codes cannot be restored");
+    }
+    const restoredAt = this.currentDate().toISOString();
+    const restored = await this.repository.restoreAccessCodeWithAudit(
+      input.accessCodeId,
+      restoredAt,
+      {
+        id: this.createId("admin_audit_log"),
+        actorUserId: input.actorUserId,
+        action: "access_code_restored",
+        targetType: "access_code",
+        targetId: input.accessCodeId,
+        metadata: { reason: input.reason },
+        ipHash: input.requestContext?.ipHash,
+        userAgent: input.requestContext?.userAgent,
+        createdAt: restoredAt,
+      },
+    );
+    if (!restored) {
+      throw new CommercialAdminServiceError("access_code_not_found", "Access code not found");
+    }
+    const batch = await this.repository.getAccessCodeBatch(restored.batchId);
+    return toAdminAccessCodeRow(restored, batch);
+  }
+
+  async deleteAccessCode(input: AdminAccessCodeOperationInput): Promise<AdminAccessCodeRow> {
+    validateRequired(input.actorUserId, "Actor user id");
+    validateRequired(input.accessCodeId, "Access code id");
+    validateRequired(input.reason, "Reason");
+    const code = await this.repository.getAccessCode(input.accessCodeId);
+    if (!code) {
+      throw new CommercialAdminServiceError("access_code_not_found", "Access code not found");
     }
     const deletedAt = this.currentDate().toISOString();
     const deleted = await this.repository.softDeleteAccessCodeWithAudit(
@@ -1081,7 +1129,10 @@ export class CommercialAdminService {
         result.skipped.push({ id: codeId, reason: "not_found" });
         continue;
       }
-      if (code.status === "redeemed" || code.redeemedAt !== undefined) {
+      if (
+        input.operation !== "delete" &&
+        (code.status === "redeemed" || code.redeemedAt !== undefined)
+      ) {
         result.skipped.push({ id: codeId, reason: "redeemed" });
         continue;
       }
@@ -1093,6 +1144,23 @@ export class CommercialAdminService {
             id: this.createId("admin_audit_log"),
             actorUserId: input.actorUserId,
             action: "access_codes_bulk_disabled",
+            targetType: "access_code",
+            targetId: codeId,
+            metadata: { reason: input.reason },
+            ipHash: input.requestContext?.ipHash,
+            userAgent: input.requestContext?.userAgent,
+            createdAt: nowIso,
+          },
+        );
+        if (updated) result.updatedCodeIds.push(codeId);
+      } else if (input.operation === "restore") {
+        const updated = await this.repository.restoreAccessCodeWithAudit(
+          codeId,
+          nowIso,
+          {
+            id: this.createId("admin_audit_log"),
+            actorUserId: input.actorUserId,
+            action: "access_codes_bulk_restored",
             targetType: "access_code",
             targetId: codeId,
             metadata: { reason: input.reason },
@@ -1488,6 +1556,7 @@ export class CommercialAdminService {
       tier: input.tier,
       features: input.features,
       expiresAt: input.expiresAt,
+      entitlementDurationDays: input.entitlementDurationDays,
       notes: input.notes,
       metadata: input.metadata,
     });
@@ -1506,6 +1575,7 @@ export class CommercialAdminService {
         tier: created.batch.tier,
         features: created.batch.features,
         expiresAt: created.batch.expiresAt,
+        entitlementDurationDays: created.batch.entitlementDurationDays,
         notes: created.batch.notes,
       }),
       ipHash: input.requestContext?.ipHash,
@@ -1719,6 +1789,9 @@ function toAdminCreatedAccessCode(input: {
   if (input.record.expiresAt !== undefined) {
     code.expiresAt = input.record.expiresAt;
   }
+  if (input.record.entitlementDurationDays !== undefined) {
+    code.entitlementDurationDays = input.record.entitlementDurationDays;
+  }
   return code;
 }
 
@@ -1753,6 +1826,9 @@ function toAdminAccessCodeBatchSummary(
   if (batch.source !== undefined) summary.source = batch.source;
   if (batch.tier !== undefined) summary.tier = batch.tier;
   if (batch.expiresAt !== undefined) summary.expiresAt = batch.expiresAt;
+  if (batch.entitlementDurationDays !== undefined) {
+    summary.entitlementDurationDays = batch.entitlementDurationDays;
+  }
   if (batch.disabledAt !== undefined) summary.disabledAt = batch.disabledAt;
   if (batch.notes !== undefined) summary.notes = batch.notes;
   return summary;
@@ -1775,6 +1851,9 @@ function toAdminAccessCodeRow(
   if (batch !== undefined) row.batchName = batch.name;
   if (code.tier !== undefined) row.tier = code.tier;
   if (code.expiresAt !== undefined) row.expiresAt = code.expiresAt;
+  if (code.entitlementDurationDays !== undefined) {
+    row.entitlementDurationDays = code.entitlementDurationDays;
+  }
   if (code.redeemedByUserId !== undefined) row.redeemedByUserId = code.redeemedByUserId;
   if (redeemedByUser !== undefined) row.redeemedByUserEmail = redeemedByUser.email;
   if (code.redeemedAt !== undefined) row.redeemedAt = code.redeemedAt;

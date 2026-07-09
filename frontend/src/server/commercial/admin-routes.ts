@@ -26,6 +26,7 @@ import {
   handleListAdminProviderModelsRequest,
   handleListAdminTasksRequest,
   handleListAdminUsersRequest,
+  handleRestoreAdminAccessCodeRequest,
   handleRestoreAdminUserRequest,
   handleSaveAdminModelProfileRequest,
   handleSaveAdminModelProviderRequest,
@@ -132,6 +133,18 @@ export function registerCommercialAdminRoutes(
       return sendDisabled(res);
     }
     const result = await handleDisableAdminAccessCodeRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/access-codes/:id/restore", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleRestoreAdminAccessCodeRequest(
       req.params.id,
       toCommercialRequest(req),
       services,

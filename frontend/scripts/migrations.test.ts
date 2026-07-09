@@ -30,8 +30,10 @@ test("admin management migration adds access-code deletion and platform model co
     "user_created",
     "user_updated",
     "user_deleted",
+    "access_code_restored",
     "access_code_deleted",
     "access_codes_bulk_disabled",
+    "access_codes_bulk_restored",
     "access_codes_bulk_deleted",
     "platform_model_provider_saved",
     "platform_model_provider_tested",
@@ -51,19 +53,67 @@ test("fresh platformized commercial schema includes admin management columns and
   const sql = readMigration("001_platformized_commercial.sql");
 
   assert.match(sql, /deleted_at\s+timestamptz/i);
+  assert.match(sql, /access_code_batches[\s\S]*entitlement_duration_days\s+integer/i);
+  assert.match(sql, /access_codes[\s\S]*entitlement_duration_days\s+integer/i);
+  assert.match(sql, /access_code_redemptions[\s\S]*entitlement_starts_at\s+timestamptz/i);
+  assert.match(sql, /access_code_redemptions[\s\S]*entitlement_expires_at\s+timestamptz/i);
   assert.match(sql, /create\s+table\s+platform_model_providers/i);
   assert.match(sql, /create\s+table\s+platform_model_profiles/i);
   for (const action of [
     "user_created",
     "user_updated",
     "user_deleted",
+    "access_code_restored",
     "access_code_deleted",
     "access_codes_bulk_disabled",
+    "access_codes_bulk_restored",
     "access_codes_bulk_deleted",
     "platform_model_provider_saved",
     "platform_model_provider_tested",
     "platform_model_profiles_updated",
   ]) {
     assert.match(sql, new RegExp(`'${action}'`, "i"));
+  }
+});
+
+test("access-code restore migration updates admin audit action constraint", () => {
+  const sql = readMigration("004_access_code_restore_audit_actions.sql");
+
+  assert.match(sql, /drop\s+constraint\s+if\s+exists\s+admin_audit_logs_action_check/i);
+  assert.match(sql, /add\s+constraint\s+admin_audit_logs_action_check/i);
+  assert.match(sql, /'access_code_restored'/i);
+  assert.match(sql, /'access_codes_bulk_restored'/i);
+});
+
+test("access-code redemption entitlement migration backfills users from prior redemptions", () => {
+  const sql = readMigration("005_backfill_access_code_redemption_entitlements.sql");
+
+  assert.match(sql, /from\s+access_code_redemptions/i);
+  assert.match(sql, /tier_granted/i);
+  assert.match(sql, /features_granted/i);
+  assert.match(sql, /update\s+users/i);
+  assert.match(sql, /jsonb_array_elements_text/i);
+  assert.match(sql, /users\.features\s+@>\s+redemption_entitlements\.features/i);
+});
+
+test("timed access-code entitlement migration adds grant windows", () => {
+  const sql = readMigration("006_timed_access_code_entitlements.sql");
+
+  assert.match(sql, /alter\s+table\s+access_code_batches/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+entitlement_duration_days\s+integer/i);
+  assert.match(sql, /alter\s+table\s+access_codes/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+entitlement_duration_days\s+integer/i);
+  assert.match(sql, /alter\s+table\s+access_code_redemptions/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+entitlement_starts_at\s+timestamptz/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+entitlement_expires_at\s+timestamptz/i);
+  assert.match(sql, /update\s+access_code_redemptions/i);
+  assert.match(sql, /entitlement_starts_at\s*=\s*redeemed_at/i);
+  assert.match(sql, /entitlement_expires_at\s+is\s+null/i);
+  for (const constraint of [
+    "access_code_batches_entitlement_duration_days_check",
+    "access_codes_entitlement_duration_days_check",
+    "access_code_redemptions_entitlement_window_check",
+  ]) {
+    assert.match(sql, new RegExp(constraint, "i"));
   }
 });

@@ -45,6 +45,7 @@ import {
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
   handleRegisterRequest,
+  handleRestoreAdminAccessCodeRequest,
   handleSaveModelProviderRequest,
   handleSaveAdminModelProfileRequest,
   handleSaveAdminModelProviderRequest,
@@ -174,7 +175,10 @@ test("GET /api/me requires a session and returns the current user", async () => 
 test("redeem access code requires auth and applies credits through the ledger", async () => {
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
-  await seedAccessCode(deps.repository);
+  await seedAccessCode(deps.repository, {
+    tier: "business",
+    features: ["custom_model_provider"],
+  });
 
   const missing = await handleRedeemAccessCodeRequest(
     request({ body: { code: RAW_ACCESS_CODE, idempotencyKey: "redeem_1" } }),
@@ -195,8 +199,56 @@ test("redeem access code requires auth and applies credits through the ledger", 
   assert.equal(redeemed.body.account.balance, 9);
   assert.equal(redeemed.body.ledger.entryType, "redeem");
   assert.equal(redeemed.body.redemption.credits, 9);
+  assert.equal(redeemed.body.user.tier, "business");
+  assert.deepEqual(redeemed.body.user.features, ["custom_model_provider"]);
   assert.equal("codeHash" in redeemed.body, false);
   assert.equal("rawCode" in redeemed.body, false);
+});
+
+test("redeem access code returns effective timed entitlement and me falls back after expiry", async () => {
+  const deps = makeDeps({
+    clockValues: [
+      "2026-07-07T00:00:00.000Z",
+      "2026-07-07T00:01:00.000Z",
+      "2026-07-07T00:02:00.000Z",
+      "2026-07-07T00:03:00.000Z",
+      "2026-07-07T00:04:00.000Z",
+      "2026-07-09T00:00:00.000Z",
+    ],
+  });
+  const sessionToken = await loginUser(deps);
+  await seedAccessCode(deps.repository, {
+    tier: "business",
+    features: ["custom_model_provider"],
+    entitlementDurationDays: 1,
+  });
+
+  const redeemed = await handleRedeemAccessCodeRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken },
+      body: { code: RAW_ACCESS_CODE, idempotencyKey: "redeem_timed" },
+    }),
+    deps,
+  );
+  const afterExpiry = await handleGetMeRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(redeemed.status, 200);
+  assert.equal("user" in redeemed.body, true);
+  if (!("user" in redeemed.body)) return;
+  assert.equal(redeemed.body.user.tier, "business");
+  assert.deepEqual(redeemed.body.user.features, ["custom_model_provider"]);
+  assert.equal(
+    redeemed.body.redemption.entitlementExpiresAt,
+    "2026-07-08T00:03:00.000Z",
+  );
+  assert.equal(afterExpiry.status, 200);
+  assert.equal("user" in afterExpiry.body, true);
+  if (!("user" in afterExpiry.body)) return;
+  assert.equal(afterExpiry.body.user.tier, "basic");
+  assert.deepEqual(afterExpiry.body.user.features, []);
 });
 
 test("credits endpoint requires auth and returns the account balance", async () => {
@@ -707,6 +759,7 @@ test("admin can create a single copyable access code without exposing stored has
         credits: 20,
         tier: "pro",
         features: ["priority_queue"],
+        entitlementDurationDays: 30,
         metadata: { channel: "manual" },
       },
     }),
@@ -717,8 +770,10 @@ test("admin can create a single copyable access code without exposing stored has
   assert.equal("batch" in result.body, true);
   if (!("batch" in result.body)) return;
   assert.equal(result.body.batch.createdByUserId, "user_1");
+  assert.equal(result.body.batch.entitlementDurationDays, 30);
   assert.deepEqual(result.body.codes.map((code) => code.rawCode), [RAW_ADMIN_CODES[0]]);
   assert.equal(result.body.codes[0]?.codeMask, "TIO-****-****-JK23");
+  assert.equal(result.body.codes[0]?.entitlementDurationDays, 30);
   assert.equal("codeHash" in result.body.codes[0]!, false);
   assert.equal(JSON.stringify(await deps.repository.listAccessCodes()).includes(RAW_ADMIN_CODES[0]), false);
 });
@@ -737,6 +792,7 @@ test("admin can create and disable access-code batches", async () => {
         credits: 12,
         features: ["deep_mode", "priority_queue"],
         expiresAt: "2026-08-01T00:00:00.000Z",
+        entitlementDurationDays: 45,
         notes: "Q3 signed customers",
       },
     }),
@@ -756,9 +812,14 @@ test("admin can create and disable access-code batches", async () => {
   );
 
   assert.equal(created.body.codes.length, 2);
+  assert.equal(created.body.batch.entitlementDurationDays, 45);
   assert.deepEqual(
     created.body.codes.map((code) => code.rawCode),
     RAW_ADMIN_CODES.slice(0, 2),
+  );
+  assert.deepEqual(
+    created.body.codes.map((code) => code.entitlementDurationDays),
+    [45, 45],
   );
   assert.equal(disabled.status, 200);
   assert.deepEqual(disabled.body, {
@@ -945,6 +1006,11 @@ test("admin access-code inventory endpoints list, disable, delete, and bulk-oper
     adminRequest({ reason: "fraud risk" }),
     deps,
   );
+  const restored = await handleRestoreAdminAccessCodeRequest(
+    "code_disable",
+    adminRequest({ reason: "risk cleared" }),
+    deps,
+  );
   const deleted = await handleDeleteAdminAccessCodeRequest(
     "code_delete",
     adminRequest({ reason: "void generated code" }),
@@ -963,6 +1029,10 @@ test("admin access-code inventory endpoints list, disable, delete, and bulk-oper
   assert.equal("accessCode" in disabled.body, true);
   if (!("accessCode" in disabled.body)) return;
   assert.equal(disabled.body.accessCode.status, "disabled");
+  assert.equal(restored.status, 200);
+  assert.equal("accessCode" in restored.body, true);
+  if (!("accessCode" in restored.body)) return;
+  assert.equal(restored.body.accessCode.status, "active");
   assert.equal(deleted.status, 200);
   assert.equal("accessCode" in deleted.body, true);
   if (!("accessCode" in deleted.body)) return;
@@ -973,9 +1043,8 @@ test("admin access-code inventory endpoints list, disable, delete, and bulk-oper
   );
   assert.deepEqual(bulk.body, {
     result: {
-      updatedCodeIds: [],
+      updatedCodeIds: ["code_redeemed"],
       skipped: [
-        { id: "code_redeemed", reason: "redeemed" },
         { id: "missing_code", reason: "not_found" },
       ],
     },
@@ -1220,10 +1289,11 @@ test("user model provider endpoints save, mask, test, and delete BYOK configurat
 
 function makeDeps(options: {
   discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
+  clockValues?: string[];
 } = {}) {
   const repository = new InMemoryCommercialRepository();
   const ids = new TestIds();
-  const clock = new TestClock([
+  const clock = new TestClock(options.clockValues ?? [
     CREATED_AT,
     "2026-07-07T00:01:00.000Z",
     "2026-07-07T00:02:00.000Z",
@@ -1342,7 +1412,15 @@ async function loginAdmin(deps: ReturnType<typeof makeDeps>): Promise<string> {
   return login.cookies[0].value;
 }
 
-async function seedAccessCode(repository: CommercialRepository): Promise<void> {
+async function seedAccessCode(
+  repository: CommercialRepository,
+  overrides: Partial<
+    Pick<
+      AccessCodeBatchRecord | AccessCodeRecord,
+      "tier" | "features" | "entitlementDurationDays"
+    >
+  > = {},
+): Promise<void> {
   const batch: AccessCodeBatchRecord = {
     id: "batch_1",
     createdByUserId: "admin_1",
@@ -1350,10 +1428,14 @@ async function seedAccessCode(repository: CommercialRepository): Promise<void> {
     source: "launch",
     codeCount: 1,
     credits: 9,
-    features: [],
+    features: overrides.features ?? [],
+    entitlementDurationDays: overrides.entitlementDurationDays,
     metadata: {},
     createdAt: CREATED_AT,
   };
+  if (overrides.tier !== undefined) {
+    batch.tier = overrides.tier;
+  }
   const code: AccessCodeRecord = {
     id: "access_code_1",
     batchId: batch.id,
@@ -1361,9 +1443,13 @@ async function seedAccessCode(repository: CommercialRepository): Promise<void> {
     codeMask: "TIO-****-****-JKLM",
     status: "active",
     credits: 9,
-    features: [],
+    features: overrides.features ?? [],
+    entitlementDurationDays: overrides.entitlementDurationDays,
     createdAt: CREATED_AT,
   };
+  if (overrides.tier !== undefined) {
+    code.tier = overrides.tier;
+  }
 
   await repository.createAccessCodeBatchWithCodes(batch, [code]);
 }
