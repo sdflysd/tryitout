@@ -161,9 +161,9 @@ interface AdminListUsersResultDto {
 export interface AdminUserRowDto {
   id: string;
   email: string;
-  status: "active" | "disabled";
+  status: "active" | "disabled" | "deleted";
   tier: AdminUserTierDto;
-  role?: "user" | "admin";
+  role?: "user" | "admin" | "owner";
   features?: AdminCommercialFeatureDto[];
   availableCredits: number;
   frozenCredits: number;
@@ -175,6 +175,123 @@ export interface AdminUserRowDto {
   lastLoginAt?: string;
   recentActivityAt?: string;
   createdAt?: string;
+}
+
+export interface AdminCreateUserInputDto {
+  email: string;
+  password: string;
+  role?: "user" | "admin" | "owner";
+  tier?: AdminUserTierDto;
+  features?: AdminCommercialFeatureDto[];
+  initialCredits?: number;
+  reason: string;
+}
+
+export interface AdminUpdateUserInputDto {
+  email?: string;
+  role?: "user" | "admin" | "owner";
+  tier?: AdminUserTierDto;
+  features?: AdminCommercialFeatureDto[];
+  status?: "active" | "disabled" | "deleted";
+  reason: string;
+}
+
+export interface AdminBulkUsersInputDto {
+  userIds: string[];
+  operation: "disable" | "restore" | "delete" | "update_entitlements";
+  role?: "user" | "admin" | "owner";
+  tier?: AdminUserTierDto;
+  features?: AdminCommercialFeatureDto[];
+  reason: string;
+}
+
+export interface AdminBulkUsersResultDto {
+  updatedUserIds: string[];
+  skipped: Array<{ id: string; reason: string }>;
+}
+
+export interface AdminAccessCodeRowDto {
+  id: string;
+  batchId: string;
+  batchName?: string;
+  codeMask: string;
+  status: "active" | "redeemed" | "disabled" | "expired";
+  credits: number;
+  tier?: AdminUserTierDto;
+  features: AdminCommercialFeatureDto[];
+  expiresAt?: string;
+  redeemedByUserId?: string;
+  redeemedByUserEmail?: string;
+  redeemedAt?: string;
+  disabledAt?: string;
+  deletedAt?: string;
+  createdAt: string;
+}
+
+export interface AdminListAccessCodesDto {
+  total: number;
+  items: AdminAccessCodeRowDto[];
+}
+
+export interface AdminBulkAccessCodesInputDto {
+  accessCodeIds: string[];
+  operation: "disable" | "delete";
+  reason: string;
+}
+
+export interface AdminBulkAccessCodesResultDto {
+  updatedCodeIds: string[];
+  skipped: Array<{ id: string; reason: string }>;
+}
+
+export interface AdminPlatformModelProviderDto {
+  id: string;
+  provider: "gemini" | "anthropic" | "openai_compatible";
+  displayName: string;
+  baseUrl?: string;
+  apiKeyMask: string;
+  status: "active" | "disabled";
+  lastTestedAt?: string;
+  lastTestStatus?: "passed" | "failed";
+  lastModelSyncAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminSaveModelProviderInputDto {
+  provider: AdminPlatformModelProviderDto["provider"];
+  displayName: string;
+  baseUrl?: string;
+  apiKey?: string;
+  status?: AdminPlatformModelProviderDto["status"];
+  providerConfigId?: string;
+}
+
+export interface AdminPlatformModelProfileDto {
+  id: string;
+  providerConfigId?: string;
+  label: string;
+  providerLabel?: string;
+  modelId: string;
+  quality?: "fast" | "balanced" | "deep";
+  source?: "admin" | "fallback";
+  visibleToUser?: boolean;
+  status?: "active" | "disabled" | "deprecated";
+  capabilities?: Record<string, unknown>;
+  limits?: Record<string, unknown>;
+}
+
+export interface AdminDiscoveredModelDto {
+  id: string;
+  label?: string;
+}
+
+export interface AdminModelProviderModelCatalogDto {
+  providerId: string;
+  provider: AdminPlatformModelProviderDto["provider"];
+  models: AdminDiscoveredModelDto[];
+  unsupported: boolean;
+  error?: string;
 }
 
 export interface AdminTaskTimelineDto {
@@ -340,6 +457,7 @@ export interface AdminSettingsDto {
     }>;
     enabledModelProfileIds: string[];
   };
+  platformModelProviders?: AdminPlatformModelProviderDto[];
 }
 
 export interface AdminAuditLogDto {
@@ -386,6 +504,166 @@ export async function fetchAdminUsers(
   }
 
   return result.items.map(toUserRowDto);
+}
+
+export async function createAdminUser(
+  input: AdminCreateUserInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminUserRowDto> {
+  const body = await requestAdminJson(
+    "/api/admin/users",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "user", "Invalid admin user response");
+  return toUserRowDto(body.user as AdminUserSummaryDto);
+}
+
+export async function updateAdminUser(
+  userId: string,
+  input: AdminUpdateUserInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminUserRowDto> {
+  if (input.status === "disabled") {
+    return changeAdminUserStatus(userId, "disable", input.reason, fetchImpl);
+  }
+  if (input.status === "active") {
+    return changeAdminUserStatus(userId, "restore", input.reason, fetchImpl);
+  }
+  if (input.status === "deleted") {
+    return deleteAdminUser(userId, input.reason, fetchImpl);
+  }
+
+  const body = await requestAdminJson(
+    `/api/admin/users/${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "user", "Invalid admin user response");
+  return toUserRowDto(body.user as AdminUserSummaryDto);
+}
+
+export async function deleteAdminUser(
+  userId: string,
+  reason: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminUserRowDto> {
+  const body = await requestAdminJson(
+    `/api/admin/users/${encodeURIComponent(userId)}`,
+    {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "user", "Invalid admin user response");
+  return toUserRowDto(body.user as AdminUserSummaryDto);
+}
+
+export async function bulkAdminUsers(
+  input: AdminBulkUsersInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminBulkUsersResultDto> {
+  const body = await requestAdminJson(
+    "/api/admin/users/bulk",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "result", "Invalid admin user bulk response");
+  return body.result as unknown as AdminBulkUsersResultDto;
+}
+
+async function changeAdminUserStatus(
+  userId: string,
+  operation: "disable" | "restore",
+  reason: string,
+  fetchImpl: typeof fetch,
+): Promise<AdminUserRowDto> {
+  const body = await requestAdminJson(
+    `/api/admin/users/${encodeURIComponent(userId)}/${operation}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "user", "Invalid admin user response");
+  return toUserRowDto(body.user as AdminUserSummaryDto);
+}
+
+export async function fetchAdminAccessCodes(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminListAccessCodesDto> {
+  const body = await requestAdminJson("/api/admin/access-codes", {}, fetchImpl);
+  assertObjectWithProperty(body, "accessCodes", "Invalid access-code inventory response");
+  return body.accessCodes as unknown as AdminListAccessCodesDto;
+}
+
+export async function disableAdminAccessCode(
+  accessCodeId: string,
+  reason: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAccessCodeRowDto> {
+  const body = await requestAdminJson(
+    `/api/admin/access-codes/${encodeURIComponent(accessCodeId)}/disable`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "accessCode", "Invalid access-code response");
+  return body.accessCode as unknown as AdminAccessCodeRowDto;
+}
+
+export async function deleteAdminAccessCode(
+  accessCodeId: string,
+  reason: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminAccessCodeRowDto> {
+  const body = await requestAdminJson(
+    `/api/admin/access-codes/${encodeURIComponent(accessCodeId)}`,
+    {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "accessCode", "Invalid access-code response");
+  return body.accessCode as unknown as AdminAccessCodeRowDto;
+}
+
+export async function bulkAdminAccessCodes(
+  input: AdminBulkAccessCodesInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminBulkAccessCodesResultDto> {
+  const body = await requestAdminJson(
+    "/api/admin/access-codes/bulk",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "result", "Invalid access-code bulk response");
+  return body.result as unknown as AdminBulkAccessCodesResultDto;
 }
 
 export async function fetchAdminAccessCodeBatches(
@@ -469,6 +747,92 @@ export async function updateAdminPlatformModels(
   return body.settings as unknown as AdminSettingsDto;
 }
 
+export async function fetchAdminModelProviders(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProviderDto[]> {
+  const body = await requestAdminJson("/api/admin/model-providers", {}, fetchImpl);
+  assertObjectWithProperty(body, "providers", "Invalid model providers response");
+  if (!Array.isArray(body.providers)) {
+    throw new AdminClientError(200, "Invalid model providers response");
+  }
+  return body.providers as unknown as AdminPlatformModelProviderDto[];
+}
+
+export async function saveAdminModelProvider(
+  input: AdminSaveModelProviderInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProviderDto> {
+  const body = await requestAdminJson(
+    "/api/admin/model-providers",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "provider", "Invalid model provider response");
+  return body.provider as unknown as AdminPlatformModelProviderDto;
+}
+
+export async function testAdminModelProvider(
+  providerId: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProviderDto> {
+  const body = await requestAdminJson(
+    `/api/admin/model-providers/${encodeURIComponent(providerId)}/test`,
+    { method: "POST" },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "provider", "Invalid model provider response");
+  return body.provider as unknown as AdminPlatformModelProviderDto;
+}
+
+export async function fetchAdminModelProviderModels(
+  providerId: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminModelProviderModelCatalogDto> {
+  const body = await requestAdminJson(
+    `/api/admin/model-providers/${encodeURIComponent(providerId)}/models`,
+    {},
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "catalog", "Invalid model provider catalog response");
+  return body.catalog as unknown as AdminModelProviderModelCatalogDto;
+}
+
+export async function fetchAdminModelProfiles(
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProfileDto[]> {
+  const body = await requestAdminJson("/api/admin/model-profiles", {}, fetchImpl);
+  assertObjectWithProperty(body, "profiles", "Invalid model profiles response");
+  if (!Array.isArray(body.profiles)) {
+    throw new AdminClientError(200, "Invalid model profiles response");
+  }
+  return body.profiles as unknown as AdminPlatformModelProfileDto[];
+}
+
+export async function saveAdminModelProfile(
+  input: AdminPlatformModelProfileDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProfileDto> {
+  const method = input.source === "admin" ? "PATCH" : "POST";
+  const url = method === "PATCH"
+    ? `/api/admin/model-profiles/${encodeURIComponent(input.id)}`
+    : "/api/admin/model-profiles";
+  const body = await requestAdminJson(
+    url,
+    {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "profile", "Invalid model profile response");
+  return body.profile as unknown as AdminPlatformModelProfileDto;
+}
+
 export async function fetchAdminAuditLogs(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<AdminAuditLogDto[]> {
@@ -544,9 +908,9 @@ function toUserRowDto(user: AdminUserSummaryDto): AdminUserRowDto {
   return {
     id: user.id,
     email: user.email,
-    status: user.status === "disabled" ? "disabled" : "active",
+    status: user.status,
     tier: user.tier,
-    role: user.role === "owner" ? "admin" : user.role,
+    role: user.role,
     features: user.features,
     availableCredits: user.creditAccount?.balance ?? 0,
     frozenCredits: user.creditAccount?.frozenCredits ?? 0,

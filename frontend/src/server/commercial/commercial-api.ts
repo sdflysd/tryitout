@@ -51,18 +51,26 @@ import type {
 } from "../../types.js";
 import {
   COMMERCIAL_FEATURES,
+  USER_ROLES,
   USER_TIERS,
   isAdminRole,
   type CommercialFeature,
   type ProviderMode,
+  type UserRole,
   type UserTier,
 } from "../../contracts/commercial.js";
+import type {
+  ModelCapabilities,
+  ModelLimits,
+  ModelQuality,
+} from "../ai/types.js";
 import { validateModelSelection } from "../ai/model-selection.schema.js";
 import {
   PLATFORM_MODEL_SETTING_KEY,
   filterPlatformModelOptions,
   normalizePlatformModelProfileIds,
 } from "../../model-options.js";
+import { loadRepositoryPlatformModelCatalog } from "./platform-model-runtime.js";
 
 export const COMMERCIAL_SESSION_COOKIE_NAME = "tryitout_session";
 
@@ -146,8 +154,67 @@ type AdjustAdminUserCreditsBody = {
   metadata?: JsonObject;
 };
 
+type CreateAdminUserBody = {
+  email: string;
+  password: string;
+  role?: UserRole;
+  tier?: UserTier;
+  features?: CommercialFeature[];
+  initialCredits?: number;
+  reason: string;
+};
+
+type UpdateAdminUserBody = {
+  email?: string;
+  role?: UserRole;
+  tier?: UserTier;
+  features?: CommercialFeature[];
+  reason: string;
+};
+
+type BulkAdminUsersBody = {
+  userIds: string[];
+  operation: "disable" | "restore" | "delete" | "update_entitlements";
+  role?: UserRole;
+  tier?: UserTier;
+  features?: CommercialFeature[];
+  reason: string;
+};
+
+type AdminReasonBody = {
+  reason: string;
+};
+
+type BulkAdminAccessCodesBody = {
+  accessCodeIds: string[];
+  operation: "disable" | "delete";
+  reason: string;
+};
+
 type UpdatePlatformModelsBody = {
   enabledModelProfileIds: string[];
+};
+
+type SaveAdminModelProviderBody = {
+  provider: "gemini" | "anthropic" | "openai_compatible";
+  displayName: string;
+  baseUrl?: string;
+  apiKey?: string;
+  status?: "active" | "disabled";
+  providerConfigId?: string;
+};
+
+type SaveAdminModelProfileBody = {
+  id?: string;
+  providerConfigId: string;
+  label: string;
+  providerLabel?: string;
+  modelId: string;
+  quality: ModelQuality;
+  visibleToUser: boolean;
+  status: "active" | "disabled" | "deprecated";
+  capabilities?: Partial<ModelCapabilities>;
+  limits?: Partial<ModelLimits>;
 };
 
 type SaveModelProviderBody = {
@@ -382,6 +449,16 @@ export async function handleGetModelProviderRequest(
 export async function handleGetPlatformModelsRequest(
   deps: CommercialApiDeps,
 ): Promise<CommercialApiResult<{ models: ReturnType<typeof filterPlatformModelOptions> }>> {
+  const catalog = await loadRepositoryPlatformModelCatalog(deps.repository);
+  if (catalog !== undefined) {
+    return {
+      status: 200,
+      body: {
+        models: catalog.options,
+      },
+    };
+  }
+
   const setting = await deps.repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
   const enabledModelProfileIds = normalizePlatformModelProfileIds(setting?.value);
   return {
@@ -476,6 +553,166 @@ export async function handleListAdminUsersRequest(
   }
 }
 
+export async function handleCreateAdminUserRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["createUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseCreateAdminUserBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 201,
+      body: {
+        user: await deps.adminService.createUser({
+          actorUserId: auth.user.id,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleUpdateAdminUserRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["updateUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseUpdateAdminUserBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        user: await deps.adminService.updateUser({
+          actorUserId: auth.user.id,
+          userId,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleDeleteAdminUserRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["deleteUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdminReasonBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        user: await deps.adminService.deleteUser({
+          actorUserId: auth.user.id,
+          userId,
+          reason: parsed.value.reason,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleDisableAdminUserRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["disableUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  return handleAdminUserStatusRequest(userId, request, deps, "disable");
+}
+
+export async function handleRestoreAdminUserRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["restoreUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  return handleAdminUserStatusRequest(userId, request, deps, "restore");
+}
+
+export async function handleBulkAdminUsersRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { result: Awaited<ReturnType<CommercialAdminService["bulkUpdateUsers"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseBulkAdminUsersBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        result: await deps.adminService.bulkUpdateUsers({
+          actorUserId: auth.user.id,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
 export async function handleListAdminAccessCodeBatchesRequest(
   request: CommercialApiRequest,
   deps: CommercialApiDeps,
@@ -489,6 +726,132 @@ export async function handleListAdminAccessCodeBatchesRequest(
     return {
       status: 200,
       body: { batches: await deps.adminService.listAccessCodeBatches() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminAccessCodesRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { accessCodes: Awaited<ReturnType<CommercialAdminService["listAccessCodes"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: { accessCodes: await deps.adminService.listAccessCodes() },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleDisableAdminAccessCodeRequest(
+  accessCodeId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { accessCode: Awaited<ReturnType<CommercialAdminService["disableAccessCode"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdminReasonBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        accessCode: await deps.adminService.disableAccessCode({
+          actorUserId: auth.user.id,
+          accessCodeId,
+          reason: parsed.value.reason,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleDeleteAdminAccessCodeRequest(
+  accessCodeId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { accessCode: Awaited<ReturnType<CommercialAdminService["deleteAccessCode"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdminReasonBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        accessCode: await deps.adminService.deleteAccessCode({
+          actorUserId: auth.user.id,
+          accessCodeId,
+          reason: parsed.value.reason,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleBulkAdminAccessCodesRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { result: Awaited<ReturnType<CommercialAdminService["bulkAccessCodeOperation"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseBulkAdminAccessCodesBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        result: await deps.adminService.bulkAccessCodeOperation({
+          actorUserId: auth.user.id,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
     };
   } catch (error) {
     return mapAdminError(error);
@@ -630,6 +993,181 @@ export async function handleUpdateAdminPlatformModelsRequest(
         settings: await deps.adminService.updatePlatformModels({
           actorUserId: auth.user.id,
           enabledModelProfileIds: parsed.value.enabledModelProfileIds,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminModelProvidersRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { providers: Awaited<ReturnType<CommercialAdminService["getSettings"]>>["platformModelProviders"] } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const settings = await deps.adminService.getSettings();
+    return {
+      status: 200,
+      body: { providers: settings.platformModelProviders },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleSaveAdminModelProviderRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { provider: Awaited<ReturnType<CommercialAdminService["savePlatformModelProvider"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseSaveAdminModelProviderBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        provider: await deps.adminService.savePlatformModelProvider({
+          actorUserId: auth.user.id,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleTestAdminModelProviderRequest(
+  providerConfigId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { provider: Awaited<ReturnType<CommercialAdminService["testPlatformModelProvider"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        provider: await deps.adminService.testPlatformModelProvider({
+          actorUserId: auth.user.id,
+          providerConfigId,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminProviderModelsRequest(
+  providerConfigId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { catalog: Awaited<ReturnType<CommercialAdminService["listPlatformProviderModels"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        catalog: await deps.adminService.listPlatformProviderModels({
+          actorUserId: auth.user.id,
+          providerConfigId,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleListAdminModelProfilesRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { profiles: Awaited<ReturnType<CommercialAdminService["getSettings"]>>["platformModels"]["available"] } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const settings = await deps.adminService.getSettings();
+    return {
+      status: 200,
+      body: { profiles: settings.platformModels.available },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleSaveAdminModelProfileRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+  profileId?: string,
+): Promise<
+  CommercialApiResult<
+    { profile: Awaited<ReturnType<CommercialAdminService["savePlatformModelProfile"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseSaveAdminModelProfileBody(request.body, profileId);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        profile: await deps.adminService.savePlatformModelProfile({
+          actorUserId: auth.user.id,
+          ...parsed.value,
           requestContext: getAdminRequestContext(request),
         }),
       },
@@ -1072,6 +1610,163 @@ function parseRedeemBody(
   };
 }
 
+function parseCreateAdminUserBody(
+  body: unknown,
+): { ok: true; value: CreateAdminUserBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const email = readRequiredString(body, "email");
+  if (email.ok === false) return email;
+  const password = readRequiredString(body, "password");
+  if (password.ok === false) return password;
+  const reason = readRequiredString(body, "reason");
+  if (reason.ok === false) return reason;
+  const role = parseOptionalUserRole(body.role);
+  if (role.ok === false) return role;
+  const tier = parseOptionalUserTier(body.tier);
+  if (tier.ok === false) return tier;
+  const features = parseCommercialFeatures(body.features);
+  if (features.ok === false) return features;
+  let initialCredits: number | undefined;
+  if (body.initialCredits !== undefined) {
+    if (
+      typeof body.initialCredits !== "number" ||
+      !Number.isInteger(body.initialCredits) ||
+      body.initialCredits < 0
+    ) {
+      return { ok: false, error: "initialCredits must be a non-negative integer" };
+    }
+    initialCredits = body.initialCredits;
+  }
+
+  return {
+    ok: true,
+    value: {
+      email: email.value,
+      password: password.value,
+      role: role.value,
+      tier: tier.value,
+      features: features.value,
+      initialCredits,
+      reason: reason.value,
+    },
+  };
+}
+
+function parseUpdateAdminUserBody(
+  body: unknown,
+): { ok: true; value: UpdateAdminUserBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const reason = readRequiredString(body, "reason");
+  if (reason.ok === false) return reason;
+  const email = parseOptionalString(body.email, "email");
+  if (email.ok === false) return email;
+  const role = parseOptionalUserRole(body.role);
+  if (role.ok === false) return role;
+  const tier = parseOptionalUserTier(body.tier);
+  if (tier.ok === false) return tier;
+  let features: CommercialFeature[] | undefined;
+  if (body.features !== undefined) {
+    const parsedFeatures = parseCommercialFeatures(body.features);
+    if (parsedFeatures.ok === false) return parsedFeatures;
+    features = parsedFeatures.value;
+  }
+
+  return {
+    ok: true,
+    value: {
+      email: email.value,
+      role: role.value,
+      tier: tier.value,
+      features,
+      reason: reason.value,
+    },
+  };
+}
+
+function parseBulkAdminUsersBody(
+  body: unknown,
+): { ok: true; value: BulkAdminUsersBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const userIds = parseStringArray(body.userIds, "userIds");
+  if (userIds.ok === false) return userIds;
+  const reason = readRequiredString(body, "reason");
+  if (reason.ok === false) return reason;
+  if (
+    body.operation !== "disable" &&
+    body.operation !== "restore" &&
+    body.operation !== "delete" &&
+    body.operation !== "update_entitlements"
+  ) {
+    return { ok: false, error: "operation must be disable, restore, delete, or update_entitlements" };
+  }
+  const role = body.role;
+  if (role !== undefined && !USER_ROLES.includes(role as UserRole)) {
+    return { ok: false, error: "role is invalid" };
+  }
+  const tier = body.tier;
+  if (tier !== undefined && !USER_TIERS.includes(tier as UserTier)) {
+    return { ok: false, error: "tier is invalid" };
+  }
+  const features = body.features === undefined
+    ? undefined
+    : parseCommercialFeatures(body.features);
+  if (features !== undefined && features.ok === false) {
+    return features;
+  }
+  const parsedFeatures = features?.ok === true ? features.value : undefined;
+  return {
+    ok: true,
+    value: {
+      userIds: userIds.value,
+      operation: body.operation,
+      ...(role !== undefined ? { role: role as UserRole } : {}),
+      ...(tier !== undefined ? { tier: tier as UserTier } : {}),
+      ...(parsedFeatures !== undefined ? { features: parsedFeatures } : {}),
+      reason: reason.value,
+    },
+  };
+}
+
+function parseAdminReasonBody(
+  body: unknown,
+): { ok: true; value: AdminReasonBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const reason = readRequiredString(body, "reason");
+  if (reason.ok === false) return reason;
+  return { ok: true, value: { reason: reason.value } };
+}
+
+function parseBulkAdminAccessCodesBody(
+  body: unknown,
+): { ok: true; value: BulkAdminAccessCodesBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const accessCodeIds = parseStringArray(body.accessCodeIds, "accessCodeIds");
+  if (accessCodeIds.ok === false) return accessCodeIds;
+  const reason = readRequiredString(body, "reason");
+  if (reason.ok === false) return reason;
+  if (body.operation !== "disable" && body.operation !== "delete") {
+    return { ok: false, error: "operation must be disable or delete" };
+  }
+  return {
+    ok: true,
+    value: {
+      accessCodeIds: accessCodeIds.value,
+      operation: body.operation,
+      reason: reason.value,
+    },
+  };
+}
+
 function parseCreateAdminAccessCodeBatchBody(
   body: unknown,
 ):
@@ -1219,6 +1914,94 @@ function parseUpdatePlatformModelsBody(
   return {
     ok: true,
     value: { enabledModelProfileIds },
+  };
+}
+
+function parseSaveAdminModelProviderBody(
+  body: unknown,
+): { ok: true; value: SaveAdminModelProviderBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (!isAdminPlatformProvider(body.provider)) {
+    return { ok: false, error: "invalid provider" };
+  }
+  const displayName = readRequiredString(body, "displayName");
+  if (displayName.ok === false) return displayName;
+  const baseUrl = parseOptionalString(body.baseUrl, "baseUrl");
+  if (baseUrl.ok === false) return baseUrl;
+  const apiKey = parseOptionalString(body.apiKey, "apiKey");
+  if (apiKey.ok === false) return apiKey;
+  const providerConfigId = parseOptionalString(body.providerConfigId, "providerConfigId");
+  if (providerConfigId.ok === false) return providerConfigId;
+  if (
+    body.status !== undefined &&
+    body.status !== "active" &&
+    body.status !== "disabled"
+  ) {
+    return { ok: false, error: "invalid status" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      provider: body.provider,
+      displayName: displayName.value,
+      baseUrl: baseUrl.value,
+      apiKey: apiKey.value,
+      status: body.status === "active" || body.status === "disabled" ? body.status : undefined,
+      providerConfigId: providerConfigId.value,
+    },
+  };
+}
+
+function parseSaveAdminModelProfileBody(
+  body: unknown,
+  profileId?: string,
+): { ok: true; value: SaveAdminModelProfileBody & { id: string } } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const rawId = profileId ?? body.id;
+  if (typeof rawId !== "string" || !rawId.trim()) {
+    return { ok: false, error: "id is required" };
+  }
+  const providerConfigId = readRequiredString(body, "providerConfigId");
+  if (providerConfigId.ok === false) return providerConfigId;
+  const label = readRequiredString(body, "label");
+  if (label.ok === false) return label;
+  const modelId = readRequiredString(body, "modelId");
+  if (modelId.ok === false) return modelId;
+  const providerLabel = parseOptionalString(body.providerLabel, "providerLabel");
+  if (providerLabel.ok === false) return providerLabel;
+  if (!isModelQuality(body.quality)) {
+    return { ok: false, error: "invalid quality" };
+  }
+  if (typeof body.visibleToUser !== "boolean") {
+    return { ok: false, error: "visibleToUser must be a boolean" };
+  }
+  if (!isPlatformModelProfileStatus(body.status)) {
+    return { ok: false, error: "invalid status" };
+  }
+  const capabilities = parseOptionalJsonObject(body.capabilities, "capabilities");
+  if (capabilities.ok === false) return capabilities;
+  const limits = parseOptionalJsonObject(body.limits, "limits");
+  if (limits.ok === false) return limits;
+
+  return {
+    ok: true,
+    value: {
+      id: rawId,
+      providerConfigId: providerConfigId.value,
+      label: label.value,
+      providerLabel: providerLabel.value,
+      modelId: modelId.value,
+      quality: body.quality,
+      visibleToUser: body.visibleToUser,
+      status: body.status,
+      capabilities: capabilities.value as Partial<ModelCapabilities> | undefined,
+      limits: limits.value as Partial<ModelLimits> | undefined,
+    },
   };
 }
 
@@ -1618,6 +2401,45 @@ function requireModelProviderService(
   return deps.modelProviderService;
 }
 
+async function handleAdminUserStatusRequest(
+  userId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+  operation: "disable" | "restore",
+): Promise<
+  CommercialApiResult<
+    { user: Awaited<ReturnType<CommercialAdminService["disableUser"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseAdminReasonBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    const statusInput = {
+      actorUserId: auth.user.id,
+      userId,
+      reason: parsed.value.reason,
+      requestContext: getAdminRequestContext(request),
+    };
+    return {
+      status: 200,
+      body: {
+        user: operation === "disable"
+          ? await deps.adminService.disableUser(statusInput)
+          : await deps.adminService.restoreUser(statusInput),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
 function badRequest(
   error: string,
   code: string,
@@ -1701,6 +2523,50 @@ function parseOptionalUserTier(
   return { ok: true, value };
 }
 
+function parseOptionalUserRole(
+  value: unknown,
+):
+  | { ok: true; value?: UserRole }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  if (!isUserRole(value)) {
+    return { ok: false, error: "invalid role" };
+  }
+  return { ok: true, value };
+}
+
+function parseStringArray(
+  value: unknown,
+  label: string,
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: `${label} must be an array` };
+  }
+  const parsed: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim()) {
+      return { ok: false, error: `${label} must contain strings` };
+    }
+    parsed.push(item);
+  }
+  return { ok: true, value: parsed };
+}
+
+function parseOptionalJsonObject(
+  value: unknown,
+  label: string,
+): { ok: true; value?: JsonObject } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  if (!isJsonObject(value)) {
+    return { ok: false, error: `${label} must be an object` };
+  }
+  return { ok: true, value };
+}
+
 function parseOptionalString(
   value: unknown,
   label: string,
@@ -1745,6 +2611,24 @@ function isCommercialFeature(value: unknown): value is CommercialFeature {
   return COMMERCIAL_FEATURES.includes(value as CommercialFeature);
 }
 
+function isUserRole(value: unknown): value is UserRole {
+  return USER_ROLES.includes(value as UserRole);
+}
+
 function isUserTier(value: unknown): value is UserTier {
   return USER_TIERS.includes(value as UserTier);
+}
+
+function isAdminPlatformProvider(value: unknown): value is SaveAdminModelProviderBody["provider"] {
+  return value === "gemini" || value === "anthropic" || value === "openai_compatible";
+}
+
+function isModelQuality(value: unknown): value is ModelQuality {
+  return value === "fast" || value === "balanced" || value === "deep";
+}
+
+function isPlatformModelProfileStatus(
+  value: unknown,
+): value is SaveAdminModelProfileBody["status"] {
+  return value === "active" || value === "disabled" || value === "deprecated";
 }

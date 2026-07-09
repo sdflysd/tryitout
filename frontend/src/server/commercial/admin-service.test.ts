@@ -248,6 +248,157 @@ test("lists users with account and task summaries without leaking password hashe
   assert.equal("passwordHash" in users.items[0]!, false);
 });
 
+test("admin creates users with explicit role, tier, features, initial credits, and audit trail", async () => {
+  const { repo, service } = createScenario();
+
+  const created = await service.createUser({
+    actorUserId: "admin_1",
+    email: " New.Admin@Example.TEST ",
+    password: "temporary-password",
+    role: "admin",
+    tier: "business",
+    features: ["admin_ops", "priority_queue"],
+    initialCredits: 12,
+    reason: "operator bootstrap",
+  });
+
+  const stored = await repo.findUserByEmail("new.admin@example.test");
+  assert.equal(created.email, "New.Admin@Example.TEST");
+  assert.equal(created.emailNormalized, "new.admin@example.test");
+  assert.equal(created.role, "admin");
+  assert.equal(created.tier, "business");
+  assert.deepEqual(created.features, ["admin_ops", "priority_queue"]);
+  assert.equal("passwordHash" in created, false);
+  assert.equal(stored?.passwordHash, "hashed:temporary-password");
+  assert.equal((await repo.getCreditAccount(created.id))?.balance, 12);
+  assert.deepEqual(
+    (await repo.listAdminAuditLogs()).map((log) => ({
+      action: log.action,
+      targetId: log.targetId,
+      metadata: log.metadata,
+    })),
+    [
+      {
+        action: "user_created",
+        targetId: created.id,
+        metadata: {
+          email: "New.Admin@Example.TEST",
+          role: "admin",
+          tier: "business",
+          features: ["admin_ops", "priority_queue"],
+          initialCredits: 12,
+          reason: "operator bootstrap",
+        },
+      },
+    ],
+  );
+});
+
+test("admin updates user identity, permissions, tier, and features", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", { email: "old@example.test" }),
+    makeCreditAccount("user_1"),
+  );
+
+  const updated = await service.updateUser({
+    actorUserId: "admin_1",
+    userId: "user_1",
+    email: "new@example.test",
+    role: "admin",
+    tier: "pro",
+    features: ["deep_mode", "custom_model_provider"],
+    reason: "contract upgrade",
+  });
+
+  assert.equal(updated.email, "new@example.test");
+  assert.equal(updated.emailNormalized, "new@example.test");
+  assert.equal(updated.role, "admin");
+  assert.equal(updated.tier, "pro");
+  assert.deepEqual(updated.features, ["deep_mode", "custom_model_provider"]);
+  assert.equal((await repo.getUser("user_1"))?.emailNormalized, "new@example.test");
+  assert.deepEqual((await repo.listAdminAuditLogs())[0]?.metadata, {
+    reason: "contract upgrade",
+    previous: {
+      email: "old@example.test",
+      role: "user",
+      tier: "basic",
+      features: [],
+    },
+    next: {
+      email: "new@example.test",
+      role: "admin",
+      tier: "pro",
+      features: ["deep_mode", "custom_model_provider"],
+    },
+  });
+});
+
+test("admin soft-deletes users and revokes active sessions", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1"),
+    makeCreditAccount("user_1"),
+  );
+  await repo.saveSession({
+    id: "session_1",
+    userId: "user_1",
+    tokenHash: "token_hash_1",
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+
+  const deleted = await service.deleteUser({
+    actorUserId: "admin_1",
+    userId: "user_1",
+    reason: "privacy request",
+  });
+
+  assert.equal(deleted.status, "deleted");
+  assert.equal((await repo.getUser("user_1"))?.status, "deleted");
+  assert.equal((await repo.findSessionByTokenHash("token_hash_1"))?.revokedAt, "2026-07-07T00:00:00.000Z");
+  assert.equal((await repo.listAdminAuditLogs())[0]?.action, "user_deleted");
+});
+
+test("admin batch user operations update selected users and audit each target", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(makeUser("user_1"), makeCreditAccount("user_1"));
+  await repo.createUserWithCreditAccount(makeUser("user_2"), makeCreditAccount("user_2"));
+
+  const result = await service.bulkUpdateUsers({
+    actorUserId: "admin_1",
+    userIds: ["user_1", "user_2"],
+    operation: "disable",
+    reason: "risk review",
+  });
+
+  assert.deepEqual(result.updatedUserIds, ["user_1", "user_2"]);
+  assert.deepEqual(result.skipped, []);
+  assert.deepEqual((await repo.listUsers()).map((user) => [user.id, user.status]), [
+    ["user_1", "disabled"],
+    ["user_2", "disabled"],
+  ]);
+  assert.deepEqual(
+    (await repo.listAdminAuditLogs()).map((log) => ({
+      action: log.action,
+      targetId: log.targetId,
+      metadata: log.metadata,
+    })),
+    [
+      {
+        action: "user_disabled",
+        targetId: "user_1",
+        metadata: { reason: "risk review", previousStatus: "active" },
+      },
+      {
+        action: "user_disabled",
+        targetId: "user_2",
+        metadata: { reason: "risk review", previousStatus: "active" },
+      },
+    ],
+  );
+});
+
 test("creates access-code batches through the code service and audits creation while returning raw codes", async () => {
   const { repo, service } = createScenario();
 
@@ -610,6 +761,202 @@ test("lists access-code batches with status counts without exposing code hashes"
   assert.equal(JSON.stringify(batches).includes("hash_"), false);
 });
 
+test("lists individual access codes with batch and redemption context only", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(
+    makeUser("user_1", { email: "redeemer@example.test" }),
+    makeCreditAccount("user_1"),
+  );
+  await repo.saveAccessCodeBatch({
+    id: "batch_1",
+    name: "Launch",
+    codeCount: 2,
+    credits: 10,
+    features: ["priority_queue"],
+    metadata: {},
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_active",
+    batchId: "batch_1",
+    codeHash: "hash_active",
+    codeMask: "TIO-****-****-0001",
+    status: "active",
+    credits: 10,
+    features: ["priority_queue"],
+    createdAt: "2026-07-07T00:01:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_redeemed",
+    batchId: "batch_1",
+    codeHash: "hash_redeemed",
+    codeMask: "TIO-****-****-0002",
+    status: "redeemed",
+    credits: 10,
+    features: ["priority_queue"],
+    redeemedByUserId: "user_1",
+    redeemedAt: "2026-07-07T00:02:00.000Z",
+    createdAt: "2026-07-07T00:02:00.000Z",
+  });
+
+  const result = await service.listAccessCodes();
+
+  assert.deepEqual(result.items.map((code) => ({
+    id: code.id,
+    batchName: code.batchName,
+    codeMask: code.codeMask,
+    redeemedByUserEmail: code.redeemedByUserEmail,
+  })), [
+    {
+      id: "code_redeemed",
+      batchName: "Launch",
+      codeMask: "TIO-****-****-0002",
+      redeemedByUserEmail: "redeemer@example.test",
+    },
+    {
+      id: "code_active",
+      batchName: "Launch",
+      codeMask: "TIO-****-****-0001",
+      redeemedByUserEmail: undefined,
+    },
+  ]);
+  assert.equal(JSON.stringify(result).includes("hash_"), false);
+});
+
+test("admin disables and deletes individual unredeemed access codes with audits", async () => {
+  const { repo, service } = createScenario();
+  await repo.saveAccessCode({
+    id: "code_1",
+    batchId: "batch_1",
+    codeHash: "hash_1",
+    codeMask: "TIO-****-****-0001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_2",
+    batchId: "batch_1",
+    codeHash: "hash_2",
+    codeMask: "TIO-****-****-0002",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+
+  const disabled = await service.disableAccessCode({
+    actorUserId: "admin_1",
+    accessCodeId: "code_1",
+    reason: "fraud risk",
+  });
+  const deleted = await service.deleteAccessCode({
+    actorUserId: "admin_1",
+    accessCodeId: "code_2",
+    reason: "generated by mistake",
+  });
+
+  assert.equal(disabled.status, "disabled");
+  assert.equal(deleted.deletedAt, "2026-07-07T00:01:00.000Z");
+  assert.equal((await repo.getAccessCode("code_1"))?.status, "disabled");
+  assert.equal((await repo.getAccessCode("code_2"))?.deletedAt, "2026-07-07T00:01:00.000Z");
+  assert.deepEqual(
+    (await repo.listAdminAuditLogs()).map((log) => ({
+      action: log.action,
+      targetId: log.targetId,
+      metadata: log.metadata,
+    })),
+    [
+      {
+        action: "access_code_disabled",
+        targetId: "code_1",
+        metadata: { reason: "fraud risk" },
+      },
+      {
+        action: "access_code_deleted",
+        targetId: "code_2",
+        metadata: { reason: "generated by mistake" },
+      },
+    ],
+  );
+});
+
+test("admin batch user operations update role, tier, features, and delete users", async () => {
+  const { repo, service } = createScenario();
+  await repo.createUserWithCreditAccount(makeUser("user_1"), makeCreditAccount("user_1"));
+  await repo.createUserWithCreditAccount(makeUser("user_2"), makeCreditAccount("user_2"));
+
+  const entitlement = await service.bulkUpdateUsers({
+    actorUserId: "admin_1",
+    userIds: ["user_1", "user_2"],
+    operation: "update_entitlements",
+    role: "admin",
+    tier: "business",
+    features: ["admin_ops", "priority_queue"],
+    reason: "ops migration",
+  });
+  const deleted = await service.bulkUpdateUsers({
+    actorUserId: "admin_1",
+    userIds: ["user_2"],
+    operation: "delete",
+    reason: "offboarded",
+  });
+
+  assert.deepEqual(entitlement.updatedUserIds, ["user_1", "user_2"]);
+  assert.deepEqual(deleted.updatedUserIds, ["user_2"]);
+  const users = await repo.listUsers();
+  assert.equal(users.find((user) => user.id === "user_1")?.role, "admin");
+  assert.equal(users.find((user) => user.id === "user_1")?.tier, "business");
+  assert.deepEqual(users.find((user) => user.id === "user_1")?.features, [
+    "admin_ops",
+    "priority_queue",
+  ]);
+  assert.equal(users.find((user) => user.id === "user_2")?.status, "deleted");
+});
+
+test("admin access-code bulk operations skip redeemed codes", async () => {
+  const { repo, service } = createScenario();
+  await repo.saveAccessCode({
+    id: "code_active",
+    batchId: "batch_1",
+    codeHash: "hash_active",
+    codeMask: "TIO-****-****-0001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  await repo.saveAccessCode({
+    id: "code_redeemed",
+    batchId: "batch_1",
+    codeHash: "hash_redeemed",
+    codeMask: "TIO-****-****-0002",
+    status: "redeemed",
+    credits: 10,
+    features: [],
+    redeemedByUserId: "user_1",
+    redeemedAt: "2026-07-07T00:02:00.000Z",
+    createdAt: "2026-07-07T00:02:00.000Z",
+  });
+
+  const result = await service.bulkAccessCodeOperation({
+    actorUserId: "admin_1",
+    accessCodeIds: ["code_active", "code_redeemed", "missing"],
+    operation: "delete",
+    reason: "campaign cleanup",
+  });
+
+  assert.deepEqual(result.updatedCodeIds, ["code_active"]);
+  assert.deepEqual(result.skipped, [
+    { id: "code_redeemed", reason: "redeemed" },
+    { id: "missing", reason: "not_found" },
+  ]);
+  assert.equal((await repo.getAccessCode("code_active"))?.deletedAt, "2026-07-07T00:00:00.000Z");
+  assert.equal((await repo.getAccessCode("code_redeemed"))?.deletedAt, undefined);
+  assert.equal((await repo.listAdminAuditLogs())[0]?.action, "access_codes_bulk_deleted");
+});
+
 test("lists admin tasks with user emails, timeline, and safe step costs", async () => {
   const { repo, service } = createScenario();
   await repo.createUserWithCreditAccount(
@@ -898,6 +1245,115 @@ test("admin can configure platform models exposed to users", async () => {
   );
 });
 
+test("admin saves platform provider secrets as masks and manages repository-backed profiles", async () => {
+  const { repo, service } = createScenario();
+
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+  const profile = await service.savePlatformModelProfile({
+    actorUserId: "admin_1",
+    id: "openrouter_deep",
+    providerConfigId: provider.id,
+    label: "OpenRouter Deep",
+    modelId: "anthropic/claude-sonnet-4",
+    quality: "deep",
+    visibleToUser: true,
+    status: "active",
+  });
+  const settings = await service.getSettings();
+
+  assert.equal(provider.apiKeyMask, "sk-pla...3456");
+  assert.equal(JSON.stringify(provider).includes("sk-platform-secret123456"), false);
+  assert.equal((await repo.getPlatformModelProvider(provider.id))?.encryptedApiKey, "encrypted:sk-platform-secret123456");
+  assert.equal(profile.id, "openrouter_deep");
+  assert.deepEqual(settings.platformModelProviders.map((item) => ({
+    id: item.id,
+    provider: item.provider,
+    apiKeyMask: item.apiKeyMask,
+  })), [
+    {
+      id: provider.id,
+      provider: "openai_compatible",
+      apiKeyMask: "sk-pla...3456",
+    },
+  ]);
+  assert.deepEqual(settings.platformModels.enabledModelProfileIds, [
+    "openrouter_deep",
+  ]);
+  assert.equal(settings.platformModels.available[0]?.source, "admin");
+  assert.equal(settings.platformModels.available[0]?.modelId, "anthropic/claude-sonnet-4");
+});
+
+test("admin provider test updates masked provider status without exposing secret", async () => {
+  const { service } = createScenario();
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+
+  const tested = await service.testPlatformModelProvider({
+    actorUserId: "admin_1",
+    providerConfigId: provider.id,
+  });
+
+  assert.equal(tested.lastTestStatus, "passed");
+  assert.equal(tested.lastTestedAt, "2026-07-07T00:02:00.000Z");
+  assert.equal(JSON.stringify(tested).includes("sk-platform-secret123456"), false);
+});
+
+test("admin provider model discovery decrypts secrets without returning them", async () => {
+  const observed: unknown[] = [];
+  const { service } = createScenario({
+    discoverPlatformProviderModels: async (input) => {
+      observed.push(input);
+      return {
+        models: [
+          { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+          { id: "openai/gpt-4.1-mini", label: "GPT 4.1 Mini" },
+        ],
+      };
+    },
+  });
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+
+  const catalog = await service.listPlatformProviderModels({
+    actorUserId: "admin_1",
+    providerConfigId: provider.id,
+  });
+
+  assert.deepEqual(observed, [
+    {
+      provider: "openai_compatible",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-platform-secret123456",
+    },
+  ]);
+  assert.deepEqual(catalog, {
+    providerId: provider.id,
+    provider: "openai_compatible",
+    models: [
+      { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+      { id: "openai/gpt-4.1-mini", label: "GPT 4.1 Mini" },
+    ],
+    unsupported: false,
+  });
+  assert.equal(JSON.stringify(catalog).includes("sk-platform-secret123456"), false);
+});
+
 test("admin service reports missing users and tasks as domain errors", async () => {
   const { service } = createScenario();
 
@@ -915,7 +1371,10 @@ test("admin service reports missing users and tasks as domain errors", async () 
   );
 });
 
-function createScenario(options: { maxActiveWeight?: number } = {}): {
+function createScenario(options: {
+  maxActiveWeight?: number;
+  discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
+} = {}): {
   repo: InMemoryCommercialRepository;
   service: CommercialAdminService;
 } {
@@ -954,6 +1413,14 @@ function createScenario(options: { maxActiveWeight?: number } = {}): {
       auditService,
       workerMonitoringService,
       now: () => clock.next(),
+      createId: (prefix = "id") => ids.create(prefix),
+      hashPassword: async (password) => `hashed:${password}`,
+      secretEncryptionKey: Buffer.alloc(32, 7),
+      encryptSecret: (plaintext) => `encrypted:${plaintext}`,
+      decryptSecret: (encrypted) => encrypted.replace(/^encrypted:/, ""),
+      maskSecret: (secret) => `${secret.slice(0, 6)}...${secret.slice(-4)}`,
+      testPlatformProviderConnection: async () => ({ ok: true }),
+      discoverPlatformProviderModels: options.discoverPlatformProviderModels,
     }),
   };
 }

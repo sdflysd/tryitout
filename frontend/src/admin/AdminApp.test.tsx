@@ -6,11 +6,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 import AdminApp from "./AdminApp.js";
 import {
   AdminClientError,
+  bulkAdminAccessCodes,
+  bulkAdminUsers,
+  createAdminUser,
+  deleteAdminAccessCode,
+  deleteAdminUser,
+  disableAdminAccessCode,
+  fetchAdminAccessCodes,
+  fetchAdminModelProfiles,
+  fetchAdminModelProviders,
   fetchAdminAuditLogs,
   fetchAdminFeedback,
   fetchAdminOverview,
   fetchAdminQueue,
   fetchAdminSettings,
+  saveAdminModelProfile,
+  saveAdminModelProvider,
+  testAdminModelProvider,
+  updateAdminUser,
   updateAdminPlatformModels,
 } from "./admin-client.js";
 import type { AdminOverviewDto } from "./admin-client.js";
@@ -310,6 +323,106 @@ test("admin client saves platform model configuration with credentials", async (
   }));
 });
 
+test("admin client sends user, access-code, and model config mutation requests", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    const url = String(input);
+    if (url === "/api/admin/users") {
+      return jsonResponse({ user: makeAdminUserSummary("user_1") });
+    }
+    if (url.endsWith("/users/user_1/disable")) {
+      return jsonResponse({ user: makeAdminUserSummary("user_1", "disabled") });
+    }
+    if (url.endsWith("/users/user_1")) {
+      return jsonResponse({ user: makeAdminUserSummary("user_1", "disabled") });
+    }
+    if (url.endsWith("/users/bulk")) {
+      return jsonResponse({ result: { updatedUserIds: ["user_1"], skipped: [] } });
+    }
+    if (url.endsWith("/access-codes")) {
+      return jsonResponse({
+        accessCodes: {
+          total: 1,
+          items: [makeAccessCodeRow("code_1")],
+        },
+      });
+    }
+    if (url.endsWith("/access-codes/code_1/disable")) {
+      return jsonResponse({ accessCode: makeAccessCodeRow("code_1", "disabled") });
+    }
+    if (url.endsWith("/access-codes/code_2")) {
+      return jsonResponse({ accessCode: makeAccessCodeRow("code_2", "active", "deleted") });
+    }
+    if (url.endsWith("/access-codes/bulk")) {
+      return jsonResponse({ result: { updatedCodeIds: ["code_1"], skipped: [] } });
+    }
+    if (url.endsWith("/model-providers") && (init?.method ?? "GET") === "GET") {
+      return jsonResponse({ providers: [makeModelProvider()] });
+    }
+    if (url.endsWith("/model-providers")) {
+      return jsonResponse({ provider: makeModelProvider() });
+    }
+    if (url.endsWith("/model-providers/provider_1/test")) {
+      return jsonResponse({ provider: { ...makeModelProvider(), lastTestStatus: "passed" } });
+    }
+    if (url.endsWith("/model-profiles") && (init?.method ?? "GET") === "GET") {
+      return jsonResponse({ profiles: [makeModelProfile()] });
+    }
+    if (url.endsWith("/model-profiles")) {
+      return jsonResponse({ profile: makeModelProfile() });
+    }
+    return jsonResponse({ profile: { ...makeModelProfile(), visibleToUser: false } });
+  };
+
+  await createAdminUser({
+    email: "user@example.test",
+    password: "temporary-secret",
+    reason: "manual create",
+  }, fetchImpl as typeof fetch);
+  await updateAdminUser("user_1", { status: "disabled", reason: "risk" }, fetchImpl as typeof fetch);
+  await deleteAdminUser("user_1", "offboard", fetchImpl as typeof fetch);
+  await bulkAdminUsers({ userIds: ["user_1"], operation: "disable", reason: "risk" }, fetchImpl as typeof fetch);
+  await fetchAdminAccessCodes(fetchImpl as typeof fetch);
+  await disableAdminAccessCode("code_1", "risk", fetchImpl as typeof fetch);
+  await deleteAdminAccessCode("code_2", "void", fetchImpl as typeof fetch);
+  await bulkAdminAccessCodes({ accessCodeIds: ["code_1"], operation: "delete", reason: "cleanup" }, fetchImpl as typeof fetch);
+  await fetchAdminModelProviders(fetchImpl as typeof fetch);
+  await saveAdminModelProvider({
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    apiKey: "sk-secret",
+  }, fetchImpl as typeof fetch);
+  await testAdminModelProvider("provider_1", fetchImpl as typeof fetch);
+  await fetchAdminModelProfiles(fetchImpl as typeof fetch);
+  await saveAdminModelProfile(makeModelProfile(), fetchImpl as typeof fetch);
+  await saveAdminModelProfile({ ...makeModelProfile(), source: "admin", visibleToUser: false }, fetchImpl as typeof fetch);
+
+  assert.deepEqual(
+    calls.map((call) => ({
+      input: String(call.input),
+      method: call.init?.method ?? "GET",
+      credentials: call.init?.credentials,
+    })),
+    [
+      { input: "/api/admin/users", method: "POST", credentials: "include" },
+      { input: "/api/admin/users/user_1/disable", method: "POST", credentials: "include" },
+      { input: "/api/admin/users/user_1", method: "DELETE", credentials: "include" },
+      { input: "/api/admin/users/bulk", method: "POST", credentials: "include" },
+      { input: "/api/admin/access-codes", method: "GET", credentials: "include" },
+      { input: "/api/admin/access-codes/code_1/disable", method: "POST", credentials: "include" },
+      { input: "/api/admin/access-codes/code_2", method: "DELETE", credentials: "include" },
+      { input: "/api/admin/access-codes/bulk", method: "POST", credentials: "include" },
+      { input: "/api/admin/model-providers", method: "GET", credentials: "include" },
+      { input: "/api/admin/model-providers", method: "POST", credentials: "include" },
+      { input: "/api/admin/model-providers/provider_1/test", method: "POST", credentials: "include" },
+      { input: "/api/admin/model-profiles", method: "GET", credentials: "include" },
+      { input: "/api/admin/model-profiles", method: "POST", credentials: "include" },
+      { input: "/api/admin/model-profiles/openrouter_balanced", method: "PATCH", credentials: "include" },
+    ],
+  );
+});
+
 function makeOverview(): AdminOverviewDto {
   return {
     users: {
@@ -358,6 +471,64 @@ function makeOverview(): AdminOverviewDto {
       expired: 0,
     },
   };
+}
+
+function makeAdminUserSummary(id: string, status: "active" | "disabled" | "deleted" = "active") {
+  return {
+    id,
+    email: `${id}@example.test`,
+    emailNormalized: `${id}@example.test`,
+    role: "user",
+    tier: "basic",
+    status,
+    features: [],
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    taskSummary: { total: 0, completed: 0, failed: 0, active: 0 },
+  };
+}
+
+function makeAccessCodeRow(
+  id: string,
+  status: "active" | "redeemed" | "disabled" | "expired" = "active",
+  deletedAt?: string,
+) {
+  return {
+    id,
+    batchId: "batch_1",
+    batchName: "Batch",
+    codeMask: "TIO-****-****-0001",
+    status,
+    credits: 10,
+    features: [],
+    deletedAt,
+    createdAt: "2026-07-07T00:00:00.000Z",
+  };
+}
+
+function makeModelProvider() {
+  return {
+    id: "provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    apiKeyMask: "sk-***",
+    status: "active",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  };
+}
+
+function makeModelProfile() {
+  return {
+    id: "openrouter_balanced",
+    providerConfigId: "provider_1",
+    label: "OpenRouter Balanced",
+    providerLabel: "OpenRouter",
+    modelId: "vendor/balanced",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+  } as const;
 }
 
 function jsonResponse(body: unknown): Response {

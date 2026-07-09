@@ -9,6 +9,12 @@ import type {
   UserTier,
 } from "../../contracts/commercial.js";
 import type {
+  AiProviderType,
+  ModelCapabilities,
+  ModelLimits,
+  ModelQuality,
+} from "../ai/types.js";
+import type {
   InteractionMode,
   ModelSelection,
   Report,
@@ -106,6 +112,7 @@ export interface AccessCodeRecord {
   redeemedByUserId?: string;
   redeemedAt?: string;
   disabledAt?: string;
+  deletedAt?: string;
   createdAt: string;
 }
 
@@ -236,6 +243,44 @@ export interface UserModelProviderRecord {
   status: UserModelProviderStatus;
   lastTestedAt?: string;
   lastTestStatus?: UserModelProviderTestStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PlatformModelProviderStatus = "active" | "disabled";
+export type PlatformModelProviderTestStatus = "passed" | "failed";
+export type PlatformModelProfileStatus = "active" | "disabled" | "deprecated";
+
+export interface PlatformModelProviderRecord {
+  id: string;
+  provider: Extract<AiProviderType, "gemini" | "anthropic" | "openai_compatible">;
+  displayName: string;
+  baseUrl?: string;
+  encryptedApiKey: string;
+  apiKeyMask: string;
+  status: PlatformModelProviderStatus;
+  lastTestedAt?: string;
+  lastTestStatus?: PlatformModelProviderTestStatus;
+  lastModelSyncAt?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlatformModelProfileRecord {
+  id: string;
+  providerConfigId: string;
+  label: string;
+  providerLabel?: string;
+  modelId: string;
+  quality: ModelQuality;
+  visibleToUser: boolean;
+  status: PlatformModelProfileStatus;
+  capabilities?: Partial<ModelCapabilities>;
+  limits?: Partial<ModelLimits>;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   createdAt: string;
   updatedAt: string;
 }

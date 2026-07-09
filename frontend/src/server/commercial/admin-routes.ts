@@ -3,24 +3,40 @@ import type express from "express";
 import type { CommercialServices } from "./commercial-services.js";
 import {
   handleAdjustAdminUserCreditsRequest,
+  handleBulkAdminAccessCodesRequest,
+  handleBulkAdminUsersRequest,
   handleCreateAdminAccessCodeBatchRequest,
+  handleCreateAdminUserRequest,
+  handleDeleteAdminAccessCodeRequest,
+  handleDeleteAdminUserRequest,
+  handleDisableAdminAccessCodeRequest,
   handleDisableAdminAccessCodeBatchRequest,
+  handleDisableAdminUserRequest,
   handleGetAdminCostSummaryRequest,
   handleGetAdminCreditOperationsRequest,
   handleGetAdminFeedbackRequest,
   handleGetAdminOverviewRequest,
   handleGetAdminQueueRequest,
   handleGetAdminSettingsRequest,
+  handleListAdminAccessCodesRequest,
   handleListAdminAccessCodeBatchesRequest,
   handleListAdminAuditLogsRequest,
+  handleListAdminModelProfilesRequest,
+  handleListAdminModelProvidersRequest,
+  handleListAdminProviderModelsRequest,
   handleListAdminTasksRequest,
   handleListAdminUsersRequest,
+  handleRestoreAdminUserRequest,
+  handleSaveAdminModelProfileRequest,
+  handleSaveAdminModelProviderRequest,
+  handleTestAdminModelProviderRequest,
+  handleUpdateAdminUserRequest,
   handleUpdateAdminPlatformModelsRequest,
   type CommercialApiResult,
 } from "./commercial-api.js";
 
 export function registerCommercialAdminRoutes(
-  app: Pick<express.Express, "get" | "post">,
+  app: Pick<express.Express, "delete" | "get" | "patch" | "post">,
   services: CommercialServices,
 ): void {
   app.get("/api/admin/overview", async (req, res) => {
@@ -36,6 +52,110 @@ export function registerCommercialAdminRoutes(
       return sendDisabled(res);
     }
     const result = await handleListAdminUsersRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/users", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleCreateAdminUserRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.patch("/api/admin/users/:id", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleUpdateAdminUserRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/users/:id/disable", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleDisableAdminUserRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/users/:id/restore", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleRestoreAdminUserRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.delete("/api/admin/users/:id", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleDeleteAdminUserRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/users/bulk", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleBulkAdminUsersRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/access-codes", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminAccessCodesRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/access-codes/:id/disable", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleDisableAdminAccessCodeRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.delete("/api/admin/access-codes/:id", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleDeleteAdminAccessCodeRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/access-codes/bulk", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleBulkAdminAccessCodesRequest(toCommercialRequest(req), services);
     sendCommercialApiResult(res, result);
   });
 
@@ -131,6 +251,74 @@ export function registerCommercialAdminRoutes(
     const result = await handleUpdateAdminPlatformModelsRequest(
       toCommercialRequest(req),
       services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/model-providers", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminModelProvidersRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/model-providers", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleSaveAdminModelProviderRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/model-providers/:id/models", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminProviderModelsRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/model-providers/:id/test", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleTestAdminModelProviderRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.get("/api/admin/model-profiles", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleListAdminModelProfilesRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/model-profiles", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleSaveAdminModelProfileRequest(toCommercialRequest(req), services);
+    sendCommercialApiResult(res, result);
+  });
+
+  app.patch("/api/admin/model-profiles/:id", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleSaveAdminModelProfileRequest(
+      toCommercialRequest(req),
+      services,
+      req.params.id,
     );
     sendCommercialApiResult(res, result);
   });

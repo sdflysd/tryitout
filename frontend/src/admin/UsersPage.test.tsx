@@ -6,9 +6,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import UsersPage from "./UsersPage.js";
 import {
   adjustAdminUserCredits,
+  bulkAdminUsers,
+  createAdminUser,
   type AdminCreditOperationsDto,
   fetchAdminCreditOperations,
   fetchAdminUsers,
+  updateAdminUser,
 } from "./admin-client.js";
 import type { AdminUserRowDto } from "./admin-client.js";
 
@@ -23,6 +26,7 @@ test("UsersPage renders user, credit, redemption, task, and activity controls", 
   for (const text of [
     "Email",
     "Status",
+    "Role",
     "Tier",
     "Available",
     "Frozen",
@@ -32,8 +36,14 @@ test("UsersPage renders user, credit, redemption, task, and activity controls", 
     "Failed",
     "Recent Activity",
     "alice@example.test",
-    "Credit Adjustment",
+    "Create User",
+    "Bulk Operations",
+    "Available Credit Adjustment",
+    "Duplicate-prevention operation ID",
     "Confirm adjustment",
+    "Disable",
+    "Edit",
+    "Delete",
   ]) {
     assert.match(html, new RegExp(text));
   }
@@ -59,16 +69,40 @@ test("UsersPage renders Chinese operator copy", () => {
     "用户运营",
     "邮箱",
     "状态",
+    "角色",
     "等级",
     "可用额度",
     "冻结额度",
     "已兑换批次",
     "近期活动",
-    "额度调整",
+    "创建用户",
+    "批量操作",
+    "可用额度调整",
+    "防重复操作 ID",
     "确认调整",
   ]) {
     assert.match(html, new RegExp(text));
   }
+});
+
+test("UsersPage renders selection and user mutation controls", () => {
+  const html = renderToStaticMarkup(
+    <UsersPage users={[makeUser(), makeUser({
+      id: "user_2",
+      email: "bob@example.test",
+      status: "disabled",
+      role: "admin",
+    })]} language="en-US" />,
+  );
+
+  assert.match(html, /aria-label="Select alice@example.test"/);
+  assert.match(html, /aria-label="Select bob@example.test"/);
+  assert.match(html, /name="bulk-operation"/);
+  assert.match(html, /name="create-email"/);
+  assert.match(html, /name="edit-role"/);
+  assert.match(html, /name="edit-tier"/);
+  assert.match(html, /Projected available balance/);
+  assert.match(html, /Frozen credits are shown for context and are not changed here/);
 });
 
 test("admin client adjusts user credits through the admin endpoint", async () => {
@@ -122,6 +156,81 @@ test("admin client adjusts user credits through the admin endpoint", async () =>
     reason: "paid support grant",
     idempotencyKey: "support-ticket-1",
   });
+});
+
+test("admin client creates, updates, and bulk-updates users", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    if (String(input).endsWith("/bulk")) {
+      return jsonResponse({
+        result: {
+          updatedUserIds: ["user_1"],
+          skipped: [],
+        },
+      });
+    }
+    return jsonResponse({
+      user: {
+        id: "user_1",
+        email: "alice@example.test",
+        emailNormalized: "alice@example.test",
+        role: "admin",
+        tier: "business",
+        status: "active",
+        features: ["admin_ops"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+        creditAccount: {
+          balance: 10,
+          frozenCredits: 0,
+          totalRedeemed: 10,
+          totalCaptured: 0,
+          updatedAt: "2026-07-07T00:00:00.000Z",
+        },
+        taskSummary: {
+          total: 0,
+          completed: 0,
+          failed: 0,
+          active: 0,
+        },
+      },
+    });
+  };
+
+  await createAdminUser({
+    email: "alice@example.test",
+    password: "temporary-secret",
+    role: "admin",
+    tier: "business",
+    features: ["admin_ops"],
+    initialCredits: 10,
+    reason: "bootstrap",
+  }, fetchImpl as typeof fetch);
+  await updateAdminUser("user_1", {
+    role: "user",
+    tier: "pro",
+    features: ["priority_queue"],
+    reason: "support update",
+  }, fetchImpl as typeof fetch);
+  await bulkAdminUsers({
+    userIds: ["user_1"],
+    operation: "disable",
+    reason: "risk review",
+  }, fetchImpl as typeof fetch);
+
+  assert.deepEqual(
+    calls.map((call) => ({
+      input: call.input,
+      method: call.init?.method,
+      credentials: call.init?.credentials,
+    })),
+    [
+      { input: "/api/admin/users", method: "POST", credentials: "include" },
+      { input: "/api/admin/users/user_1", method: "PATCH", credentials: "include" },
+      { input: "/api/admin/users/bulk", method: "POST", credentials: "include" },
+    ],
+  );
 });
 
 test("admin client fetches users and credit operations with credentials", async () => {
@@ -194,12 +303,14 @@ test("admin client fetches users and credit operations with credentials", async 
   );
 });
 
-function makeUser(): AdminUserRowDto {
+function makeUser(overrides: Partial<AdminUserRowDto> = {}): AdminUserRowDto {
   return {
     id: "user_1",
     email: "alice@example.test",
     status: "active",
+    role: "user",
     tier: "pro",
+    features: ["priority_queue"],
     availableCredits: 42,
     frozenCredits: 3,
     redeemedBatchCount: 2,
@@ -207,6 +318,7 @@ function makeUser(): AdminUserRowDto {
     completedTaskCount: 8,
     failedTaskCount: 2,
     recentActivityAt: "2026-07-07T00:10:00.000Z",
+    ...overrides,
   };
 }
 

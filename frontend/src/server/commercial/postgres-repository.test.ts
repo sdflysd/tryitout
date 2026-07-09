@@ -321,10 +321,13 @@ test("postgres repository maps admin list views for users, accounts, ledger, cod
       redeemed_by_user_id: "user_1",
       redeemed_at: "redeemed",
       disabled_at: null,
+      deleted_at: null,
       created_at: "created",
     },
   ]);
   assert.equal((await codeRepo.repo.listAccessCodes())[0]?.redeemedByUserId, "user_1");
+  assert.match(codeRepo.queries[0].sql, /deleted_at/i);
+  assert.match(codeRepo.queries[0].sql, /where deleted_at is null/i);
   assert.match(codeRepo.queries[0].sql, /from access_codes/i);
 
   const taskRepo = createRowRepository([
@@ -1842,6 +1845,7 @@ test("postgres repository maps access codes writes and reads", async () => {
     "user_1",
     "redeemed",
     "disabled",
+    null,
     "created",
   ]);
   assert.deepEqual(parsedJsonParam(writeQueries[0].params, 7), [
@@ -2081,6 +2085,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
       redeemedByUserId: null,
       redeemedAt: null,
       disabledAt: null,
+      deletedAt: null,
       createdAt: "created",
     },
     {
@@ -2096,6 +2101,7 @@ test("postgres repository creates access code batch and codes in one CTE query",
       redeemedByUserId: null,
       redeemedAt: null,
       disabledAt: null,
+      deletedAt: null,
       createdAt: "created",
     },
   ]);
@@ -2412,6 +2418,52 @@ test("postgres repository disables single access code with audit in one CTE quer
   ]);
 });
 
+test("postgres repository soft-deletes single unredeemed access code with audit", async () => {
+  const { repo, queries } = createRowRepository([
+    {
+      id: "code_1",
+      batch_id: "batch_1",
+      code_hash: "hash_1",
+      code_mask: "TEST-****-001",
+      status: "active",
+      credits: 10,
+      tier: null,
+      features: [],
+      expires_at: null,
+      redeemed_by_user_id: null,
+      redeemed_at: null,
+      disabled_at: null,
+      deleted_at: "deleted",
+      created_at: "created",
+    },
+  ]);
+
+  const result = await repo.softDeleteAccessCodeWithAudit("code_1", "deleted", {
+    id: "audit_1",
+    actorUserId: "admin_1",
+    action: "access_code_deleted",
+    targetType: "access_code",
+    targetId: "code_1",
+    metadata: { reason: "voided" },
+    createdAt: "deleted",
+  });
+
+  assert.equal(result?.deletedAt, "deleted");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /with updated_code as/i);
+  assert.match(queries[0].sql, /update access_codes/i);
+  assert.match(queries[0].sql, /set deleted_at = coalesce\(deleted_at, \$2\)/i);
+  assert.match(queries[0].sql, /redeemed_at is null/i);
+  assert.match(queries[0].sql, /status <> 'redeemed'/i);
+  assert.match(queries[0].sql, /insert into admin_audit_logs/i);
+  assert.deepEqual(queries[0].params?.slice(0, 4), [
+    "code_1",
+    "deleted",
+    "audit_1",
+    "admin_1",
+  ]);
+});
+
 test("postgres repository disables access code batch with audit and actual disabled count", async () => {
   const { repo, queries } = createRowRepository([
     {
@@ -2677,6 +2729,161 @@ test("postgres repository maps model provider writes and reads", async () => {
     },
   ]);
   assert.deepEqual(readQueries[0].params, ["user_1"]);
+});
+
+test("postgres repository maps platform model provider writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    lastTestedAt: "tested",
+    lastTestStatus: "passed",
+    lastModelSyncAt: "synced",
+    createdByUserId: "admin_1",
+    updatedByUserId: "admin_2",
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into platform_model_providers/i);
+  assert.match(writeQueries[0].sql, /on conflict \(id\) do update/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "platform_provider_1",
+    "openai_compatible",
+    "OpenRouter",
+    "https://openrouter.example/api/v1",
+    "encrypted",
+    "sk-****",
+    "active",
+    "tested",
+    "passed",
+    "synced",
+    "admin_1",
+    "admin_2",
+    "created",
+    "updated",
+  ]);
+
+  const { repo: readRepo, queries: readQueries } = createRowRepository([
+    {
+      id: "platform_provider_1",
+      provider: "openai_compatible",
+      display_name: "OpenRouter",
+      base_url: "https://openrouter.example/api/v1",
+      encrypted_api_key: "encrypted",
+      api_key_mask: "sk-****",
+      status: "disabled",
+      last_tested_at: new Date("2026-07-07T00:00:00.000Z"),
+      last_test_status: "failed",
+      last_model_sync_at: null,
+      created_by_user_id: "admin_1",
+      updated_by_user_id: null,
+      created_at: "created",
+      updated_at: new Date("2026-07-07T00:01:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.listPlatformModelProviders(), [
+    {
+      id: "platform_provider_1",
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      encryptedApiKey: "encrypted",
+      apiKeyMask: "sk-****",
+      status: "disabled",
+      lastTestedAt: "2026-07-07T00:00:00.000Z",
+      lastTestStatus: "failed",
+      createdByUserId: "admin_1",
+      createdAt: "created",
+      updatedAt: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+  assert.match(readQueries[0].sql, /from platform_model_providers/i);
+  assert.match(readQueries[0].sql, /order by created_at desc/i);
+});
+
+test("postgres repository maps platform model profile writes and reads", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.savePlatformModelProfile({
+    id: "profile_1",
+    providerConfigId: "platform_provider_1",
+    label: "Balanced",
+    providerLabel: "OpenRouter",
+    modelId: "vendor/model-balanced",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    capabilities: { supportsVision: true },
+    limits: { maxInputChars: 128000 },
+    createdByUserId: "admin_1",
+    updatedByUserId: "admin_2",
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into platform_model_profiles/i);
+  assert.match(writeQueries[0].sql, /on conflict \(id\) do update/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "profile_1",
+    "platform_provider_1",
+    "Balanced",
+    "OpenRouter",
+    "vendor/model-balanced",
+    "balanced",
+    true,
+    "active",
+    JSON.stringify({ supportsVision: true }),
+    JSON.stringify({ maxInputChars: 128000 }),
+    "admin_1",
+    "admin_2",
+    "created",
+    "updated",
+  ]);
+
+  const { repo: readRepo, queries: readQueries } = createRowRepository([
+    {
+      id: "profile_1",
+      provider_config_id: "platform_provider_1",
+      label: "Balanced",
+      provider_label: "OpenRouter",
+      model_id: "vendor/model-balanced",
+      quality: "balanced",
+      visible_to_user: true,
+      status: "active",
+      capabilities: { supportsVision: true },
+      limits: { maxInputChars: 128000 },
+      created_by_user_id: "admin_1",
+      updated_by_user_id: null,
+      created_at: "created",
+      updated_at: new Date("2026-07-07T00:01:00.000Z"),
+    },
+  ]);
+
+  assert.deepEqual(await readRepo.listPlatformModelProfiles(), [
+    {
+      id: "profile_1",
+      providerConfigId: "platform_provider_1",
+      label: "Balanced",
+      providerLabel: "OpenRouter",
+      modelId: "vendor/model-balanced",
+      quality: "balanced",
+      visibleToUser: true,
+      status: "active",
+      capabilities: { supportsVision: true },
+      limits: { maxInputChars: 128000 },
+      createdByUserId: "admin_1",
+      createdAt: "created",
+      updatedAt: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+  assert.match(readQueries[0].sql, /from platform_model_profiles/i);
+  assert.match(readQueries[0].sql, /order by created_at desc/i);
 });
 
 test("postgres repository maps system setting writes and reads", async () => {

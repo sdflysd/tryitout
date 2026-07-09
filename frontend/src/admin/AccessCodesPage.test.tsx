@@ -8,21 +8,33 @@ import AccessCodesPage, {
 } from "./AccessCodesPage.js";
 import {
   AdminClientError,
+  bulkAdminAccessCodes,
   createAdminAccessCodeBatch,
+  deleteAdminAccessCode,
+  disableAdminAccessCode,
   disableAdminAccessCodeBatch,
+  fetchAdminAccessCodes,
   fetchAdminAccessCodeBatches,
 } from "./admin-client.js";
 import type {
   AdminAccessCodeBatchDto,
+  AdminAccessCodeRowDto,
   AdminCreateAccessCodeBatchResultDto,
 } from "./admin-client.js";
 
-test("AccessCodesPage renders batch operating columns with campaign context", () => {
+test("AccessCodesPage renders creation first, code inventory, and batch summary", () => {
   const html = renderToStaticMarkup(
-    <AccessCodesPage initialBatches={[makeBatch()]} language="en-US" />,
+    <AccessCodesPage initialBatches={[makeBatch()]} initialAccessCodes={[makeAccessCode()]} language="en-US" />,
   );
 
+  assert.ok(html.indexOf("Create Campaign Batch") < html.indexOf("Code Inventory"));
+  assert.ok(html.indexOf("Code Inventory") < html.indexOf("Batch Summary"));
   for (const text of [
+    "Code Inventory",
+    "Code Mask",
+    "Batch",
+    "Redeemed User",
+    "Bulk Action",
     "Batch Name",
     "Source",
     "Credits",
@@ -32,21 +44,25 @@ test("AccessCodesPage renders batch operating columns with campaign context", ()
     "Redemption Rate",
     "Status",
     "Founding Customers",
+    "TIO-****-****-JK23",
+    "alice@example.test",
     "sales-led",
     "priority_queue",
     "37.50%",
   ]) {
-    assert.match(html, new RegExp(text));
+    assert.ok(html.includes(text), `Expected page markup to include ${text}`);
   }
 });
 
 test("AccessCodesPage renders Chinese operator copy", () => {
   const html = renderToStaticMarkup(
-    <AccessCodesPage initialBatches={[makeBatch()]} language="zh-CN" />,
+    <AccessCodesPage initialBatches={[makeBatch()]} initialAccessCodes={[makeAccessCode()]} language="zh-CN" />,
   );
 
   for (const text of [
     "访问码运营",
+    "单码库存",
+    "卡密码",
     "批次名称",
     "来源",
     "额度",
@@ -125,6 +141,22 @@ test("AccessCodesPage shows raw creation results only in the copy panel", () => 
   assert.doesNotMatch(html, /hash_/);
 });
 
+test("AccessCodesPage renders individual code actions and selection controls", () => {
+  const html = renderToStaticMarkup(
+    <AccessCodesPage
+      initialBatches={[makeBatch()]}
+      initialAccessCodes={[makeAccessCode(), makeAccessCode({ id: "code_2", codeMask: "TIO-****-****-JK24", status: "disabled" })]}
+      language="en-US"
+    />,
+  );
+
+  assert.match(html, /aria-label="Select TIO-\*\*\*\*-\*\*\*\*-JK23"/);
+  assert.match(html, /name="access-code-bulk-operation"/);
+  assert.match(html, /Disable/);
+  assert.match(html, /Delete/);
+  assert.doesNotMatch(html, /rawCode/);
+});
+
 test("admin client creates and disables access-code batches through admin endpoints", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
@@ -172,6 +204,39 @@ test("admin client creates and disables access-code batches through admin endpoi
         method: "POST",
         credentials: "include",
       },
+    ],
+  );
+});
+
+test("admin client manages individual access codes through admin endpoints", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    if (String(input).endsWith("/bulk")) {
+      return jsonResponse({ result: { updatedCodeIds: ["code_1"], skipped: [] } });
+    }
+    if (String(input).endsWith("/disable")) {
+      return jsonResponse({ accessCode: { ...makeAccessCode(), status: "disabled", disabledAt: "2026-07-08T00:00:00.000Z" } });
+    }
+    if (init?.method === "DELETE") {
+      return jsonResponse({ accessCode: { ...makeAccessCode(), deletedAt: "2026-07-08T00:00:00.000Z" } });
+    }
+    return jsonResponse({ accessCodes: { total: 1, items: [makeAccessCode()] } });
+  };
+
+  const listed = await fetchAdminAccessCodes(fetchImpl as typeof fetch);
+  await disableAdminAccessCode("code_1", "risk", fetchImpl as typeof fetch);
+  await deleteAdminAccessCode("code_1", "void", fetchImpl as typeof fetch);
+  await bulkAdminAccessCodes({ accessCodeIds: ["code_1"], operation: "delete", reason: "cleanup" }, fetchImpl as typeof fetch);
+
+  assert.equal(listed.items[0]?.codeMask, "TIO-****-****-JK23");
+  assert.deepEqual(
+    calls.map((call) => ({ input: call.input, method: call.init?.method, credentials: call.init?.credentials })),
+    [
+      { input: "/api/admin/access-codes", method: undefined, credentials: "include" },
+      { input: "/api/admin/access-codes/code_1/disable", method: "POST", credentials: "include" },
+      { input: "/api/admin/access-codes/code_1", method: "DELETE", credentials: "include" },
+      { input: "/api/admin/access-codes/bulk", method: "POST", credentials: "include" },
     ],
   );
 });
@@ -249,6 +314,25 @@ function makeCreatedBatch(): AdminCreateAccessCodeBatchResultDto {
         createdAt: "2026-07-07T00:01:00.000Z",
       },
     ],
+  };
+}
+
+function makeAccessCode(overrides: Partial<AdminAccessCodeRowDto> = {}): AdminAccessCodeRowDto {
+  return {
+    id: "code_1",
+    batchId: "batch_1",
+    batchName: "Founding Customers",
+    codeMask: "TIO-****-****-JK23",
+    status: "active",
+    credits: 25,
+    tier: "pro",
+    features: ["priority_queue"],
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    redeemedByUserId: "user_1",
+    redeemedByUserEmail: "alice@example.test",
+    redeemedAt: "2026-07-07T00:02:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
   };
 }
 
