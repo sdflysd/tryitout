@@ -14,6 +14,8 @@ import type {
   CommercialUserRecord,
   CreditLedgerEntryRecord,
   JsonObject,
+  PlatformModelProfileRecord,
+  PlatformModelProviderRecord,
   SimulationStepRunCostRecord,
   SimulationTaskRunRecord,
   SystemSettingRecord,
@@ -129,6 +131,11 @@ export interface CommercialRepository {
     disabledAt: string,
     auditLog: AdminAuditLogRecord,
   ): Promise<AccessCodeRecord | undefined>;
+  softDeleteAccessCodeWithAudit(
+    codeId: string,
+    deletedAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined>;
   disableAccessCodeBatchWithAudit(
     batchId: string,
     disabledAt: string,
@@ -174,6 +181,12 @@ export interface CommercialRepository {
   listUserFeedback(userId?: string): Promise<UserFeedbackRecord[]>;
   saveUserModelProvider(provider: UserModelProviderRecord): Promise<void>;
   listUserModelProviders(userId: string): Promise<UserModelProviderRecord[]>;
+  savePlatformModelProvider(provider: PlatformModelProviderRecord): Promise<void>;
+  getPlatformModelProvider(providerId: string): Promise<PlatformModelProviderRecord | undefined>;
+  listPlatformModelProviders(): Promise<PlatformModelProviderRecord[]>;
+  savePlatformModelProfile(profile: PlatformModelProfileRecord): Promise<void>;
+  getPlatformModelProfile(profileId: string): Promise<PlatformModelProfileRecord | undefined>;
+  listPlatformModelProfiles(): Promise<PlatformModelProfileRecord[]>;
   saveSystemSetting(setting: SystemSettingRecord): Promise<void>;
   getSystemSetting(key: string): Promise<SystemSettingRecord | undefined>;
   appendAdminAuditLog(log: AdminAuditLogRecord): Promise<void>;
@@ -199,6 +212,8 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   private readonly analyticsEvents: AnalyticsEventRecord[] = [];
   private readonly feedback: UserFeedbackRecord[] = [];
   private readonly modelProviders = new Map<string, UserModelProviderRecord>();
+  private readonly platformModelProviders = new Map<string, PlatformModelProviderRecord>();
+  private readonly platformModelProfiles = new Map<string, PlatformModelProfileRecord>();
   private readonly systemSettings = new Map<string, SystemSettingRecord>();
   private readonly auditLogs: AdminAuditLogRecord[] = [];
 
@@ -407,13 +422,15 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   }
 
   async listAccessCodes(): Promise<AccessCodeRecord[]> {
-    return [...this.accessCodes.values()].sort(sortByCreatedAtDescThenId);
+    return [...this.accessCodes.values()]
+      .filter((code) => code.deletedAt === undefined)
+      .sort(sortByCreatedAtDescThenId);
   }
 
   async listAccessCodesByBatch(batchId: string): Promise<AccessCodeRecord[]> {
-    return [...this.accessCodes.values()].filter(
-      (code) => code.batchId === batchId,
-    );
+    return [...this.accessCodes.values()]
+      .filter((code) => code.deletedAt === undefined)
+      .filter((code) => code.batchId === batchId);
   }
 
   async findAccessCodeByHash(
@@ -772,6 +789,33 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return updatedCode;
   }
 
+  async softDeleteAccessCodeWithAudit(
+    codeId: string,
+    deletedAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    if (this.auditLogs.some((log) => log.id === auditLog.id)) {
+      throw new Error("admin_audit_logs.id must be unique");
+    }
+
+    const code = this.accessCodes.get(codeId);
+    if (!code) {
+      return undefined;
+    }
+
+    if (code.redeemedAt !== undefined || code.status === "redeemed") {
+      return code;
+    }
+
+    const updatedCode = {
+      ...code,
+      deletedAt: code.deletedAt ?? deletedAt,
+    };
+    this.accessCodes.set(codeId, updatedCode);
+    appendById(this.auditLogs, auditLog, "admin_audit_logs.id");
+    return updatedCode;
+  }
+
   async disableAccessCodeBatchWithAudit(
     batchId: string,
     disabledAt: string,
@@ -995,6 +1039,44 @@ export class InMemoryCommercialRepository implements CommercialRepository {
     return [...this.modelProviders.values()].filter(
       (provider) => provider.userId === userId,
     );
+  }
+
+  async savePlatformModelProvider(
+    provider: PlatformModelProviderRecord,
+  ): Promise<void> {
+    assertUniqueById(
+      this.platformModelProviders.values(),
+      provider.id,
+      (existing) => existing.displayName === provider.displayName,
+      "platform_model_providers.displayName",
+    );
+    this.platformModelProviders.set(provider.id, provider);
+  }
+
+  async getPlatformModelProvider(
+    providerId: string,
+  ): Promise<PlatformModelProviderRecord | undefined> {
+    return this.platformModelProviders.get(providerId);
+  }
+
+  async listPlatformModelProviders(): Promise<PlatformModelProviderRecord[]> {
+    return [...this.platformModelProviders.values()].sort(sortByCreatedAtDescThenId);
+  }
+
+  async savePlatformModelProfile(
+    profile: PlatformModelProfileRecord,
+  ): Promise<void> {
+    this.platformModelProfiles.set(profile.id, profile);
+  }
+
+  async getPlatformModelProfile(
+    profileId: string,
+  ): Promise<PlatformModelProfileRecord | undefined> {
+    return this.platformModelProfiles.get(profileId);
+  }
+
+  async listPlatformModelProfiles(): Promise<PlatformModelProfileRecord[]> {
+    return [...this.platformModelProfiles.values()].sort(sortByCreatedAtDescThenId);
   }
 
   async saveSystemSetting(setting: SystemSettingRecord): Promise<void> {

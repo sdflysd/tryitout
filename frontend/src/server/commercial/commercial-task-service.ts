@@ -9,6 +9,7 @@ import {
   PLATFORM_MODEL_SETTING_KEY,
   normalizePlatformModelProfileIds,
 } from "../../model-options.js";
+import { loadRepositoryPlatformModelCatalog } from "./platform-model-runtime.js";
 import type {
   InteractionMode,
   ModelSelection,
@@ -470,6 +471,17 @@ export class CommercialTaskService {
     if (requestedProfileId === undefined) {
       return;
     }
+    const catalog = await loadRepositoryPlatformModelCatalog(this.repository);
+    if (catalog !== undefined) {
+      if (catalog.options.some((model) => model.id === requestedProfileId)) {
+        return;
+      }
+      throw new CommercialTaskServiceError(
+        "provider_not_allowed",
+        "Platform model is not enabled by admin",
+      );
+    }
+
     const setting = await this.repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
     const enabledModelProfileIds = normalizePlatformModelProfileIds(setting?.value);
     if (!enabledModelProfileIds.includes(requestedProfileId)) {

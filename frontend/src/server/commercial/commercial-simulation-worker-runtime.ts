@@ -14,6 +14,8 @@ import type {
 import { resolveInteractionMode } from "../interaction-mode.js";
 import { resolveAgentRuntimeCapabilities } from "../agent-runtime/capabilities.js";
 import type { ResolvedProviderForTask } from "./model-provider-service.js";
+import { createRepositoryPlatformGateway } from "./platform-model-runtime.js";
+import type { CommercialRepository } from "./repository.js";
 import type { SimulationQueueJob } from "./simulation-queue.js";
 import type {
   SimulationWorkerRunSimulation,
@@ -38,8 +40,10 @@ export interface CommercialWorkerRuntimeOptions {
         providerMode: SimulationQueueJob["providerMode"],
       ) => Promise<ResolvedProviderForTask>;
     };
+    repository?: CommercialRepository;
   };
   getPlatformGateway?: () => AiGateway;
+  platformSecretEncryptionKey?: Buffer | Uint8Array;
   resolveCapabilities?: () => AgentRuntimeCapabilities;
   runSimulation?: RunCommercialSimulation;
 }
@@ -108,7 +112,20 @@ async function resolveGateway(
     });
   }
 
-  return options.getPlatformGateway?.() ?? new AiGateway();
+  if (options.getPlatformGateway) {
+    return options.getPlatformGateway();
+  }
+  if (options.services.repository && options.platformSecretEncryptionKey) {
+    const repositoryGateway = await createRepositoryPlatformGateway({
+      repository: options.services.repository,
+      secretEncryptionKey: options.platformSecretEncryptionKey,
+    });
+    if (repositoryGateway !== undefined) {
+      return repositoryGateway;
+    }
+  }
+
+  return new AiGateway();
 }
 
 function toProgressStepRun(event: SimulationProgressEvent): SimulationWorkerStepRunInput {

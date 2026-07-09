@@ -16,6 +16,8 @@ import type {
   CommercialUserRecord,
   CreditLedgerEntryRecord,
   JsonObject,
+  PlatformModelProfileRecord,
+  PlatformModelProviderRecord,
   SimulationStepRunCostRecord,
   SimulationTaskRunRecord,
   SystemSettingRecord,
@@ -899,10 +901,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         insert into access_codes (
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+          created_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13
+          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14
         )
         on conflict (id) do update set
           batch_id = excluded.batch_id,
@@ -916,6 +919,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           redeemed_by_user_id = excluded.redeemed_by_user_id,
           redeemed_at = excluded.redeemed_at,
           disabled_at = excluded.disabled_at,
+          deleted_at = excluded.deleted_at,
           created_at = excluded.created_at
       `,
       [
@@ -931,6 +935,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         code.redeemedByUserId ?? null,
         code.redeemedAt ?? null,
         code.disabledAt ?? null,
+        code.deletedAt ?? null,
         code.createdAt,
       ],
     );
@@ -943,9 +948,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+          created_at
         from access_codes
         where code_hash = $1
+          and deleted_at is null
       `,
       [codeHash],
     );
@@ -959,9 +966,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+          created_at
         from access_codes
         where id = $1
+          and deleted_at is null
       `,
       [codeId],
     );
@@ -973,8 +982,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+          created_at
         from access_codes
+        where deleted_at is null
         order by created_at desc, id asc
       `,
     );
@@ -986,9 +997,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
       `
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, deleted_at,
+          created_at
         from access_codes
         where batch_id = $1
+          and deleted_at is null
         order by created_at asc, id asc
       `,
       [batchId],
@@ -1252,15 +1265,16 @@ export class PostgresCommercialRepository implements CommercialRepository {
           returning
             id, batch_id, code_hash, code_mask, status, credits, tier,
             features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, created_at
+            disabled_at, deleted_at, created_at
         ),
         target_code as (
           select
             id, batch_id, code_hash, code_mask, status, credits, tier,
             features, expires_at, redeemed_by_user_id, redeemed_at,
-            disabled_at, created_at
+            disabled_at, deleted_at, created_at
           from access_codes
           where id = $1
+            and deleted_at is null
         ),
         inserted_audit as (
           insert into admin_audit_logs (
@@ -1273,7 +1287,8 @@ export class PostgresCommercialRepository implements CommercialRepository {
         )
         select
           id, batch_id, code_hash, code_mask, status, credits, tier, features,
-          expires_at, redeemed_by_user_id, redeemed_at, disabled_at, created_at
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at,
+          deleted_at, created_at
         from updated_code
         where exists (select 1 from inserted_audit)
         union all
@@ -1282,7 +1297,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           target_code.code_mask, target_code.status, target_code.credits,
           target_code.tier, target_code.features, target_code.expires_at,
           target_code.redeemed_by_user_id, target_code.redeemed_at,
-          target_code.disabled_at, target_code.created_at
+          target_code.disabled_at, target_code.deleted_at, target_code.created_at
         from target_code
         where not exists (select 1 from updated_code)
           and exists (select 1 from inserted_audit)
@@ -1290,6 +1305,75 @@ export class PostgresCommercialRepository implements CommercialRepository {
       [
         codeId,
         disabledAt,
+        auditLog.id,
+        auditLog.actorUserId ?? null,
+        auditLog.action,
+        auditLog.targetType,
+        auditLog.targetId ?? null,
+        toJsonb(auditLog.metadata),
+        auditLog.ipHash ?? null,
+        auditLog.userAgent ?? null,
+        auditLog.createdAt,
+      ],
+    );
+
+    return mapOptional(rows[0], mapAccessCode);
+  }
+
+  async softDeleteAccessCodeWithAudit(
+    codeId: string,
+    deletedAt: string,
+    auditLog: AdminAuditLogRecord,
+  ): Promise<AccessCodeRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        with updated_code as (
+          update access_codes
+          set deleted_at = coalesce(deleted_at, $2)
+          where id = $1
+            and status <> 'redeemed'
+            and redeemed_at is null
+          returning
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, redeemed_by_user_id, redeemed_at,
+            disabled_at, deleted_at, created_at
+        ),
+        target_code as (
+          select
+            id, batch_id, code_hash, code_mask, status, credits, tier,
+            features, expires_at, redeemed_by_user_id, redeemed_at,
+            disabled_at, deleted_at, created_at
+          from access_codes
+          where id = $1
+        ),
+        inserted_audit as (
+          insert into admin_audit_logs (
+            id, actor_user_id, action, target_type, target_id, metadata,
+            ip_hash, user_agent, created_at
+          )
+          select $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11
+          from updated_code
+          returning id
+        )
+        select
+          id, batch_id, code_hash, code_mask, status, credits, tier, features,
+          expires_at, redeemed_by_user_id, redeemed_at, disabled_at,
+          deleted_at, created_at
+        from updated_code
+        where exists (select 1 from inserted_audit)
+        union all
+        select
+          target_code.id, target_code.batch_id, target_code.code_hash,
+          target_code.code_mask, target_code.status, target_code.credits,
+          target_code.tier, target_code.features, target_code.expires_at,
+          target_code.redeemed_by_user_id, target_code.redeemed_at,
+          target_code.disabled_at, target_code.deleted_at, target_code.created_at
+        from target_code
+        where not exists (select 1 from updated_code)
+      `,
+      [
+        codeId,
+        deletedAt,
         auditLog.id,
         auditLog.actorUserId ?? null,
         auditLog.action,
@@ -1923,6 +2007,162 @@ export class PostgresCommercialRepository implements CommercialRepository {
     return rows.map(mapUserModelProvider);
   }
 
+  async savePlatformModelProvider(
+    provider: PlatformModelProviderRecord,
+  ): Promise<void> {
+    await this.query(
+      `
+        insert into platform_model_providers (
+          id, provider, display_name, base_url, encrypted_api_key,
+          api_key_mask, status, last_tested_at, last_test_status,
+          last_model_sync_at, created_by_user_id, updated_by_user_id,
+          created_at, updated_at
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        )
+        on conflict (id) do update set
+          provider = excluded.provider,
+          display_name = excluded.display_name,
+          base_url = excluded.base_url,
+          encrypted_api_key = excluded.encrypted_api_key,
+          api_key_mask = excluded.api_key_mask,
+          status = excluded.status,
+          last_tested_at = excluded.last_tested_at,
+          last_test_status = excluded.last_test_status,
+          last_model_sync_at = excluded.last_model_sync_at,
+          updated_by_user_id = excluded.updated_by_user_id,
+          updated_at = excluded.updated_at
+      `,
+      [
+        provider.id,
+        provider.provider,
+        provider.displayName,
+        provider.baseUrl ?? null,
+        provider.encryptedApiKey,
+        provider.apiKeyMask,
+        provider.status,
+        provider.lastTestedAt ?? null,
+        provider.lastTestStatus ?? null,
+        provider.lastModelSyncAt ?? null,
+        provider.createdByUserId ?? null,
+        provider.updatedByUserId ?? null,
+        provider.createdAt,
+        provider.updatedAt,
+      ],
+    );
+  }
+
+  async getPlatformModelProvider(
+    providerId: string,
+  ): Promise<PlatformModelProviderRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, provider, display_name, base_url, encrypted_api_key,
+          api_key_mask, status, last_tested_at, last_test_status,
+          last_model_sync_at, created_by_user_id, updated_by_user_id,
+          created_at, updated_at
+        from platform_model_providers
+        where id = $1
+      `,
+      [providerId],
+    );
+    return mapOptional(rows[0], mapPlatformModelProvider);
+  }
+
+  async listPlatformModelProviders(): Promise<PlatformModelProviderRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, provider, display_name, base_url, encrypted_api_key,
+          api_key_mask, status, last_tested_at, last_test_status,
+          last_model_sync_at, created_by_user_id, updated_by_user_id,
+          created_at, updated_at
+        from platform_model_providers
+        order by created_at desc, id asc
+      `,
+    );
+    return rows.map(mapPlatformModelProvider);
+  }
+
+  async savePlatformModelProfile(
+    profile: PlatformModelProfileRecord,
+  ): Promise<void> {
+    await this.query(
+      `
+        insert into platform_model_profiles (
+          id, provider_config_id, label, provider_label, model_id, quality,
+          visible_to_user, status, capabilities, limits, created_by_user_id,
+          updated_by_user_id, created_at, updated_at
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12,
+          $13, $14
+        )
+        on conflict (id) do update set
+          provider_config_id = excluded.provider_config_id,
+          label = excluded.label,
+          provider_label = excluded.provider_label,
+          model_id = excluded.model_id,
+          quality = excluded.quality,
+          visible_to_user = excluded.visible_to_user,
+          status = excluded.status,
+          capabilities = excluded.capabilities,
+          limits = excluded.limits,
+          updated_by_user_id = excluded.updated_by_user_id,
+          updated_at = excluded.updated_at
+      `,
+      [
+        profile.id,
+        profile.providerConfigId,
+        profile.label,
+        profile.providerLabel ?? null,
+        profile.modelId,
+        profile.quality,
+        profile.visibleToUser,
+        profile.status,
+        toJsonb(profile.capabilities ?? {}),
+        toJsonb(profile.limits ?? {}),
+        profile.createdByUserId ?? null,
+        profile.updatedByUserId ?? null,
+        profile.createdAt,
+        profile.updatedAt,
+      ],
+    );
+  }
+
+  async getPlatformModelProfile(
+    profileId: string,
+  ): Promise<PlatformModelProfileRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, provider_config_id, label, provider_label, model_id, quality,
+          visible_to_user, status, capabilities, limits, created_by_user_id,
+          updated_by_user_id, created_at, updated_at
+        from platform_model_profiles
+        where id = $1
+      `,
+      [profileId],
+    );
+    return mapOptional(rows[0], mapPlatformModelProfile);
+  }
+
+  async listPlatformModelProfiles(): Promise<PlatformModelProfileRecord[]> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select
+          id, provider_config_id, label, provider_label, model_id, quality,
+          visible_to_user, status, capabilities, limits, created_by_user_id,
+          updated_by_user_id, created_at, updated_at
+        from platform_model_profiles
+        order by created_at desc, id asc
+      `,
+    );
+    return rows.map(mapPlatformModelProfile);
+  }
+
   async saveSystemSetting(setting: SystemSettingRecord): Promise<void> {
     await this.query(
       `
@@ -2150,6 +2390,7 @@ function toAccessCodeJson(code: AccessCodeRecord): JsonObject {
     redeemedByUserId: code.redeemedByUserId ?? null,
     redeemedAt: code.redeemedAt ?? null,
     disabledAt: code.disabledAt ?? null,
+    deletedAt: code.deletedAt ?? null,
     createdAt: code.createdAt,
   };
 }
@@ -2547,6 +2788,7 @@ function mapAccessCode(row: DbRow): AccessCodeRecord {
   assignIfDefined(record, "redeemedByUserId", optionalStringField(row, "redeemed_by_user_id", table));
   assignIfDefined(record, "redeemedAt", optionalTimestampField(row, "redeemed_at", table));
   assignIfDefined(record, "disabledAt", optionalTimestampField(row, "disabled_at", table));
+  assignIfDefined(record, "deletedAt", optionalTimestampField(row, "deleted_at", table));
   return record;
 }
 
@@ -2758,6 +3000,48 @@ function mapUserModelProvider(row: DbRow): UserModelProviderRecord {
   assignIfDefined(record, "modelDeep", optionalStringField(row, "model_deep", table));
   assignIfDefined(record, "lastTestedAt", optionalTimestampField(row, "last_tested_at", table));
   assignIfDefined(record, "lastTestStatus", optionalStringField(row, "last_test_status", table) as UserModelProviderRecord["lastTestStatus"]);
+  return record;
+}
+
+function mapPlatformModelProvider(row: DbRow): PlatformModelProviderRecord {
+  const table = "platform_model_providers";
+  const record: PlatformModelProviderRecord = {
+    id: stringField(row, "id", table),
+    provider: stringField(row, "provider", table) as PlatformModelProviderRecord["provider"],
+    displayName: stringField(row, "display_name", table),
+    encryptedApiKey: stringField(row, "encrypted_api_key", table),
+    apiKeyMask: stringField(row, "api_key_mask", table),
+    status: stringField(row, "status", table) as PlatformModelProviderRecord["status"],
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
+  };
+  assignIfDefined(record, "baseUrl", optionalStringField(row, "base_url", table));
+  assignIfDefined(record, "lastTestedAt", optionalTimestampField(row, "last_tested_at", table));
+  assignIfDefined(record, "lastTestStatus", optionalStringField(row, "last_test_status", table) as PlatformModelProviderRecord["lastTestStatus"]);
+  assignIfDefined(record, "lastModelSyncAt", optionalTimestampField(row, "last_model_sync_at", table));
+  assignIfDefined(record, "createdByUserId", optionalStringField(row, "created_by_user_id", table));
+  assignIfDefined(record, "updatedByUserId", optionalStringField(row, "updated_by_user_id", table));
+  return record;
+}
+
+function mapPlatformModelProfile(row: DbRow): PlatformModelProfileRecord {
+  const table = "platform_model_profiles";
+  const record: PlatformModelProfileRecord = {
+    id: stringField(row, "id", table),
+    providerConfigId: stringField(row, "provider_config_id", table),
+    label: stringField(row, "label", table),
+    modelId: stringField(row, "model_id", table),
+    quality: stringField(row, "quality", table) as PlatformModelProfileRecord["quality"],
+    visibleToUser: booleanField(row, "visible_to_user", table),
+    status: stringField(row, "status", table) as PlatformModelProfileRecord["status"],
+    capabilities: jsonObjectField(row, "capabilities", table),
+    limits: jsonObjectField(row, "limits", table),
+    createdAt: timestampField(row, "created_at", table),
+    updatedAt: timestampField(row, "updated_at", table),
+  };
+  assignIfDefined(record, "providerLabel", optionalStringField(row, "provider_label", table));
+  assignIfDefined(record, "createdByUserId", optionalStringField(row, "created_by_user_id", table));
+  assignIfDefined(record, "updatedByUserId", optionalStringField(row, "updated_by_user_id", table));
   return record;
 }
 

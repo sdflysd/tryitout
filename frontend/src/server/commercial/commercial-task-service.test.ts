@@ -94,6 +94,108 @@ test("platform task creation rejects models not enabled by admin", async () => {
   );
 });
 
+test("platform task creation allows active visible repository-backed profiles", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  await repo.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repo.savePlatformModelProfile({
+    id: "openrouter_balanced",
+    providerConfigId: "platform_provider_1",
+    label: "OpenRouter Balanced",
+    modelId: "vendor/balanced",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  const created = await service.createTask(makeCreateInput({
+    providerMode: "platform",
+    modelSelection: { modelProfileId: "openrouter_balanced" },
+  }));
+
+  assert.equal(created.task.status, "queued");
+  assert.deepEqual((await queue.claimNext())?.job.modelSelection, {
+    modelProfileId: "openrouter_balanced",
+  });
+});
+
+test("platform task creation rejects disabled or hidden repository-backed profiles", async () => {
+  const hidden = await createScenario({ balance: 10 });
+  await hidden.repo.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await hidden.repo.savePlatformModelProfile({
+    id: "openrouter_hidden",
+    providerConfigId: "platform_provider_1",
+    label: "OpenRouter Hidden",
+    modelId: "vendor/hidden",
+    quality: "balanced",
+    visibleToUser: false,
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  await assert.rejects(
+    hidden.service.createTask(makeCreateInput({
+      providerMode: "platform",
+      modelSelection: { modelProfileId: "openrouter_hidden" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+
+  const disabled = await createScenario({ balance: 10 });
+  await disabled.repo.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: "encrypted",
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await disabled.repo.savePlatformModelProfile({
+    id: "openrouter_disabled",
+    providerConfigId: "platform_provider_1",
+    label: "OpenRouter Disabled",
+    modelId: "vendor/disabled",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "disabled",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  await assert.rejects(
+    disabled.service.createTask(makeCreateInput({
+      providerMode: "platform",
+      modelSelection: { modelProfileId: "openrouter_disabled" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+});
+
 test("single user active task limit rejects second queued or running task", async () => {
   const { repo, service } = await createScenario({ balance: 10 });
   const first = await service.createTask(makeCreateInput({ idempotencyKey: "task-key-1" }));

@@ -25,8 +25,18 @@ import {
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleDeleteModelProviderRequest,
+  handleBulkAdminAccessCodesRequest,
+  handleBulkAdminUsersRequest,
+  handleCreateAdminUserRequest,
+  handleDeleteAdminAccessCodeRequest,
+  handleDeleteAdminUserRequest,
+  handleDisableAdminAccessCodeRequest,
   handleGetModelProviderRequest,
   handleGetPlatformModelsRequest,
+  handleListAdminAccessCodesRequest,
+  handleListAdminModelProfilesRequest,
+  handleListAdminModelProvidersRequest,
+  handleListAdminProviderModelsRequest,
   handleListAdminAccessCodeBatchesRequest,
   handleListAdminAuditLogsRequest,
   handleListAdminTasksRequest,
@@ -36,7 +46,11 @@ import {
   handleRedeemAccessCodeRequest,
   handleRegisterRequest,
   handleSaveModelProviderRequest,
+  handleSaveAdminModelProfileRequest,
+  handleSaveAdminModelProviderRequest,
   handleTestModelProviderRequest,
+  handleTestAdminModelProviderRequest,
+  handleUpdateAdminUserRequest,
   handleUpdateAdminPlatformModelsRequest,
 } from "./commercial-api.js";
 import { CommercialTaskService } from "./commercial-task-service.js";
@@ -623,6 +637,63 @@ test("admin platform model settings drive the public platform model list", async
   );
 });
 
+test("repository-backed platform profiles drive the public platform model list", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+  const savedProvider = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      status: "active",
+    }),
+    deps,
+  );
+  assert.equal("provider" in savedProvider.body, true);
+  if (!("provider" in savedProvider.body)) return;
+  await handleSaveAdminModelProfileRequest(
+    adminRequest({
+      id: "openrouter_balanced",
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Balanced",
+      modelId: "vendor/balanced",
+      quality: "balanced",
+      visibleToUser: true,
+      status: "active",
+    }),
+    deps,
+  );
+  await handleSaveAdminModelProfileRequest(
+    adminRequest({
+      id: "openrouter_hidden",
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Hidden",
+      modelId: "vendor/hidden",
+      quality: "fast",
+      visibleToUser: false,
+      status: "active",
+    }),
+    deps,
+  );
+
+  const publicModels = await handleGetPlatformModelsRequest(deps);
+
+  assert.deepEqual(publicModels.body, {
+    models: [
+      {
+        id: "openrouter_balanced",
+        label: "OpenRouter Balanced",
+        providerLabel: "OpenRouter",
+        modelId: "vendor/balanced",
+        quality: "balanced",
+      },
+    ],
+  });
+});
+
 test("admin can create a single copyable access code without exposing stored hashes", async () => {
   const deps = makeDeps();
   const adminSession = await loginAdmin(deps);
@@ -701,6 +772,338 @@ test("admin can create and disable access-code batches", async () => {
     (await deps.repository.listAccessCodes()).map((code) => code.status),
     ["disabled", "disabled"],
   );
+});
+
+test("admin user mutation endpoints create, update, delete, and bulk-disable users", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+
+  const created = await handleCreateAdminUserRequest(
+    adminRequest({
+      email: "operator@example.test",
+      password: "temporary-secret",
+      role: "admin",
+      tier: "business",
+      features: ["admin_ops", "priority_queue"],
+      initialCredits: 8,
+      reason: "ops bootstrap",
+    }),
+    deps,
+  );
+
+  assert.equal(created.status, 201);
+  assert.equal("user" in created.body, true);
+  if (!("user" in created.body)) return;
+  assert.equal(created.body.user.email, "operator@example.test");
+  assert.equal(created.body.user.role, "admin");
+  assert.equal(created.body.user.creditAccount?.balance, 8);
+  assert.equal(JSON.stringify(created.body).includes("passwordHash"), false);
+
+  const updated = await handleUpdateAdminUserRequest(
+    created.body.user.id,
+    adminRequest({
+      email: "operator-updated@example.test",
+      role: "user",
+      tier: "pro",
+      features: ["deep_mode"],
+      reason: "scope changed",
+    }),
+    deps,
+  );
+  assert.equal(updated.status, 200);
+  assert.equal("user" in updated.body, true);
+  if (!("user" in updated.body)) return;
+  assert.equal(updated.body.user.email, "operator-updated@example.test");
+  assert.deepEqual(updated.body.user.features, ["deep_mode"]);
+
+  const deleted = await handleDeleteAdminUserRequest(
+    created.body.user.id,
+    adminRequest({ reason: "offboarded" }),
+    deps,
+  );
+  assert.equal(deleted.status, 200);
+  assert.equal("user" in deleted.body, true);
+  if (!("user" in deleted.body)) return;
+  assert.equal(deleted.body.user.status, "deleted");
+
+  const bulkTarget = await handleCreateAdminUserRequest(
+    adminRequest({
+      email: "bulk-target@example.test",
+      password: "temporary-secret",
+      reason: "batch setup",
+    }),
+    deps,
+  );
+  assert.equal("user" in bulkTarget.body, true);
+  if (!("user" in bulkTarget.body)) return;
+  const bulk = await handleBulkAdminUsersRequest(
+    adminRequest({
+      userIds: [bulkTarget.body.user.id, "missing_user"],
+      operation: "disable",
+      reason: "risk review",
+    }),
+    deps,
+  );
+  assert.equal(bulk.status, 200);
+  assert.deepEqual(bulk.body, {
+    result: {
+      updatedUserIds: [bulkTarget.body.user.id],
+      skipped: [{ id: "missing_user", reason: "not_found" }],
+    },
+  });
+
+  const bulkEntitlementTarget = await handleCreateAdminUserRequest(
+    adminRequest({
+      email: "bulk-entitlement@example.test",
+      password: "temporary-secret",
+      reason: "batch setup",
+    }),
+    deps,
+  );
+  assert.equal("user" in bulkEntitlementTarget.body, true);
+  if (!("user" in bulkEntitlementTarget.body)) return;
+  const bulkEntitlements = await handleBulkAdminUsersRequest(
+    adminRequest({
+      userIds: [bulkEntitlementTarget.body.user.id],
+      operation: "update_entitlements",
+      role: "admin",
+      tier: "business",
+      features: ["admin_ops"],
+      reason: "ops migration",
+    }),
+    deps,
+  );
+  assert.equal(bulkEntitlements.status, 200);
+  assert.equal(
+    (await deps.repository.getUser(bulkEntitlementTarget.body.user.id))?.role,
+    "admin",
+  );
+  assert.equal(
+    (await deps.repository.getUser(bulkEntitlementTarget.body.user.id))?.tier,
+    "business",
+  );
+});
+
+test("admin access-code inventory endpoints list, disable, delete, and bulk-operate on individual codes", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+  await deps.repository.saveAccessCodeBatch({
+    id: "batch_inventory",
+    name: "Inventory",
+    codeCount: 3,
+    credits: 10,
+    features: [],
+    metadata: {},
+    createdAt: CREATED_AT,
+  });
+  await deps.repository.saveAccessCode({
+    id: "code_disable",
+    batchId: "batch_inventory",
+    codeHash: "hash_disable",
+    codeMask: "TIO-****-****-0001",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: CREATED_AT,
+  });
+  await deps.repository.saveAccessCode({
+    id: "code_delete",
+    batchId: "batch_inventory",
+    codeHash: "hash_delete",
+    codeMask: "TIO-****-****-0002",
+    status: "active",
+    credits: 10,
+    features: [],
+    createdAt: CREATED_AT,
+  });
+  await deps.repository.saveAccessCode({
+    id: "code_redeemed",
+    batchId: "batch_inventory",
+    codeHash: "hash_redeemed",
+    codeMask: "TIO-****-****-0003",
+    status: "redeemed",
+    credits: 10,
+    features: [],
+    redeemedByUserId: "user_1",
+    redeemedAt: CREATED_AT,
+    createdAt: CREATED_AT,
+  });
+
+  const listed = await handleListAdminAccessCodesRequest(adminRequest(), deps);
+  assert.equal(listed.status, 200);
+  assert.equal("accessCodes" in listed.body, true);
+  if (!("accessCodes" in listed.body)) return;
+  assert.equal(listed.body.accessCodes.total, 3);
+  assert.equal(JSON.stringify(listed.body).includes("hash_"), false);
+
+  const disabled = await handleDisableAdminAccessCodeRequest(
+    "code_disable",
+    adminRequest({ reason: "fraud risk" }),
+    deps,
+  );
+  const deleted = await handleDeleteAdminAccessCodeRequest(
+    "code_delete",
+    adminRequest({ reason: "void generated code" }),
+    deps,
+  );
+  const bulk = await handleBulkAdminAccessCodesRequest(
+    adminRequest({
+      accessCodeIds: ["code_redeemed", "missing_code"],
+      operation: "delete",
+      reason: "cleanup",
+    }),
+    deps,
+  );
+
+  assert.equal(disabled.status, 200);
+  assert.equal("accessCode" in disabled.body, true);
+  if (!("accessCode" in disabled.body)) return;
+  assert.equal(disabled.body.accessCode.status, "disabled");
+  assert.equal(deleted.status, 200);
+  assert.equal("accessCode" in deleted.body, true);
+  if (!("accessCode" in deleted.body)) return;
+  assert.equal(typeof deleted.body.accessCode.deletedAt, "string");
+  assert.equal(
+    (await deps.repository.listAccessCodes()).some((code) => code.id === "code_delete"),
+    false,
+  );
+  assert.deepEqual(bulk.body, {
+    result: {
+      updatedCodeIds: [],
+      skipped: [
+        { id: "code_redeemed", reason: "redeemed" },
+        { id: "missing_code", reason: "not_found" },
+      ],
+    },
+  });
+});
+
+test("admin platform model endpoints save masked providers, test them, and save profiles", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+
+  const savedProvider = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      status: "active",
+    }),
+    deps,
+  );
+
+  assert.equal(savedProvider.status, 200);
+  assert.equal("provider" in savedProvider.body, true);
+  if (!("provider" in savedProvider.body)) return;
+  assert.equal(savedProvider.body.provider.apiKeyMask, "sk-pla...1234");
+  assert.equal(JSON.stringify(savedProvider.body).includes("sk-platform-secret1234"), false);
+
+  const tested = await handleTestAdminModelProviderRequest(
+    savedProvider.body.provider.id,
+    adminRequest(),
+    deps,
+  );
+  assert.equal(tested.status, 200);
+  assert.equal("provider" in tested.body, true);
+  if (!("provider" in tested.body)) return;
+  assert.equal(tested.body.provider.lastTestStatus, "passed");
+
+  const savedProfile = await handleSaveAdminModelProfileRequest(
+    adminRequest({
+      id: "openrouter_balanced",
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Balanced",
+      modelId: "vendor/balanced",
+      quality: "balanced",
+      visibleToUser: true,
+      status: "active",
+      capabilities: { vision: true },
+      limits: { contextWindow: 128000 },
+    }),
+    deps,
+  );
+  assert.equal(savedProfile.status, 200);
+  assert.deepEqual(savedProfile.body, {
+    profile: {
+      id: "openrouter_balanced",
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Balanced",
+      providerLabel: "OpenRouter",
+      modelId: "vendor/balanced",
+      quality: "balanced",
+      source: "admin",
+      visibleToUser: true,
+      status: "active",
+    },
+  });
+
+  const providers = await handleListAdminModelProvidersRequest(adminRequest(), deps);
+  const profiles = await handleListAdminModelProfilesRequest(adminRequest(), deps);
+  assert.equal("providers" in providers.body, true);
+  assert.equal("profiles" in profiles.body, true);
+  if (!("providers" in providers.body) || !("profiles" in profiles.body)) return;
+  assert.equal(providers.body.providers.length, 1);
+  assert.equal(profiles.body.profiles[0]?.id, "openrouter_balanced");
+});
+
+test("admin can fetch provider model catalog without exposing provider secrets", async () => {
+  const deps = makeDeps({
+    discoverPlatformProviderModels: async (input) => {
+      assert.deepEqual(input, {
+        provider: "openai_compatible",
+        baseUrl: "https://openrouter.example/api/v1",
+        apiKey: "sk-platform-secret1234",
+      });
+      return {
+        models: [
+          { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+          { id: "openai/gpt-4.1-mini", label: "GPT 4.1 Mini" },
+        ],
+      };
+    },
+  });
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+  const savedProvider = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      status: "active",
+    }),
+    deps,
+  );
+  assert.equal("provider" in savedProvider.body, true);
+  if (!("provider" in savedProvider.body)) return;
+
+  const catalogResult = await handleListAdminProviderModelsRequest(
+    savedProvider.body.provider.id,
+    adminRequest(),
+    deps,
+  );
+
+  assert.equal(catalogResult.status, 200);
+  assert.deepEqual(catalogResult.body, {
+    catalog: {
+      providerId: savedProvider.body.provider.id,
+      provider: "openai_compatible",
+      models: [
+        { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+        { id: "openai/gpt-4.1-mini", label: "GPT 4.1 Mini" },
+      ],
+      unsupported: false,
+    },
+  });
+  assert.equal(JSON.stringify(catalogResult.body).includes("sk-platform-secret1234"), false);
 });
 
 test("admin can adjust user credits and list resulting audit logs", async () => {
@@ -815,7 +1218,9 @@ test("user model provider endpoints save, mask, test, and delete BYOK configurat
   assert.equal(deleted.body.provider.status, "disabled");
 });
 
-function makeDeps() {
+function makeDeps(options: {
+  discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
+} = {}) {
   const repository = new InMemoryCommercialRepository();
   const ids = new TestIds();
   const clock = new TestClock([
@@ -874,6 +1279,7 @@ function makeDeps() {
     creditService,
     auditService,
     now,
+    discoverPlatformProviderModels: options.discoverPlatformProviderModels,
   });
   const modelProviderService = new ModelProviderService({
     repository,

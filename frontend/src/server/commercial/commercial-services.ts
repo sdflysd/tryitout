@@ -41,6 +41,7 @@ export interface EnabledCommercialServices {
   workerMonitoringService: WorkerMonitoringService;
   modelProviderService: ModelProviderService;
   taskService: CommercialTaskService;
+  platformSecretEncryptionKey: Buffer;
 }
 
 export interface CommercialServicesFactoryOptions {
@@ -128,6 +129,7 @@ export function createCommercialServices(
     workerMonitoringService,
     modelProviderService,
     taskService,
+    platformSecretEncryptionKey: config.userSecretEncryptionKey,
   };
 }
 

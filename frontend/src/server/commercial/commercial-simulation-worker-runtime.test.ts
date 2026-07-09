@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createCommercialWorkerRunSimulation } from "./commercial-simulation-worker-runtime.js";
+import { createRepositoryPlatformGateway } from "./platform-model-runtime.js";
+import { encryptSecret } from "./secrets.js";
+import { InMemoryCommercialRepository } from "./repository.js";
 import type { SimulationQueueJob } from "./simulation-queue.js";
+import type { AiProviderAdapter } from "../ai/adapters/provider-adapter.js";
+import type { AiGateway } from "../ai/ai-gateway.js";
+import type { AiCallRequest, AiCallResult } from "../ai/types.js";
 import type { Report, UserInput } from "../../types.js";
 
 const CREATED_AT = "2026-07-07T00:00:00.000Z";
+const MODEL_PROVIDER_KEY = Buffer.alloc(32, 9);
 
 test("commercial worker runtime runs simulation with queued user input", async () => {
   const userInput: UserInput = {
@@ -89,6 +96,163 @@ test("commercial worker runtime passes queued model selection into simulation", 
   });
 
   assert.deepEqual(observedSelection, modelSelection);
+});
+
+test("commercial worker runtime builds a platform gateway from repository-backed model config", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await repository.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: encryptSecret("sk-platform-secret1234", MODEL_PROVIDER_KEY),
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.savePlatformModelProfile({
+    id: "openrouter_balanced",
+    providerConfigId: "platform_provider_1",
+    label: "OpenRouter Balanced",
+    modelId: "vendor/balanced",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    capabilities: {
+      maxOutputTokens: 8192,
+    },
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  let observedGateway: AiGateway | undefined;
+
+  const runSimulation = createCommercialWorkerRunSimulation({
+    job: job({ modelSelection: { modelProfileId: "openrouter_balanced" } }),
+    services: {
+      modelProviderService: {
+        resolveProviderForTask: async () => ({ mode: "platform" as const }),
+      },
+      repository,
+    },
+    platformSecretEncryptionKey: MODEL_PROVIDER_KEY,
+    resolveCapabilities: () => ({
+      providerConfigured: true,
+      deepModeAvailable: true,
+      defaultInteractionMode: "enabled",
+      fallbackPolicy: "safe_stage_fallback",
+      reason: "",
+    }),
+    runSimulation: async ({ gateway }) => {
+      observedGateway = gateway;
+      return {
+        agents: [],
+        stages: [],
+        report: makeReport(),
+      };
+    },
+  });
+
+  await runSimulation({
+    recordStepRun: async () => undefined,
+  });
+  assert.ok(observedGateway);
+  const request = observedGateway.createRequest({
+    step: "generate_agents",
+    scenarioType: "life_choice",
+    modelSelection: { modelProfileId: "openrouter_balanced" },
+    userPrompt: "{}",
+  });
+
+  assert.equal(request.modelProfile.id, "openrouter_balanced");
+  assert.equal(request.modelProfile.modelId, "vendor/balanced");
+  assert.equal(request.modelProfile.baseUrl, "https://openrouter.example/api/v1");
+});
+
+test("repository platform gateway routes same-provider profiles to their configured provider", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await repository.savePlatformModelProvider({
+    id: "platform_provider_a",
+    provider: "openai_compatible",
+    displayName: "Provider A",
+    baseUrl: "https://provider-a.example/api/v1",
+    encryptedApiKey: encryptSecret("sk-provider-a", MODEL_PROVIDER_KEY),
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.savePlatformModelProvider({
+    id: "platform_provider_b",
+    provider: "openai_compatible",
+    displayName: "Provider B",
+    baseUrl: "https://provider-b.example/api/v1",
+    encryptedApiKey: encryptSecret("sk-provider-b", MODEL_PROVIDER_KEY),
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.savePlatformModelProfile({
+    id: "provider_a_balanced",
+    providerConfigId: "platform_provider_a",
+    label: "Provider A Balanced",
+    modelId: "provider-a/model",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.savePlatformModelProfile({
+    id: "provider_b_balanced",
+    providerConfigId: "platform_provider_b",
+    label: "Provider B Balanced",
+    modelId: "provider-b/model",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  const calls: string[] = [];
+  const gateway = await createRepositoryPlatformGateway({
+    repository,
+    secretEncryptionKey: MODEL_PROVIDER_KEY,
+    createAdapter: (provider) => ({
+      provider: provider.provider,
+      generateJson: async <T>(request: AiCallRequest): Promise<AiCallResult<T>> => {
+        calls.push(`${provider.id}:${request.modelProfile.id}:${request.modelProfile.modelId}`);
+        return {
+          data: {} as T,
+          provider: provider.provider,
+          modelId: request.modelProfile.modelId,
+          modelProfileId: request.modelProfile.id,
+          latencyMs: 1,
+        };
+      },
+    }) satisfies AiProviderAdapter,
+  });
+  assert.ok(gateway);
+
+  await gateway.generateJson(gateway.createRequest({
+    step: "generate_agents",
+    scenarioType: "life_choice",
+    modelSelection: { modelProfileId: "provider_a_balanced" },
+    userPrompt: "{}",
+  }));
+  await gateway.generateJson(gateway.createRequest({
+    step: "generate_agents",
+    scenarioType: "life_choice",
+    modelSelection: { modelProfileId: "provider_b_balanced" },
+    userPrompt: "{}",
+  }));
+
+  assert.deepEqual(calls, [
+    "platform_provider_a:provider_a_balanced:provider-a/model",
+    "platform_provider_b:provider_b_balanced:provider-b/model",
+  ]);
 });
 
 test("commercial worker runtime records every simulation progress event", async () => {
