@@ -15,15 +15,26 @@ test("homepage hero uses concise decision-sandbox advertising copy", () => {
       onSelectTemplate={() => undefined}
     />,
   );
+  const heroTitleClass = html.match(/id="home-main-title" class="([^"]+)"/)?.[1] ?? "";
 
-  assert.match(html, /别急着发，别急着选/);
-  assert.match(html, /先让 AI 替你试一次后果/);
+  assert.match(html, /试一下：多智能体协作沙盘/);
+  assert.match(html, /先推演再行动/);
   assert.match(html, /AI 星图沙盘 · 30 天推演/);
   assert.match(html, /home-ambient-mesh/);
   assert.match(html, /传播级 AI 决策沙盘/);
   assert.match(html, /先模拟试一次 30 天后的风险、机会和下一步/);
   assert.match(html, /home-starmap-shell/);
   assert.match(html, /text-white/);
+  assert.match(html, /block whitespace-nowrap">试一下：多智能体协作沙盘/);
+  assert.match(heroTitleClass, /text-xl/);
+  assert.match(heroTitleClass, /font-extrabold/);
+  assert.match(heroTitleClass, /leading-\[1\.14\]/);
+  assert.match(heroTitleClass, /md:text-\[1\.95rem\]/);
+  assert.match(heroTitleClass, /lg:text-\[2\.1rem\]/);
+  assert.doesNotMatch(heroTitleClass, /text-2xl/);
+  assert.doesNotMatch(heroTitleClass, /font-black/);
+  assert.doesNotMatch(heroTitleClass, /lg:text-\[2\.8rem\]/);
+  assert.doesNotMatch(html, /别急着发，别急着选/);
   assert.doesNotMatch(html, /人生是单行道/);
   assert.doesNotMatch(html, /AI 多Agent沙盘/);
 });
@@ -45,7 +56,8 @@ test("homepage renders agent sandbox preview near the hero", () => {
   assert.match(html, /agent-sandbox-orb/);
   assert.match(html, /agent-preview-orb-stage-rail/);
   assert.match(html, /agent-preview-signal-rail/);
-  assert.match(html, /360° 立体拖拽/);
+  assert.match(html, /真实 3D/);
+  assert.doesNotMatch(html, /360° 立体拖拽/);
   assert.match(html, /目标客户/);
   assert.doesNotMatch(html, /agent-lifeform-network/);
 });
@@ -68,7 +80,8 @@ test("homepage renders the approved immersive toolbench layout", () => {
   assert.match(html, /agent-sandbox-orb/);
   assert.match(html, /data-renderer="three-webgl"/);
   assert.match(html, /data-draggable="true"/);
-  assert.match(html, /360° 立体拖拽/);
+  assert.match(html, /真实 3D/);
+  assert.doesNotMatch(html, /360° 立体拖拽/);
 });
 
 test("homepage can render English entry workflow copy", () => {

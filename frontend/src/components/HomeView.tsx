@@ -296,8 +296,8 @@ export default function HomeView({
                 {isEnglish ? "Shareable AI Decision Sandbox" : "传播级 AI 决策沙盘"}
               </div>
 
-              <h1 id="home-main-title" className="max-w-3xl text-4xl font-black leading-[1.02] tracking-tight text-white md:text-6xl lg:text-[4rem]">
-                {heroCopy.title}
+              <h1 id="home-main-title" className="max-w-3xl text-xl font-extrabold leading-[1.14] tracking-tight text-white md:text-[1.95rem] lg:text-[2.1rem]">
+                <span className="block whitespace-nowrap">{heroCopy.title}</span>
                 <br />
                 <span className="bg-gradient-to-r from-amber-200 via-orange-300 to-fuchsia-300 bg-clip-text text-transparent">
                   {heroCopy.highlight}

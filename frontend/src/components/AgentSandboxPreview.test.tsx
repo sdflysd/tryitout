@@ -43,7 +43,8 @@ test("preview sandbox can render English UI text", () => {
   assert.match(html, /Future outcomes/);
   assert.match(html, /Target Customer/);
   assert.match(html, /Days 8-15/);
-  assert.match(html, /360° orbit drag/);
+  assert.match(html, /true 3D/);
+  assert.doesNotMatch(html, /360° orbit drag/);
   assert.doesNotMatch(html, /未来后果可视化/);
 });
 

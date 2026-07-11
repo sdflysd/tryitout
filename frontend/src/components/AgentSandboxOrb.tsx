@@ -1,4 +1,4 @@
-import { Hand, Rotate3D, Sparkles } from "lucide-react";
+import { Rotate3D, Sparkles } from "lucide-react";
 import React, { useEffect, useMemo, useRef } from "react";
 import type {
   BufferGeometry,
@@ -44,6 +44,14 @@ type OrbitControlsInstance = InstanceType<OrbitControlsConstructor>;
 
 const POINT_COUNT = 144;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const ORB_AUTO_SPIN_Y = 0.0022;
+
+export function getOrbAutoMotionStep(): { spinY: number; pitchOscillationAmplitude: number } {
+  return {
+    spinY: ORB_AUTO_SPIN_Y,
+    pitchOscillationAmplitude: 0,
+  };
+}
 
 const MODE_TONE: Record<SandboxInteractionMode, {
   text: string;
@@ -358,10 +366,10 @@ export default function AgentSandboxOrb({
       window.addEventListener("resize", resize);
       cleanupCallbacks.push(() => window.removeEventListener("resize", resize));
 
+      const autoMotion = getOrbAutoMotionStep();
       const render = () => {
         if (disposed || !renderer || !orbGroup) return;
-        orbGroup.rotation.y += 0.0028;
-        orbGroup.rotation.x = Math.sin(performance.now() * 0.00045) * 0.045;
+        orbGroup.rotation.y += autoMotion.spinY;
         controls?.update();
         renderer.render(scene, camera);
         animationFrame = window.requestAnimationFrame(render);
@@ -434,11 +442,7 @@ export default function AgentSandboxOrb({
         <div className="pointer-events-none absolute inset-0 rounded-full border border-white/10 shadow-inner shadow-white/10" />
       </div>
 
-      <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className={`inline-flex min-h-8 items-center gap-2 rounded-full border ${modeTone.border} bg-black/20 px-3 text-[11px] font-black ${modeTone.text}`}>
-          <Hand className="h-3.5 w-3.5" aria-hidden="true" />
-          {isEnglish ? "360° orbit drag" : "360° 立体拖拽"}
-        </span>
+      <div className="relative z-10 mt-3 flex flex-wrap items-center justify-end gap-2">
         <span className="inline-flex min-h-8 items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 text-[11px] font-black text-white/48">
           <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
           {isEnglish ? "true 3D" : "真实 3D"} · {scenario.agents.length} agents · {POINT_COUNT} signals

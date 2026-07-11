@@ -10,8 +10,8 @@ export function getHomeHeroCopy(language: Language = DEFAULT_LANGUAGE): { title:
   }
 
   return {
-    title: "别急着发，别急着选",
-    highlight: "先让 AI 替你试一次后果",
+    title: "试一下：多智能体协作沙盘",
+    highlight: "先推演再行动",
     subtitle: "输入你的聊天、人生选择或副业想法，先模拟试一次 30 天后的风险、机会和下一步。",
   };
 }
