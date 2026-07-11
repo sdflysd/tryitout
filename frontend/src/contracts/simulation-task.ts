@@ -47,6 +47,10 @@ export interface SimulationTaskStatusResponse {
   progressPercent: number;
   recoverable: boolean;
   errorCode?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt?: string;
   updatedAt: string;
 }
 

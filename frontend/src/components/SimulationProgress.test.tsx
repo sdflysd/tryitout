@@ -58,6 +58,85 @@ test("SimulationProgress shows elapsed runtime below the progress bar", () => {
   assert.match(html, /01:05/);
 });
 
+test("SimulationProgress labels queued elapsed time as waiting time", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating
+      simulationType="life_choice"
+      elapsedMs={8 * 60 * 1000}
+      progressEvent={{
+        simulationId: "commercial_task_waiting",
+        step: "generate_agents",
+        status: "queued",
+        percent: 5,
+        message: "任务已进入商业队列，等待 worker 处理。",
+      }}
+    />,
+  );
+
+  assert.match(html, /已等待/);
+  assert.match(html, /08:00/);
+  assert.doesNotMatch(html, /已运行 08:00/);
+});
+
+test("SimulationProgress hides task cancellation until a real active task can be cancelled", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating
+      simulationType="life_choice"
+      onCancel={() => undefined}
+      progressEvent={{
+        simulationId: "commercial_task_waiting",
+        step: "generate_agents",
+        status: "queued",
+        percent: 5,
+        message: "任务已进入商业队列，等待 worker 处理。",
+      }}
+    />,
+  );
+
+  assert.doesNotMatch(html, /btn-cancel-simulation/);
+  assert.doesNotMatch(html, /取消任务/);
+});
+
+test("SimulationProgress exposes a cancel action while a task is active", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating
+      simulationType="life_choice"
+      canCancelTask
+      onCancel={() => undefined}
+      progressEvent={{
+        simulationId: "commercial_task_waiting",
+        step: "generate_agents",
+        status: "queued",
+        percent: 5,
+        message: "任务已进入商业队列，等待 worker 处理。",
+      }}
+    />,
+  );
+
+  assert.match(html, /btn-cancel-simulation/);
+  assert.match(html, /取消任务/);
+});
+
+test("SimulationProgress labels the recoverable error secondary action as task cancellation", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating={false}
+      simulationType="life_choice"
+      errorMsg="provider_timeout"
+      canResume
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+    />,
+  );
+
+  assert.match(html, /继续模拟/);
+  assert.match(html, /取消任务/);
+  assert.doesNotMatch(html, /修改输入配置/);
+});
+
 test("progress display state follows backend event percent and label", () => {
   const event: SimulationProgressEvent = {
     simulationId: "sim-progress",

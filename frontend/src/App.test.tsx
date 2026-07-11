@@ -501,6 +501,36 @@ test("commercial provider helpers gate BYOK and calculate selected credit costs"
   });
 });
 
+test("commercial active task elapsed time uses persisted queue and start timestamps", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    getCommercialTaskElapsedMs?: (
+      task: {
+        status: "queued" | "running" | "recoverable_failed" | "completed" | "failed" | "cancelled" | "paused";
+        queuedAt?: string;
+        startedAt?: string;
+        createdAt?: string;
+        updatedAt: string;
+      },
+      now?: number,
+    ) => number;
+  };
+  const now = Date.parse("2026-07-07T00:10:00.000Z");
+
+  assert.equal(appModule.getCommercialTaskElapsedMs?.({
+    status: "queued",
+    queuedAt: "2026-07-07T00:00:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:30.000Z",
+  }, now), 10 * 60 * 1000);
+  assert.equal(appModule.getCommercialTaskElapsedMs?.({
+    status: "running",
+    queuedAt: "2026-07-07T00:00:00.000Z",
+    startedAt: "2026-07-07T00:03:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:09:00.000Z",
+  }, now), 7 * 60 * 1000);
+});
+
 test("model configuration path only shows admin-enabled platform models", async () => {
   const { default: App } = await import("./App.js");
   const originalLocation = globalThis.location;

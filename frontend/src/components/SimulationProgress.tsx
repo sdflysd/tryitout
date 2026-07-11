@@ -10,6 +10,7 @@ interface SimulationProgressProps {
   simulationType: SimulationType;
   errorMsg?: string;
   canResume?: boolean;
+  canCancelTask?: boolean;
   onRetry?: () => void;
   onCancel?: () => void;
   progressEvent?: SimulationProgressEvent | null;
@@ -747,6 +748,7 @@ export default function SimulationProgress({
   simulationType,
   errorMsg,
   canResume = false,
+  canCancelTask = false,
   onRetry,
   onCancel,
   progressEvent,
@@ -771,7 +773,9 @@ export default function SimulationProgress({
   );
   const percent = displayState.percent;
   const shownElapsedMs = elapsedMs ?? liveElapsedMs;
-  const elapsedLabel = isEnglish ? "Elapsed" : "已运行";
+  const elapsedLabel = progressEvent?.status === "queued"
+    ? isEnglish ? "Waiting" : "已等待"
+    : isEnglish ? "Elapsed" : "已运行";
   const formattedElapsed = formatElapsedRuntime(shownElapsedMs);
 
   useEffect(() => {
@@ -858,7 +862,9 @@ export default function SimulationProgress({
                 onClick={onCancel}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold text-xs py-2.5 rounded-lg transition-colors cursor-pointer text-center"
               >
-                {isEnglish ? "Edit input" : "修改输入配置"}
+                {canResume
+                  ? isEnglish ? "Cancel task" : "取消任务"
+                  : isEnglish ? "Edit input" : "修改输入配置"}
               </button>
             )}
           </div>
@@ -908,10 +914,21 @@ export default function SimulationProgress({
             </div>
             <div
               id="progress-elapsed-runtime"
-              className="mt-1.5 flex justify-end font-mono text-2xs font-semibold text-white/48"
+              className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-2xs font-semibold text-white/48"
               aria-live="polite"
             >
               <span>{elapsedLabel} {formattedElapsed}</span>
+              {onCancel && canCancelTask && (
+                <button
+                  id="btn-cancel-simulation"
+                  type="button"
+                  onClick={onCancel}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-rose-300/35 bg-rose-500/10 px-3 text-xs font-bold text-rose-100 transition-colors hover:border-rose-200/60 hover:bg-rose-500/18"
+                >
+                  <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{isEnglish ? "Cancel task" : "取消任务"}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

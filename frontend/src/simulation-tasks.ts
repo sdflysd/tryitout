@@ -116,6 +116,7 @@ export async function runSimulationTaskUntilComplete(
 ): Promise<SimulationApiResponse> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const created = await createSimulationTask(request, fetchImpl);
+  options.onCreated?.(created);
 
   return pollSimulationTaskUntilComplete(created.simulationId, options);
 }
@@ -141,6 +142,7 @@ interface RunSimulationTaskOptions {
   fetchImpl?: typeof fetch;
   pollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  onCreated?: (created: CreateSimulationTaskResponse) => void;
   onProgress?: (event: SimulationProgressEvent) => void;
 }
 
@@ -196,8 +198,15 @@ function toProgressEvent(status: SimulationTaskStatusResponse): SimulationProgre
       : status.status === "completed" ? "completed" : "started",
     percent: status.progressPercent,
     message: getTaskProgressMessage(status, step),
-    createdAt: status.updatedAt,
+    createdAt: getTaskProgressTimestamp(status),
   };
+}
+
+function getTaskProgressTimestamp(status: SimulationTaskStatusResponse): string {
+  if (status.status === "queued") {
+    return status.queuedAt ?? status.createdAt ?? status.updatedAt;
+  }
+  return status.startedAt ?? status.queuedAt ?? status.createdAt ?? status.updatedAt;
 }
 
 function normalizeProgressStep(stepName: string | undefined): SimulationProgressStep {
@@ -300,6 +309,10 @@ function normalizeSimulationTaskStatusResponse(
         ? { progressMessage: task.progressMessage }
         : {}),
       ...(typeof task.errorCode === "string" ? { errorCode: task.errorCode } : {}),
+      ...(typeof task.queuedAt === "string" ? { queuedAt: task.queuedAt } : {}),
+      ...(typeof task.startedAt === "string" ? { startedAt: task.startedAt } : {}),
+      ...(typeof task.completedAt === "string" ? { completedAt: task.completedAt } : {}),
+      ...(typeof task.createdAt === "string" ? { createdAt: task.createdAt } : {}),
       updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : new Date().toISOString(),
     };
   }

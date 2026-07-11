@@ -52,7 +52,7 @@ test("BullMQ job data includes weight and idempotency key", async () => {
   });
 });
 
-test("BullMQ retry and backoff options are set", async () => {
+test("BullMQ does not auto-retry simulation jobs because task resume owns retries", async () => {
   const fakeQueue = new FakeBullQueue();
   const queue = new BullMqSimulationQueue({ queue: fakeQueue });
 
@@ -60,11 +60,7 @@ test("BullMQ retry and backoff options are set", async () => {
 
   assert.deepEqual(fakeQueue.addCalls[0]?.options, {
     jobId: "task_1",
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 1_000,
-    },
+    attempts: 1,
     priority: 7,
     removeOnComplete: 1_000,
     removeOnFail: 5_000,

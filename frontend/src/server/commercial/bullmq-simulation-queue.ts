@@ -12,10 +12,6 @@ export const BULLMQ_SIMULATION_JOB_NAME = "run-simulation-task";
 export interface BullMqSimulationJobOptions {
   jobId: string;
   attempts: number;
-  backoff: {
-    type: "exponential";
-    delay: number;
-  };
   priority: number;
   removeOnComplete: number;
   removeOnFail: number;
@@ -51,11 +47,7 @@ export class BullMqSimulationQueue implements SimulationQueue {
   async enqueue(job: SimulationQueueJob): Promise<void> {
     await this.queue.add(BULLMQ_SIMULATION_JOB_NAME, { ...job }, {
       jobId: job.taskId,
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 1_000,
-      },
+      attempts: 1,
       priority: job.priority,
       removeOnComplete: 1_000,
       removeOnFail: 5_000,

@@ -24,7 +24,10 @@ import {
   type SaveModelProviderInputDto,
 } from "./commercial-client";
 import { getSimulationCreditCost, hasCommercialFeature, type ProviderMode } from "./contracts/commercial";
-import type { CreateSimulationTaskRequest } from "./contracts/simulation-task";
+import type {
+  CreateSimulationTaskRequest,
+  SimulationTaskStatusResponse,
+} from "./contracts/simulation-task";
 import { getDeepModeUnavailableNotice } from "./components/deep-mode-copy";
 import AccountPanel from "./components/AccountPanel";
 import HomeView from "./components/HomeView";
@@ -317,6 +320,42 @@ export function buildCommercialTaskIdempotencyKey(now = Date.now()): string {
   return `simulation_${now}_${random}`;
 }
 
+type CommercialTaskElapsedInput = Pick<
+  SimulationTaskStatusResponse,
+  "status" | "queuedAt" | "startedAt" | "createdAt" | "updatedAt"
+>;
+
+export function getCommercialTaskElapsedMs(
+  task: CommercialTaskElapsedInput,
+  now = Date.now(),
+): number {
+  const startedAt = getCommercialTaskElapsedStartMs(task);
+  return startedAt === undefined ? 0 : Math.max(0, now - startedAt);
+}
+
+function getCommercialTaskElapsedStartMs(
+  task: CommercialTaskElapsedInput,
+): number | undefined {
+  return parseIsoTimestampMs(getCommercialTaskElapsedTimestamp(task));
+}
+
+function getCommercialTaskElapsedTimestamp(
+  task: CommercialTaskElapsedInput,
+): string {
+  if (task.status === "queued") {
+    return task.queuedAt ?? task.createdAt ?? task.updatedAt;
+  }
+  return task.startedAt ?? task.queuedAt ?? task.createdAt ?? task.updatedAt;
+}
+
+function parseIsoTimestampMs(timestamp: string | undefined): number | undefined {
+  if (timestamp === undefined) {
+    return undefined;
+  }
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function canUseByokProvider({
   user,
   provider,
@@ -510,6 +549,8 @@ export default function App({
   const [commercialStartAttempted, setCommercialStartAttempted] = useState(false);
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [attachedCommercialTaskId, setAttachedCommercialTaskId] = useState<string | undefined>(undefined);
+  const [progressElapsedStartMs, setProgressElapsedStartMs] = useState<number | undefined>(undefined);
+  const [progressElapsedMs, setProgressElapsedMs] = useState<number | undefined>(undefined);
   const [activeSimulationRequest, setActiveSimulationRequest] = useState<{
     userInput: UserInput;
     deepModeRequested: boolean;
@@ -526,6 +567,20 @@ export default function App({
     }
   });
   const appCopy = APP_COPY[language];
+
+  useEffect(() => {
+    if (!isGenerating || progressElapsedStartMs === undefined) {
+      setProgressElapsedMs(undefined);
+      return;
+    }
+
+    const updateElapsed = () => {
+      setProgressElapsedMs(Math.max(0, Date.now() - progressElapsedStartMs));
+    };
+    updateElapsed();
+    const timerId = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timerId);
+  }, [isGenerating, progressElapsedStartMs]);
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -623,6 +678,15 @@ export default function App({
     setCommercialModelProvider(modelProvider.provider);
   };
 
+  const handleTaskProgressEvent = (event: SimulationProgressEvent) => {
+    setProgressEvent(event);
+    setAttachedCommercialTaskId(event.simulationId);
+    const elapsedStartMs = parseIsoTimestampMs(event.createdAt);
+    if (elapsedStartMs !== undefined) {
+      setProgressElapsedStartMs(elapsedStartMs);
+    }
+  };
+
   async function attachActiveCommercialTask() {
     const activeTask = await fetchActiveSimulationTask().catch(() => undefined);
     if (activeTask === undefined) {
@@ -636,6 +700,13 @@ export default function App({
     setSelectedType(activeTask.scenarioType);
     setErrorMsg("");
     setRecoverableSimulationId(undefined);
+    const elapsedStartMs = getCommercialTaskElapsedStartMs(activeTask) ?? Date.now();
+    setProgressElapsedStartMs(elapsedStartMs);
+    setActiveSimulationRequest({
+      userInput: { type: activeTask.scenarioType },
+      deepModeRequested: activeTask.mode === "enabled",
+      startedAt: elapsedStartMs,
+    });
     setProgressEvent({
       simulationId: activeTask.simulationId,
       step: "generate_agents",
@@ -644,23 +715,23 @@ export default function App({
       message: activeTask.status === "queued"
         ? appCopy.commercialStatus.activeQueued
         : appCopy.commercialStatus.activeStarted,
-      createdAt: activeTask.updatedAt,
+      createdAt: getCommercialTaskElapsedTimestamp(activeTask),
     });
     setIsGenerating(true);
     setView("generating");
     void watchSimulationTaskUntilComplete(activeTask.simulationId, {
-      onProgress: setProgressEvent,
+      onProgress: handleTaskProgressEvent,
     })
       .then((data) => {
         handleSimulationCompleted(data, { type: activeTask.scenarioType }, {
-          startedAt: Date.now(),
+          startedAt: elapsedStartMs,
           deepModeRequested: activeTask.mode === "enabled",
         });
         setAttachedCommercialTaskId(undefined);
       })
       .catch((error) => {
         handleSimulationFailed(error, { type: activeTask.scenarioType }, {
-          startedAt: Date.now(),
+          startedAt: elapsedStartMs,
           deepModeRequested: activeTask.mode === "enabled",
         });
         setAttachedCommercialTaskId(undefined);
@@ -814,6 +885,7 @@ export default function App({
       deepModeRequested,
       startedAt,
     });
+    setProgressElapsedStartMs(startedAt);
     void postValidationEvent({
       type: "simulation_requested",
       scenarioType: userInput.type,
@@ -837,7 +909,8 @@ export default function App({
           createIdempotencyKey: buildCommercialTaskIdempotencyKey,
         }),
         {
-          onProgress: setProgressEvent,
+          onCreated: (created) => setAttachedCommercialTaskId(created.simulationId),
+          onProgress: handleTaskProgressEvent,
         },
       );
       if (commercialUser) {
@@ -870,10 +943,11 @@ export default function App({
     setView("generating");
     scrollToTopForViewChange();
     const resumedAt = Date.now();
+    setProgressElapsedStartMs(activeSimulationRequest.startedAt);
 
     try {
       const data = await resumeSimulationTaskUntilComplete(recoverableSimulationId, {
-        onProgress: setProgressEvent,
+        onProgress: handleTaskProgressEvent,
       });
       handleSimulationCompleted(data, activeSimulationRequest.userInput, {
         startedAt: activeSimulationRequest.startedAt,
@@ -900,6 +974,7 @@ export default function App({
       setAttachedCommercialTaskId(undefined);
       setRecoverableSimulationId(undefined);
       setProgressEvent(null);
+      setProgressElapsedStartMs(undefined);
       if (commercialUser) {
         void fetchCommercialCredits()
           .then(({ account }) => setCommercialAccount(account))
@@ -909,6 +984,7 @@ export default function App({
     setView("input");
     setErrorMsg("");
     setProgressEvent(null);
+    setProgressElapsedStartMs(undefined);
     setIsGenerating(false);
   };
 
@@ -955,6 +1031,7 @@ export default function App({
     setRecoverableSimulationId(undefined);
     setIsGenerating(false);
     setProgressEvent(null);
+    setProgressElapsedStartMs(undefined);
     setView("report");
     scrollToTopForViewChange();
   };
@@ -974,8 +1051,10 @@ export default function App({
     setDeepModeNotice("");
     if (isRecoverableSimulationTaskError(err)) {
       setRecoverableSimulationId(err.simulationId);
+      setAttachedCommercialTaskId(err.simulationId);
     } else {
       setRecoverableSimulationId(undefined);
+      setAttachedCommercialTaskId(undefined);
     }
     void postValidationEvent(
       buildSimulationFailedEvent({
@@ -990,11 +1069,13 @@ export default function App({
       : "智能沙盘博弈计算超时，可能是AI模型服务器拥堵，请重试。";
     setErrorMsg(message);
     setIsGenerating(false);
+    setProgressElapsedStartMs(undefined);
   };
 
   const handleSelectHistory = (simulation: Simulation) => {
     setCommercialStartAttempted(false);
     setCurrentSimulation(simulation);
+    setProgressElapsedStartMs(undefined);
     setView("report");
     scrollToTopForViewChange();
   };
@@ -1022,6 +1103,7 @@ export default function App({
     setSelectedType(input.type);
     setTemplateIdea("");
     setTemplateInput(input);
+    setProgressElapsedStartMs(undefined);
     setView("input");
     scrollToTopForViewChange();
   };
@@ -1032,6 +1114,7 @@ export default function App({
     setTemplateIdea("");
     setTemplateInput(input);
     setShowShareCard(false);
+    setProgressElapsedStartMs(undefined);
     setView("input");
     scrollToTopForViewChange();
   };
@@ -1172,6 +1255,7 @@ export default function App({
     setCommercialStartAttempted(false);
     setTemplateIdea("");
     setTemplateInput(undefined);
+    setProgressElapsedStartMs(undefined);
     setView("home");
     scrollToTopForViewChange();
   };
@@ -1415,7 +1499,9 @@ export default function App({
                 simulationType={selectedType}
                 errorMsg={errorMsg}
                 canResume={Boolean(recoverableSimulationId)}
+                canCancelTask={Boolean(attachedCommercialTaskId)}
                 progressEvent={progressEvent}
+                elapsedMs={progressElapsedMs}
                 onRetry={() => {
                   if (recoverableSimulationId) {
                     void handleResumeSimulation();
@@ -1423,6 +1509,7 @@ export default function App({
                     setView("input");
                     setErrorMsg("");
                     setProgressEvent(null);
+                    setProgressElapsedStartMs(undefined);
                   }
                 }}
                 onCancel={() => {

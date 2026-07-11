@@ -143,6 +143,8 @@ test("getSimulationTaskStatus normalizes commercial task status responses", asyn
           providerMode: "platform",
           status: "running",
           creditCost: 3,
+          queuedAt: "2026-07-07T00:00:00.000Z",
+          startedAt: "2026-07-07T00:02:00.000Z",
           createdAt: "2026-07-07T00:00:00.000Z",
           updatedAt: "2026-07-07T00:05:00.000Z",
         },
@@ -159,6 +161,9 @@ test("getSimulationTaskStatus normalizes commercial task status responses", asyn
     status: "running",
     progressPercent: 50,
     recoverable: false,
+    queuedAt: "2026-07-07T00:00:00.000Z",
+    startedAt: "2026-07-07T00:02:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:05:00.000Z",
   });
 }
@@ -241,6 +246,7 @@ test("fetchActiveSimulationTask reads the current commercial active task", async
           providerMode: "platform",
           status: "queued",
           creditCost: 3,
+          queuedAt: "2026-07-07T00:00:00.000Z",
           createdAt: "2026-07-07T00:00:00.000Z",
           updatedAt: "2026-07-07T00:00:00.000Z",
         },
@@ -258,6 +264,8 @@ test("fetchActiveSimulationTask reads the current commercial active task", async
     status: "queued",
     progressPercent: 5,
     recoverable: false,
+    queuedAt: "2026-07-07T00:00:00.000Z",
+    createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
   });
   assert.equal(calls[0]?.url, "/api/simulation-tasks/active");
@@ -324,6 +332,7 @@ test("durable task client throws API error messages", async () => {
 
 test("runSimulationTaskUntilComplete creates, polls, emits progress, and reads final report", async () => {
   const calls: string[] = [];
+  const createdTaskIds: string[] = [];
   const statuses = [
     {
       simulationId: "sim_1",
@@ -383,11 +392,13 @@ test("runSimulationTaskUntilComplete creates, polls, emits progress, and reads f
       fetchImpl: fetchImpl as typeof fetch,
       pollIntervalMs: 0,
       sleep: async () => undefined,
+      onCreated: (created) => createdTaskIds.push(created.simulationId),
       onProgress: (event) => progress.push(event),
     },
   );
 
   assert.equal(report.id, "sim_1");
+  assert.deepEqual(createdTaskIds, ["sim_1"]);
   assert.deepEqual(calls, [
     "POST /api/simulation-tasks",
     "GET /api/simulation-tasks/sim_1/status",
