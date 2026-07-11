@@ -6,7 +6,7 @@
 
 TryItOut is a multi-agent decision sandbox for side-hustle ideas, dating conversations, and major life choices. Instead of asking one AI for advice, you drop a real situation into a small simulated world, let a team of role-based AI agents pressure-test it from different incentives and viewpoints, then get a practical report with next steps.
 
-![TryItOut desktop home](docs/assets/desktop-home-lifeform-starmap.png)
+![TryItOut desktop toolbench home](docs/assets/desktop-home-toolbench.png)
 
 ## Why It Exists
 
@@ -43,6 +43,7 @@ TryItOut is built around agent collaboration rather than single-response prompti
 ## Highlights
 
 - Multi-agent simulation engine with scenario-specific role cards, activation, composition, and safety checks.
+- Immersive homepage toolbench with a draggable 3D starmap sphere for fast scenario selection.
 - Fast staged simulation mode for local MVP usage, plus optional deep agent interaction mode.
 - Agent collaboration primitives: world events, actions, votes, arbitration, memory, validation, and cost logging.
 - Streaming progress UI for long-running simulations.
@@ -55,7 +56,7 @@ TryItOut is built around agent collaboration rather than single-response prompti
 
 | Home | Mobile | Live Collaboration |
 | --- | --- | --- |
-| ![Home](docs/assets/desktop-home-lifeform-starmap.png) | ![Mobile home](docs/assets/mobile-home-lifeform-starmap.png) | ![Progress](docs/assets/desktop-progress-active-collaboration.png) |
+| ![Home](docs/assets/desktop-home-toolbench.png) | ![Mobile home](docs/assets/mobile-home-toolbench.png) | ![Progress](docs/assets/desktop-progress-active-collaboration.png) |
 
 ## Tech Stack
 

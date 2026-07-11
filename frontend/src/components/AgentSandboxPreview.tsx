@@ -1,7 +1,6 @@
-import { Network, Radar, Sparkles, Waves } from "lucide-react";
+import { Radar, Sparkles, Waves } from "lucide-react";
 import React from "react";
 
-import AgentLifeformNetwork from "./AgentLifeformNetwork";
 import AgentSandboxOrb from "./AgentSandboxOrb";
 import { getAgentSandboxScenario } from "./agent-sandbox-model";
 import type { SimulationType } from "../types";
@@ -61,9 +60,9 @@ export default function AgentSandboxPreview({
 
   return (
     <section
-      id="agent-starmap-preview"
+      id="agent-starmap-preview-dashboard"
       aria-label={isEnglish ? "AI multi-agent sandbox preview" : "AI 多智能体沙盘预演"}
-      className="relative mx-auto w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/12 bg-[#050711] px-4 py-5 text-left text-white shadow-2xl shadow-black/30 sm:px-5"
+      className="relative mx-auto flex h-full min-h-[34rem] w-full max-w-5xl flex-col overflow-hidden rounded-[1.75rem] border border-white/12 bg-[#050711] px-4 py-5 text-left text-white shadow-2xl shadow-black/30 sm:px-5 lg:min-h-[39rem]"
     >
       <div className="pointer-events-none absolute inset-0 opacity-80">
         <div className={`absolute inset-0 bg-gradient-to-br ${accent.gradient} opacity-[0.08]`} />
@@ -71,7 +70,7 @@ export default function AgentSandboxPreview({
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:38px_38px] opacity-35" />
       </div>
 
-      <div className="relative z-10 mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="relative z-10 mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${accent.strongBorder} ${accent.panel} ${accent.glow}`}>
             <Sparkles className={`h-5 w-5 ${accent.brightText}`} aria-hidden="true" />
@@ -93,14 +92,13 @@ export default function AgentSandboxPreview({
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{isEnglish ? "Future outcomes visualized" : "未来后果可视化"}</span>
           </div>
-          <div className={`inline-flex min-h-10 items-center gap-2 rounded-full border ${accent.border} bg-white/8 px-3 text-xs font-black ${accent.text} backdrop-blur-md`}>
-            <Network className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{isEnglish ? "7 agents · 5 stages · Signal merge" : "7 个智能体 · 5 个阶段 · 信号汇聚"}</span>
+          <div className={`inline-flex min-h-10 items-center rounded-full border ${accent.border} bg-white/8 px-3 text-xs font-black ${accent.text} backdrop-blur-md`}>
+            <span>{isEnglish ? "32% sync" : "32% 协作同步"}</span>
           </div>
         </div>
       </div>
 
-      <div className="relative z-10 grid gap-4">
+      <div className="relative z-10 grid flex-1 gap-4">
         <AgentSandboxOrb
           scenario={scenario}
           interactionMode="support"
@@ -113,52 +111,55 @@ export default function AgentSandboxPreview({
           activeStageTitle={scenario.centerLabel}
           progressPercent={32}
           language={language}
+          compact
         />
 
-        <AgentLifeformNetwork
-          scenario={scenario}
-          interactionMode="support"
-          activeAgentIds={["primary", "support", "risk"]}
-          activeStageLabel={isEnglish ? "30-day preview" : "30 天预演"}
-          activeStageTitle={scenario.centerLabel}
-          progressPercent={32}
-          variant="preview"
-          language={language}
-        />
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4 shadow-xl shadow-black/20 backdrop-blur-xl">
-            <div className="mb-3 flex items-center gap-2">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)]">
+          <div id="agent-preview-orb-stage-rail" className="rounded-2xl border border-white/10 bg-white/[0.06] p-3 shadow-xl shadow-black/20 backdrop-blur-xl">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
               <Radar className={`h-4 w-4 ${accent.brightText}`} aria-hidden="true" />
-              <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">Stage Rail</span>
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">Stage Rail</span>
+              </div>
+              <span className={`text-[10px] font-black ${accent.text}`}>
+                {isEnglish ? "5 stages" : "5 阶段"}
+              </span>
             </div>
-            <div className="space-y-2.5">
+            <div className="grid gap-2 sm:grid-cols-5 md:grid-cols-1 lg:grid-cols-5">
               {scenario.stages.map((stage, index) => (
-                <div key={stage.id} className="grid grid-cols-[5.25rem_minmax(0,1fr)] items-start gap-3">
-                  <div className="flex items-center gap-2 pt-0.5">
-                    <span className={`h-2 w-2 rounded-full ${index === 2 ? accent.dot : "bg-white/24"}`} />
-                    <span className="text-[11px] font-black text-white/70">{stage.label}</span>
-                  </div>
-                  <div>
-                    <p className="text-xs font-black text-white">{stage.title}</p>
-                    <p className="text-[11px] leading-snug text-white/50">{stage.focus}</p>
-                  </div>
+                <div
+                  key={stage.id}
+                  className={`rounded-xl border px-2.5 py-2 ${
+                    index === 2
+                      ? `${accent.border} ${accent.panel}`
+                      : "border-white/10 bg-white/[0.045]"
+                  }`}
+                >
+                  <span className="block text-[10px] font-black text-white/58">{stage.label}</span>
+                  <span className="mt-1 block text-[11px] font-black leading-snug text-white">{stage.title}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4 shadow-xl shadow-black/20 backdrop-blur-xl">
-            <div className="mb-3 flex items-center gap-2">
+          <div id="agent-preview-signal-rail" className="rounded-2xl border border-white/10 bg-white/[0.06] p-3 shadow-xl shadow-black/20 backdrop-blur-xl">
+            <div className="mb-2 flex items-center gap-2">
               <Waves className={`h-4 w-4 ${accent.brightText}`} aria-hidden="true" />
               <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">Signal Rail</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               {scenario.metrics.map((metric) => (
-                <div key={metric.id} className={`rounded-2xl border ${accent.border} ${accent.panel} px-3 py-2.5`}>
-                  <span className="block text-xs font-black text-white">{metric.label}</span>
+                <div key={metric.id} className={`rounded-xl border ${accent.border} ${accent.panel} px-3 py-2`}>
+                  <span className="block text-[11px] font-black text-white">{metric.label}</span>
                   <span className={`text-[10px] font-bold uppercase ${accent.text}`}>{metric.id}</span>
                 </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {scenario.agents.slice(0, 3).map((agent) => (
+                <span key={agent.id} className="rounded-full border border-white/10 bg-white/6 px-2 py-1 text-[10px] font-black text-white/48">
+                  {agent.label}
+                </span>
               ))}
             </div>
           </div>

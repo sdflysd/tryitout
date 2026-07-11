@@ -42,10 +42,33 @@ test("homepage renders agent sandbox preview near the hero", () => {
   assert.match(html, /AI 多智能体沙盘预演/);
   assert.match(html, /7 个智能体正在围绕你的选择建立世界线/);
   assert.match(html, /未来后果可视化/);
-  assert.match(html, /每个 Agent 都是一个生命体/);
-  assert.match(html, /协作信号/);
-  assert.match(html, /agent-signal-packet/);
+  assert.match(html, /agent-sandbox-orb/);
+  assert.match(html, /agent-preview-orb-stage-rail/);
+  assert.match(html, /agent-preview-signal-rail/);
+  assert.match(html, /360° 立体拖拽/);
   assert.match(html, /目标客户/);
+  assert.doesNotMatch(html, /agent-lifeform-network/);
+});
+
+test("homepage renders the approved immersive toolbench layout", () => {
+  const html = renderToStaticMarkup(
+    <HomeView
+      historyList={[]}
+      onStart={() => undefined}
+      onSelectHistory={() => undefined}
+      onSelectTemplate={() => undefined}
+    />,
+  );
+
+  assert.match(html, /home-toolbench-shell/);
+  assert.match(html, /home-toolbench-hero/);
+  assert.match(html, /home-scenario-tool-grid/);
+  assert.match(html, /home-example-tool-strip/);
+  assert.match(html, /agent-starmap-preview-dashboard/);
+  assert.match(html, /agent-sandbox-orb/);
+  assert.match(html, /data-renderer="three-webgl"/);
+  assert.match(html, /data-draggable="true"/);
+  assert.match(html, /360° 立体拖拽/);
 });
 
 test("homepage can render English entry workflow copy", () => {

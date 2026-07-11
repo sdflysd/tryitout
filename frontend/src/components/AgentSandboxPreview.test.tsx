@@ -9,16 +9,12 @@ test("preview sandbox renders an AI starmap for side hustle", () => {
   const html = renderToStaticMarkup(<AgentSandboxPreview simulationType="side_hustle" />);
 
   assert.match(html, /AI 星图沙盘/);
-  assert.match(html, /agent-starmap-preview/);
+  assert.match(html, /agent-starmap-preview-dashboard/);
   assert.match(html, /agent-sandbox-orb/);
-  assert.match(html, /agent-starmap-orbit/);
-  assert.match(html, /agent-starmap-spectral-core/);
-  assert.match(html, /agent-lifeform-network/);
-  assert.match(html, /agent-lifeform-node/);
-  assert.match(html, /agent-signal-packet/);
-  assert.match(html, /每个 Agent 都是一个生命体/);
-  assert.match(html, /协作信号/);
-  assert.match(html, /decision-horizon/);
+  assert.match(html, /data-renderer="three-webgl"/);
+  assert.match(html, /data-draggable="true"/);
+  assert.match(html, /agent-preview-orb-stage-rail/);
+  assert.match(html, /agent-preview-signal-rail/);
   assert.match(html, /viral-signature/);
   assert.match(html, /未来后果可视化/);
   assert.match(html, /7 个智能体/);
@@ -28,6 +24,8 @@ test("preview sandbox renders an AI starmap for side hustle", () => {
   assert.match(html, /竞品/);
   assert.match(html, /第 8-15 天/);
   assert.match(html, /风险/);
+  assert.doesNotMatch(html, /agent-lifeform-network/);
+  assert.doesNotMatch(html, /agent-lifeform-node/);
 });
 
 test("preview sandbox changes copy for dating mode", () => {
@@ -45,19 +43,15 @@ test("preview sandbox can render English UI text", () => {
   assert.match(html, /Future outcomes/);
   assert.match(html, /Target Customer/);
   assert.match(html, /Days 8-15/);
+  assert.match(html, /360° orbit drag/);
   assert.doesNotMatch(html, /未来后果可视化/);
 });
 
-test("preview sandbox includes a non-absolute mobile starmap layout", () => {
+test("preview sandbox uses a compact dashboard instead of duplicate large networks", () => {
   const html = renderToStaticMarkup(<AgentSandboxPreview simulationType="side_hustle" />);
 
-  assert.match(html, /agent-starmap-mobile-agents/);
-  assert.match(html, /sm:hidden/);
-  assert.match(html, /hidden sm:block/);
-});
-
-test("preview sandbox keeps desktop orbit agents out of the center lane", () => {
-  const html = renderToStaticMarkup(<AgentSandboxPreview simulationType="side_hustle" />);
-
+  assert.match(html, /agent-preview-orb-stage-rail/);
+  assert.match(html, /agent-preview-signal-rail/);
+  assert.doesNotMatch(html, /agent-starmap-mobile-agents/);
   assert.doesNotMatch(html, /absolute z-20[^"]*top-1\/2[^"]*translate-y-20/);
 });

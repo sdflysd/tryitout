@@ -266,7 +266,7 @@ export default function HomeView({
 
   return (
     <div id="home-view-container" className="bg-[#050711] text-white">
-      <section id="home-starmap-shell" className="relative overflow-hidden px-4 pb-10 pt-7 md:pb-14 md:pt-10">
+      <section id="home-starmap-shell" className="relative overflow-hidden px-4 pb-8 pt-7 md:pb-10 md:pt-10">
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(251,191,36,0.11),transparent_28%,rgba(103,232,249,0.09)_55%,transparent_76%,rgba(244,114,182,0.08))]" />
           <div
@@ -279,16 +279,16 @@ export default function HomeView({
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:44px_44px] opacity-35" />
         </div>
 
-        <div className="relative z-10 mx-auto max-w-6xl">
+        <div id="home-toolbench-shell" className="relative z-10 mx-auto max-w-6xl">
           <motion.div
-            id="hero-section"
+            id="home-toolbench-hero"
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="grid items-center gap-8 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]"
+            className="grid items-stretch gap-8 lg:grid-cols-[minmax(0,0.92fr)_minmax(31rem,1.08fr)]"
           >
-            <div className="text-left">
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-amber-300/10 px-3.5 py-2 text-xs font-black tracking-wide text-amber-100 shadow-[0_0_28px_rgba(251,191,36,0.12)] backdrop-blur-md">
+            <div className="flex min-h-[34rem] flex-col justify-center py-4 text-left lg:min-h-[39rem]">
+              <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-amber-300/35 bg-amber-300/10 px-3.5 py-2 text-xs font-black tracking-wide text-amber-100 shadow-[0_0_28px_rgba(251,191,36,0.12)] backdrop-blur-md">
                 <Sparkles className="h-3.5 w-3.5 text-amber-200" aria-hidden="true" />
                 <span>{isEnglish ? "AI Starmap Sandbox · 30-Day Simulation" : "AI 星图沙盘 · 30 天推演"}</span>
               </div>
@@ -296,7 +296,7 @@ export default function HomeView({
                 {isEnglish ? "Shareable AI Decision Sandbox" : "传播级 AI 决策沙盘"}
               </div>
 
-              <h1 id="home-main-title" className="max-w-3xl text-4xl font-black leading-[1.03] tracking-tight text-white md:text-6xl">
+              <h1 id="home-main-title" className="max-w-3xl text-4xl font-black leading-[1.02] tracking-tight text-white md:text-6xl lg:text-[4rem]">
                 {heroCopy.title}
                 <br />
                 <span className="bg-gradient-to-r from-amber-200 via-orange-300 to-fuchsia-300 bg-clip-text text-transparent">
@@ -324,63 +324,74 @@ export default function HomeView({
                   <span>{activeInfo.tagline}</span>
                 </div>
               </div>
+
+              <div id="home-scenario-tool-grid" className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {(["side_hustle", "dating", "life_choice"] as SimulationType[]).map((type) => {
+                  const info = localizedCategoryInfo[type];
+                  const Icon = info.icon;
+                  const isActive = activeTab === type;
+
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setActiveTab(type)}
+                      className={`min-h-28 rounded-2xl border p-3 text-left transition-all duration-200 cursor-pointer ${
+                        isActive
+                          ? info.active
+                          : "border-white/10 bg-white/[0.06] text-white/70 hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
+                      }`}
+                    >
+                      <span className="mb-3 flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/8">
+                        <Icon className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <span className="block text-sm font-black leading-tight">{info.title}</span>
+                      <span className="mt-2 line-clamp-2 block text-[11px] leading-relaxed text-white/48">
+                        {info.subtitle}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <AgentSandboxPreview simulationType={activeTab} language={language} />
           </motion.div>
 
-          <div id="sandbox-selector-tabs" className="mt-7 grid grid-cols-3 gap-2 rounded-3xl border border-white/10 bg-white/[0.06] p-1.5 backdrop-blur-xl">
-            {(["side_hustle", "dating", "life_choice"] as SimulationType[]).map((type) => {
-              const info = localizedCategoryInfo[type];
-              const Icon = info.icon;
-              const isActive = activeTab === type;
-
-              return (
-                <button
-                  key={type}
-                  onClick={() => setActiveTab(type)}
-                  className={`min-h-12 rounded-2xl border px-2 py-2 text-xs font-black transition-all duration-200 cursor-pointer md:text-sm ${
-                    isActive
-                      ? info.active
-                      : "border-transparent text-white/48 hover:border-white/12 hover:bg-white/8 hover:text-white"
-                  }`}
-                >
-                  <span className="flex flex-col items-center justify-center gap-1 md:flex-row">
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                    <span>{info.title}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="mt-5 rounded-3xl border border-white/10 bg-white/[0.055] p-5 text-left shadow-2xl shadow-black/20 backdrop-blur-xl md:p-6"
-          >
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="flex gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-white/8">
-                  <ActiveIcon className="h-6 w-6 text-white" aria-hidden="true" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-black text-white">{activeInfo.title}</h2>
-                  <p className="mt-1 text-xs font-bold text-white/56">{activeInfo.subtitle}</p>
-                  <p className="mt-3 max-w-3xl text-sm leading-6 text-white/64">{activeInfo.desc}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => handleStart(activeTab)}
-                className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-2xl px-5 text-xs font-black transition-all duration-200 active:scale-98 cursor-pointer ${activeInfo.button}`}
-              >
-                <span>{isEnglish ? "Start simulation" : "开始模拟"}</span>
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </button>
+          <div id="home-example-tool-strip" className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.88fr)_repeat(3,minmax(0,1fr))]">
+            <div className="py-2 text-left lg:py-4">
+              <h2 className="flex items-center gap-2 text-base font-black text-white md:text-lg">
+                <Sparkles className="h-5 w-5 text-amber-200" aria-hidden="true" />
+                <span>{isEnglish ? "Load a real example" : "真实案例，直接载入"}</span>
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-white/42">
+                {isEnglish
+                  ? "Load a real example, review it, then start the simulation."
+                  : "点击加载真实案例，确认后再开始推演。"}
+              </p>
             </div>
-          </motion.div>
+
+            {templates[activeTab].map((tpl, idx) => (
+              <div
+                id={`template-item-${activeTab}-${idx}`}
+                key={idx}
+                onClick={() => handleSelectTemplate(activeTab, idx)}
+                className="group flex min-h-28 cursor-pointer flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-left shadow-xl shadow-black/15 backdrop-blur-xl transition-all duration-200 hover:border-amber-200/45 hover:bg-white/[0.09]"
+              >
+                <div>
+                  <span className="rounded-full border border-white/10 bg-white/8 px-2.5 py-1 text-[10px] font-black text-white/58">
+                    {tpl.tag}
+                  </span>
+                  <h3 className="mt-4 text-sm font-black leading-snug text-white transition-colors group-hover:text-amber-100">{tpl.title}</h3>
+                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/42">{tpl.desc}</p>
+                </div>
+                <span className="mt-4 inline-flex items-center gap-1 text-[10px] font-black text-amber-200 opacity-0 transition-opacity group-hover:opacity-100">
+                  {isEnglish ? "Load template" : "载入模板"}
+                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -413,38 +424,6 @@ export default function HomeView({
               </div>
             </div>
           )}
-
-          <div id="templates-section" className="text-left">
-            <h2 className="mb-5 flex items-center gap-2 text-base font-black text-white md:text-lg">
-              <Sparkles className="h-5 w-5 text-amber-200" aria-hidden="true" />
-              <span>{isEnglish ? "Load a real example, review it, then start the simulation" : "点击加载真实案例，确认后再开始推演"}</span>
-            </h2>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {templates[activeTab].map((tpl, idx) => (
-                <div
-                  id={`template-item-${activeTab}-${idx}`}
-                  key={idx}
-                  onClick={() => handleSelectTemplate(activeTab, idx)}
-                  className="group flex min-h-44 cursor-pointer flex-col justify-between rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/15 backdrop-blur-xl transition-all duration-200 hover:border-amber-200/45 hover:bg-white/[0.09]"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="rounded-full border border-white/10 bg-white/8 px-2.5 py-1 text-[10px] font-black text-white/60">
-                        {tpl.tag}
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-200 opacity-0 transition-opacity group-hover:opacity-100">
-                        {isEnglish ? "Load template" : "载入模板"}
-                        <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                      </span>
-                    </div>
-                    <h3 className="text-sm font-black leading-snug text-white transition-colors group-hover:text-amber-100">{tpl.title}</h3>
-                    <p className="line-clamp-3 text-xs leading-relaxed text-white/45">{tpl.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
           {historyList.length > 0 && (
             <div id="history-section" className="mt-10 rounded-3xl border border-white/10 bg-white/[0.055] p-6 text-left shadow-xl shadow-black/15 backdrop-blur-xl">
