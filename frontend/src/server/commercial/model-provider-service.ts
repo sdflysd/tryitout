@@ -4,6 +4,9 @@ import {
   hasCommercialFeature,
   type ProviderMode,
 } from "../../contracts/commercial.js";
+import { OpenAiCompatibleAdapter } from "../ai/adapters/openai-compatible.adapter.js";
+import { createUserOpenAiCompatibleProfile } from "../ai/provider-config.js";
+import type { ModelQuality } from "../ai/types.js";
 import {
   assertSafeProviderUrl,
   type ProviderUrlSafetyOptions,
@@ -43,6 +46,7 @@ export interface ModelProviderServiceOptions extends ProviderUrlSafetyOptions {
     baseUrl: string;
     apiKey: string;
     provider: string;
+    models: Record<ModelQuality, string>;
   }) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -69,6 +73,7 @@ export interface PublicModelProviderDto {
   status: UserModelProviderRecord["status"];
   lastTestedAt?: string;
   lastTestStatus?: UserModelProviderRecord["lastTestStatus"];
+  lastTestError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,6 +111,7 @@ export class ModelProviderService {
     this.urlSafetyOptions = {
       resolveHostname: options.resolveHostname,
       followRedirect: options.followRedirect,
+      allowedHostnames: options.allowedHostnames,
     };
     this.testConnection = options.testProviderConnection;
   }
@@ -168,14 +174,17 @@ export class ModelProviderService {
         baseUrl: provider.baseUrl,
         apiKey,
         provider: provider.provider,
+        models: resolveByokTestModels(provider),
       }),
       timeoutMs,
     );
+    const now = this.currentIso();
     const updated: UserModelProviderRecord = {
       ...provider,
-      lastTestedAt: this.currentIso(),
+      lastTestedAt: now,
       lastTestStatus: result.ok ? "passed" : "failed",
-      updatedAt: this.currentIso(),
+      lastTestError: result.ok ? undefined : sanitizeProviderTestError(result.error),
+      updatedAt: now,
     };
     await this.repository.saveUserModelProvider(updated);
     return toPublicProvider(updated);
@@ -252,11 +261,12 @@ export class ModelProviderService {
     baseUrl: string;
     apiKey: string;
     provider: string;
+    models: Record<ModelQuality, string>;
   }): Promise<{ ok: boolean; error?: string }> {
     if (this.testConnection !== undefined) {
       return this.testConnection(input);
     }
-    return { ok: true };
+    return testOpenAiCompatibleConnection(input);
   }
 
   private currentIso(): string {
@@ -288,7 +298,81 @@ function toPublicProvider(record: UserModelProviderRecord): PublicModelProviderD
   if (record.modelDeep !== undefined) dto.modelDeep = record.modelDeep;
   if (record.lastTestedAt !== undefined) dto.lastTestedAt = record.lastTestedAt;
   if (record.lastTestStatus !== undefined) dto.lastTestStatus = record.lastTestStatus;
+  if (record.lastTestError !== undefined) dto.lastTestError = record.lastTestError;
   return dto;
+}
+
+async function testOpenAiCompatibleConnection(input: {
+  baseUrl: string;
+  apiKey: string;
+  provider: string;
+  models: Record<ModelQuality, string>;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!input.apiKey.trim()) {
+    return { ok: false, error: "API key is required." };
+  }
+
+  const adapter = new OpenAiCompatibleAdapter({
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  const qualities: ModelQuality[] = ["fast", "balanced", "deep"];
+  const testedModels = new Set<string>();
+
+  for (const quality of qualities) {
+    const model = input.models[quality].trim();
+    if (!model || testedModels.has(model)) {
+      continue;
+    }
+    testedModels.add(model);
+    try {
+      await adapter.generateJson<{ ok: boolean }>({
+        step: "safety_check",
+        scenarioType: "life_choice",
+        modelProfile: createUserOpenAiCompatibleProfile({
+          quality,
+          baseUrl: input.baseUrl,
+          model,
+        }),
+        generationConfig: {
+          maxOutputTokens: 32,
+          timeoutMs: 10_000,
+          maxRetries: 0,
+        },
+        systemPrompt: "Return only valid JSON.",
+        userPrompt: "Reply with exactly this JSON object: {\"ok\":true}",
+        responseFormat: "json",
+        metadata: {},
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Model ${model} failed: ${error instanceof Error ? error.message : "request failed"}`,
+      };
+    }
+  }
+
+  if (testedModels.size === 0) {
+    return { ok: false, error: "At least one model id is required." };
+  }
+
+  return { ok: true };
+}
+
+function resolveByokTestModels(
+  provider: UserModelProviderRecord,
+): Record<ModelQuality, string> {
+  const balanced = provider.modelBalanced ?? provider.modelDeep ?? provider.modelFast ?? "gpt-4o";
+  return {
+    fast: provider.modelFast ?? balanced,
+    balanced,
+    deep: provider.modelDeep ?? balanced,
+  };
+}
+
+function sanitizeProviderTestError(error: string | undefined): string {
+  const message = error?.trim() || "Provider test failed";
+  return message.slice(0, 500);
 }
 
 async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {

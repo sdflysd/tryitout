@@ -142,7 +142,7 @@ test("platform task creation rejects models not enabled by admin", async () => {
   );
 });
 
-test("platform task creation allows active visible repository-backed profiles", async () => {
+test("platform task creation requires admin-enabled repository-backed profiles", async () => {
   const { queue, repo, service } = await createScenario({ balance: 10 });
   await repo.savePlatformModelProvider({
     id: "platform_provider_1",
@@ -167,6 +167,21 @@ test("platform task creation allows active visible repository-backed profiles", 
     updatedAt: CREATED_AT,
   });
 
+  await assert.rejects(
+    service.createTask(makeCreateInput({
+      providerMode: "platform",
+      modelSelection: { modelProfileId: "openrouter_balanced" },
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+
+  await repo.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["openrouter_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   const created = await service.createTask(makeCreateInput({
     providerMode: "platform",
     modelSelection: { modelProfileId: "openrouter_balanced" },
@@ -244,6 +259,25 @@ test("platform task creation rejects disabled or hidden repository-backed profil
   );
 });
 
+test("platform task creation rejects default selection when admin has no published platform models", async () => {
+  const { repo, service } = await createScenario({ balance: 10 });
+  await repo.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: [],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+
+  await assert.rejects(
+    service.createTask(makeCreateInput({
+      providerMode: "platform",
+      modelSelection: undefined,
+    })),
+    (error) => hasTaskCode(error, "provider_not_allowed"),
+  );
+});
+
 test("single user active task limit rejects second queued or running task", async () => {
   const { repo, service } = await createScenario({ balance: 10 });
   const first = await service.createTask(makeCreateInput({ idempotencyKey: "task-key-1" }));
@@ -306,6 +340,7 @@ test("task creation calculates credit cost, creates hold, saves task, and enqueu
   assert.equal(result.task.creditCost, 3);
   assert.equal(result.task.creditHoldLedgerId, result.hold.ledger.id);
   assert.deepEqual(result.task.inputSummary, { title: "Should I quit?" });
+  assert.deepEqual(result.task.userInput, makeUserInput());
   assert.equal((await repo.getCreditAccount("user_1"))?.balance, 7);
   assert.equal((await repo.getCreditAccount("user_1"))?.frozenCredits, 3);
 
@@ -429,6 +464,74 @@ test("failure releases held credits once and records normalized error code", asy
   assert.equal(failed.task.status, "failed");
   assert.equal(failed.task.errorCode, "provider_timed_out");
   assert.equal(replay.task.errorCode, "provider_timed_out");
+  assert.equal(account?.balance, 10);
+  assert.equal(account?.frozenCredits, 0);
+});
+
+test("recoverable failure keeps held credits and saves checkpoint for same-task resume", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  const created = await service.createTask(makeCreateInput());
+  await queue.claimNext();
+  await service.markRunning({ taskId: created.task.id });
+
+  const failed = await service.markRecoverableFailed({
+    taskId: created.task.id,
+    error: new Error("Provider timed out!"),
+    checkpoint: {
+      safetyChecked: true,
+      completedStages: [{ stageIndex: 1 } as never],
+      nextStep: "simulate_stage",
+    },
+  });
+
+  const account = await repo.getCreditAccount("user_1");
+  const checkpoint = await repo.getLatestCommercialCheckpoint(created.task.id);
+  assert.equal(failed.task.status, "recoverable_failed");
+  assert.equal(failed.task.errorCode, "provider_timed_out");
+  assert.equal(failed.task.completedAt, undefined);
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
+  assert.equal(checkpoint?.stepName, "simulate_stage");
+  assert.equal(checkpoint?.stageIndex, 1);
+});
+
+test("resumeTask requeues the same recoverable task with original input and no new hold", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  const created = await service.createTask(makeCreateInput());
+  await queue.claimNext();
+  await service.markRunning({ taskId: created.task.id });
+  await service.markRecoverableFailed({
+    taskId: created.task.id,
+    error: "provider_error",
+  });
+
+  const resumed = await service.resumeTask({ taskId: created.task.id });
+
+  const account = await repo.getCreditAccount("user_1");
+  const claim = await queue.claimNext();
+  assert.equal(resumed.task.id, created.task.id);
+  assert.equal(resumed.task.status, "queued");
+  assert.equal(resumed.task.errorCode, undefined);
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
+  assert.equal(claim?.job.taskId, created.task.id);
+  assert.deepEqual(claim?.job.userInput, makeUserInput());
+});
+
+test("cancelling recoverable failed task releases its held credits", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  const created = await service.createTask(makeCreateInput());
+  await queue.claimNext();
+  await service.markRunning({ taskId: created.task.id });
+  await service.markRecoverableFailed({
+    taskId: created.task.id,
+    error: "provider_error",
+  });
+
+  const cancelled = await service.cancelTask({ taskId: created.task.id });
+
+  const account = await repo.getCreditAccount("user_1");
+  assert.equal(cancelled.task.status, "cancelled");
   assert.equal(account?.balance, 10);
   assert.equal(account?.frozenCredits, 0);
 });

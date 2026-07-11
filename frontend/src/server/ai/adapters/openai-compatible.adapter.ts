@@ -75,6 +75,7 @@ export class OpenAiCompatibleAdapter implements AiProviderAdapter {
     const startedAt = Date.now();
     const timeoutMs = getRequestTimeoutMs(request);
     const maxTokens = getCappedMaxOutputTokens(request);
+    const shouldStream = shouldStreamOpenAiCompatibleRequest(request);
     const messages: Array<{ role: "system" | "user"; content: string }> = [];
 
     if (request.systemPrompt) {
@@ -96,8 +97,8 @@ export class OpenAiCompatibleAdapter implements AiProviderAdapter {
           messages,
           max_tokens: maxTokens,
           response_format: { type: "json_object" },
-          stream: true,
-          stream_options: { include_usage: true },
+          stream: shouldStream,
+          ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
         }),
       },
       timeoutMs,
@@ -129,7 +130,7 @@ export class OpenAiCompatibleAdapter implements AiProviderAdapter {
       latencyMs: Date.now() - startedAt,
       requestId: streamResult.requestId,
       stopReason: streamResult.stopReason,
-      transport: "stream",
+      transport: shouldStream ? "stream" : "single_response",
       firstByteLatencyMs: streamResult.firstByteLatencyMs,
       streamChunkCount: streamResult.streamChunkCount,
     };
@@ -161,6 +162,11 @@ export class OpenAiCompatibleAdapter implements AiProviderAdapter {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function shouldStreamOpenAiCompatibleRequest(request: AiCallRequest): boolean {
+  return request.modelProfile.defaults.stream &&
+    request.modelProfile.capabilities.supportsStreaming;
 }
 
 async function fetchWithTimeout(

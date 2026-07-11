@@ -23,6 +23,7 @@ import {
   CreditServiceError,
   type CreditTransitionResult,
 } from "./credit-service.js";
+import type { SimulationCheckpointSnapshot } from "../simulations/multi-agent-runner.js";
 import type { CommercialRepository } from "./repository.js";
 import {
   toSimulationQueueJob,
@@ -103,9 +104,17 @@ export interface FailCommercialTaskInput {
   error: unknown;
 }
 
+export interface RecoverableFailCommercialTaskInput extends FailCommercialTaskInput {
+  checkpoint?: SimulationCheckpointSnapshot;
+}
+
 export interface FailCommercialTaskResult {
   task: CommercialSimulationTaskRecord;
   release?: CreditTransitionResult;
+}
+
+export interface ResumeCommercialTaskResult {
+  task: CommercialSimulationTaskRecord;
 }
 
 export interface RetryCommercialTaskInput {
@@ -171,6 +180,7 @@ export class CommercialTaskService {
       interactionMode: input.interactionMode ?? "legacy",
       providerMode: input.providerMode ?? "platform",
       modelSelection: input.modelSelection,
+      userInput: input.userInput,
       priority: input.priority,
       queueWeight: input.queueWeight,
       idempotencyKey: input.idempotencyKey,
@@ -224,7 +234,7 @@ export class CommercialTaskService {
     });
     if (task.status === "queued" || task.status === "running") {
       await this.queue.enqueue(toSimulationQueueJob(task, {
-        userInput,
+        userInput: task.userInput ?? userInput,
       }));
     }
     return { task, hold };
@@ -339,13 +349,55 @@ export class CommercialTaskService {
     return { task: failedTask, release };
   }
 
+  async markRecoverableFailed(
+    input: RecoverableFailCommercialTaskInput,
+  ): Promise<FailCommercialTaskResult> {
+    validateRequired(input.taskId, "Task id");
+    const task = await this.requireTask(input.taskId);
+    if (task.status === "recoverable_failed") {
+      return { task };
+    }
+    if (task.status !== "queued" && task.status !== "running") {
+      throw new CommercialTaskServiceError(
+        "invalid_task_transition",
+        "Only active tasks can be marked recoverable failed",
+      );
+    }
+
+    const errorCode = normalizeErrorCode(input.error);
+    const nowIso = this.currentIso();
+    if (input.checkpoint !== undefined) {
+      await this.repository.saveCommercialCheckpoint({
+        id: this.createId("simulation_checkpoint"),
+        taskId: task.id,
+        stageIndex: input.checkpoint.completedStages?.at(-1)?.stageIndex,
+        stepName: input.checkpoint.nextStep ?? "recoverable_failed",
+        checkpoint: input.checkpoint,
+        createdAt: nowIso,
+      });
+    }
+    const failedTask: CommercialSimulationTaskRecord = {
+      ...task,
+      status: "recoverable_failed",
+      errorCode,
+      completedAt: undefined,
+      updatedAt: nowIso,
+    };
+    await this.repository.saveCommercialTask(failedTask);
+    return { task: failedTask };
+  }
+
   async cancelTask(input: { taskId: string }): Promise<FailCommercialTaskResult> {
     validateRequired(input.taskId, "Task id");
     const task = await this.requireTask(input.taskId);
     if (task.status === "cancelled") {
       return { task };
     }
-    if (task.status !== "queued" && task.status !== "running") {
+    if (
+      task.status !== "queued" &&
+      task.status !== "running" &&
+      task.status !== "recoverable_failed"
+    ) {
       throw new CommercialTaskServiceError(
         "invalid_task_transition",
         "Only active tasks can be cancelled",
@@ -362,6 +414,40 @@ export class CommercialTaskService {
     };
     await this.repository.saveCommercialTask(cancelledTask);
     return { task: cancelledTask, release };
+  }
+
+  async resumeTask(input: { taskId: string }): Promise<ResumeCommercialTaskResult> {
+    validateRequired(input.taskId, "Task id");
+    const task = await this.requireTask(input.taskId);
+    if (task.status !== "recoverable_failed") {
+      throw new CommercialTaskServiceError(
+        "invalid_task_transition",
+        "Only recoverable failed tasks can be resumed",
+      );
+    }
+    const userInput = task.userInput;
+    if (userInput === undefined) {
+      throw new CommercialTaskServiceError(
+        "invalid_task_input",
+        "Recoverable task is missing original user input",
+      );
+    }
+
+    const nowIso = this.currentIso();
+    const queuedTask: CommercialSimulationTaskRecord = {
+      ...task,
+      status: "queued",
+      errorCode: undefined,
+      completedAt: undefined,
+      queuedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await this.repository.saveCommercialTask(queuedTask);
+    await this.queue.enqueue(toSimulationQueueJob(queuedTask, {
+      userInput,
+      idempotencyKey: `${queuedTask.idempotencyKey ?? queuedTask.id}:resume:${nowIso}`,
+    }));
+    return { task: queuedTask };
   }
 
   async retryTask(input: RetryCommercialTaskInput): Promise<CreateCommercialTaskResult> {
@@ -410,6 +496,7 @@ export class CommercialTaskService {
     interactionMode: InteractionMode;
     providerMode: ProviderMode;
     modelSelection?: ModelSelection;
+    userInput: UserInput;
     priority?: number;
     queueWeight?: number;
     idempotencyKey: string;
@@ -427,6 +514,7 @@ export class CommercialTaskService {
       interactionMode: input.interactionMode,
       providerMode: input.providerMode,
       modelSelection: input.modelSelection,
+      userInput: input.userInput,
       status: "queued",
       creditCost,
       priority: input.priority,
@@ -468,11 +556,17 @@ export class CommercialTaskService {
     }
 
     const requestedProfileId = input.modelSelection?.modelProfileId;
-    if (requestedProfileId === undefined) {
-      return;
-    }
     const catalog = await loadRepositoryPlatformModelCatalog(this.repository);
     if (catalog !== undefined) {
+      if (catalog.options.length === 0) {
+        throw new CommercialTaskServiceError(
+          "provider_not_allowed",
+          "No platform models are enabled by admin",
+        );
+      }
+      if (requestedProfileId === undefined) {
+        return;
+      }
       if (catalog.options.some((model) => model.id === requestedProfileId)) {
         return;
       }
@@ -484,6 +578,15 @@ export class CommercialTaskService {
 
     const setting = await this.repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
     const enabledModelProfileIds = normalizePlatformModelProfileIds(setting?.value);
+    if (enabledModelProfileIds.length === 0) {
+      throw new CommercialTaskServiceError(
+        "provider_not_allowed",
+        "No platform models are enabled by admin",
+      );
+    }
+    if (requestedProfileId === undefined) {
+      return;
+    }
     if (!enabledModelProfileIds.includes(requestedProfileId)) {
       throw new CommercialTaskServiceError(
         "provider_not_allowed",

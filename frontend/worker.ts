@@ -72,6 +72,7 @@ const bullWorker = createBullMqSimulationWorker({
         job: claim.job,
         services: commercialServices,
         getPlatformGateway,
+        platformSecretEncryptionKey: commercialServices.platformSecretEncryptionKey,
       }),
     });
   },

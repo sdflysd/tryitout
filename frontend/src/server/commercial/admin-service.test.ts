@@ -1337,6 +1337,78 @@ test("admin can configure platform models exposed to users", async () => {
   );
 });
 
+test("admin can publish repository-backed model profiles to users", async () => {
+  const { repo, service } = createScenario();
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+  await service.savePlatformModelProfile({
+    actorUserId: "admin_1",
+    id: "openrouter_deep",
+    providerConfigId: provider.id,
+    label: "OpenRouter Deep",
+    modelId: "anthropic/claude-sonnet-4",
+    quality: "deep",
+    visibleToUser: true,
+    status: "active",
+  });
+
+  const settings = await service.updatePlatformModels({
+    actorUserId: "admin_1",
+    enabledModelProfileIds: ["openrouter_deep"],
+  });
+
+  assert.deepEqual(settings.platformModels.enabledModelProfileIds, [
+    "openrouter_deep",
+  ]);
+  assert.deepEqual(
+    settings.platformModels.enabled.map((model) => model.id),
+    ["openrouter_deep"],
+  );
+  assert.deepEqual(
+    (await repo.getSystemSetting("platform.models.enabled"))?.value,
+    ["openrouter_deep"],
+  );
+});
+
+test("saved platform model setting is authoritative for repository-backed profiles", async () => {
+  const { repo, service } = createScenario();
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+  await service.savePlatformModelProfile({
+    actorUserId: "admin_1",
+    id: "openrouter_deep",
+    providerConfigId: provider.id,
+    label: "OpenRouter Deep",
+    modelId: "anthropic/claude-sonnet-4",
+    quality: "deep",
+    visibleToUser: true,
+    status: "active",
+  });
+  await repo.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: [],
+    description: "Platform model profiles enabled for users",
+    updatedByUserId: "admin_1",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:01:00.000Z",
+  });
+
+  const settings = await service.getSettings();
+
+  assert.deepEqual(settings.platformModels.enabledModelProfileIds, []);
+  assert.deepEqual(settings.platformModels.enabled, []);
+});
+
 test("admin saves platform provider secrets as masks and manages repository-backed profiles", async () => {
   const { repo, service } = createScenario();
 
@@ -1374,11 +1446,101 @@ test("admin saves platform provider secrets as masks and manages repository-back
       apiKeyMask: "sk-pla...3456",
     },
   ]);
-  assert.deepEqual(settings.platformModels.enabledModelProfileIds, [
-    "openrouter_deep",
-  ]);
+  assert.deepEqual(settings.platformModels.enabledModelProfileIds, []);
   assert.equal(settings.platformModels.available[0]?.source, "admin");
   assert.equal(settings.platformModels.available[0]?.modelId, "anthropic/claude-sonnet-4");
+});
+
+test("admin rejects duplicate platform provider display names as a domain error", async () => {
+  const { service } = createScenario();
+  await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+
+  await assert.rejects(
+    service.savePlatformModelProvider({
+      actorUserId: "admin_1",
+      provider: "gemini",
+      displayName: "OpenRouter",
+      apiKey: "gemini-platform-secret123456",
+    }),
+    (error) =>
+      error instanceof CommercialAdminServiceError &&
+      error.code === "platform_model_provider_display_name_taken" &&
+      /Display name/.test(error.message),
+  );
+});
+
+test("deleted platform providers and profiles are removed from normal settings inventory and can be re-added", async () => {
+  const { repo, service } = createScenario();
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+  await service.savePlatformModelProfile({
+    actorUserId: "admin_1",
+    id: "openrouter_deep",
+    providerConfigId: provider.id,
+    label: "OpenRouter Deep",
+    modelId: "anthropic/claude-sonnet-4",
+    quality: "deep",
+    visibleToUser: true,
+    status: "active",
+  });
+  await service.updatePlatformModels({
+    actorUserId: "admin_1",
+    enabledModelProfileIds: ["openrouter_deep"],
+  });
+
+  await service.savePlatformModelProfile({
+    actorUserId: "admin_1",
+    id: "openrouter_deep",
+    providerConfigId: provider.id,
+    label: "OpenRouter Deep",
+    modelId: "anthropic/claude-sonnet-4",
+    quality: "deep",
+    visibleToUser: true,
+    status: "disabled",
+  });
+  await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    providerConfigId: provider.id,
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    status: "disabled",
+  });
+
+  const settingsAfterDelete = await service.getSettings();
+  assert.deepEqual(settingsAfterDelete.platformModelProviders, []);
+  assert.equal(
+    settingsAfterDelete.platformModels.available.some((model) => model.id === "openrouter_deep"),
+    false,
+  );
+  assert.deepEqual(settingsAfterDelete.platformModels.enabledModelProfileIds, []);
+
+  const readded = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret654321",
+    status: "active",
+  });
+
+  assert.equal(readded.id, provider.id);
+  assert.equal(readded.status, "active");
+  assert.equal(
+    (await repo.getPlatformModelProvider(provider.id))?.encryptedApiKey,
+    "encrypted:sk-platform-secret654321",
+  );
 });
 
 test("admin provider test updates masked provider status without exposing secret", async () => {
@@ -1399,6 +1561,63 @@ test("admin provider test updates masked provider status without exposing secret
   assert.equal(tested.lastTestStatus, "passed");
   assert.equal(tested.lastTestedAt, "2026-07-07T00:02:00.000Z");
   assert.equal(JSON.stringify(tested).includes("sk-platform-secret123456"), false);
+});
+
+test("admin provider test uses real provider evidence by default instead of passing blindly", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ error: "bad api key" }), { status: 401 });
+  };
+
+  try {
+    const { service } = createScenario({ useDefaultPlatformProviderTest: true });
+    const provider = await service.savePlatformModelProvider({
+      actorUserId: "admin_1",
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret123456",
+    });
+
+    const tested = await service.testPlatformModelProvider({
+      actorUserId: "admin_1",
+      providerConfigId: provider.id,
+    });
+
+    assert.equal(tested.lastTestStatus, "failed");
+    assert.deepEqual(calls, ["https://openrouter.example/api/v1/models"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("admin provider test records network errors as failed status", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("dns failed");
+  };
+
+  try {
+    const { service } = createScenario({ useDefaultPlatformProviderTest: true });
+    const provider = await service.savePlatformModelProvider({
+      actorUserId: "admin_1",
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret123456",
+    });
+
+    const tested = await service.testPlatformModelProvider({
+      actorUserId: "admin_1",
+      providerConfigId: provider.id,
+    });
+
+    assert.equal(tested.lastTestStatus, "failed");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("admin provider model discovery decrypts secrets without returning them", async () => {
@@ -1446,6 +1665,80 @@ test("admin provider model discovery decrypts secrets without returning them", a
   assert.equal(JSON.stringify(catalog).includes("sk-platform-secret123456"), false);
 });
 
+test("admin provider model discovery returns catalog errors instead of throwing network failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("dns failed");
+  };
+
+  try {
+    const { service } = createScenario();
+    const provider = await service.savePlatformModelProvider({
+      actorUserId: "admin_1",
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret123456",
+    });
+
+    const catalog = await service.listPlatformProviderModels({
+      actorUserId: "admin_1",
+      providerConfigId: provider.id,
+    });
+
+    assert.deepEqual(catalog, {
+      providerId: provider.id,
+      provider: "openai_compatible",
+      models: [],
+      unsupported: false,
+      error: "Provider model discovery failed: dns failed",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("admin can test a concrete platform model profile without exposing provider secrets", async () => {
+  const observed: unknown[] = [];
+  const { service } = createScenario({
+    testPlatformModelConnection: async (input) => {
+      observed.push(input);
+      return { ok: input.modelId === "anthropic/claude-sonnet-4" };
+    },
+  });
+  const provider = await service.savePlatformModelProvider({
+    actorUserId: "admin_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-platform-secret123456",
+  });
+
+  const result = await service.testPlatformModelProfile({
+    actorUserId: "admin_1",
+    providerConfigId: provider.id,
+    profileId: "openrouter_deep",
+    modelId: "anthropic/claude-sonnet-4",
+  });
+
+  assert.deepEqual(observed, [
+    {
+      provider: "openai_compatible",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-platform-secret123456",
+      modelId: "anthropic/claude-sonnet-4",
+    },
+  ]);
+  assert.deepEqual(result, {
+    providerConfigId: provider.id,
+    profileId: "openrouter_deep",
+    modelId: "anthropic/claude-sonnet-4",
+    ok: true,
+    checkedAt: "2026-07-07T00:02:00.000Z",
+  });
+  assert.equal(JSON.stringify(result).includes("sk-platform-secret123456"), false);
+});
+
 test("admin service reports missing users and tasks as domain errors", async () => {
   const { service } = createScenario();
 
@@ -1465,6 +1758,8 @@ test("admin service reports missing users and tasks as domain errors", async () 
 
 function createScenario(options: {
   maxActiveWeight?: number;
+  useDefaultPlatformProviderTest?: boolean;
+  testPlatformModelConnection?: ConstructorParameters<typeof CommercialAdminService>[0]["testPlatformModelConnection"];
   discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
 } = {}): {
   repo: InMemoryCommercialRepository;
@@ -1511,7 +1806,10 @@ function createScenario(options: {
       encryptSecret: (plaintext) => `encrypted:${plaintext}`,
       decryptSecret: (encrypted) => encrypted.replace(/^encrypted:/, ""),
       maskSecret: (secret) => `${secret.slice(0, 6)}...${secret.slice(-4)}`,
-      testPlatformProviderConnection: async () => ({ ok: true }),
+      ...(options.useDefaultPlatformProviderTest === true
+        ? {}
+        : { testPlatformProviderConnection: async () => ({ ok: true }) }),
+      testPlatformModelConnection: options.testPlatformModelConnection,
       discoverPlatformProviderModels: options.discoverPlatformProviderModels,
     }),
   };

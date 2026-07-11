@@ -20,6 +20,10 @@ import type {
   SimulationType,
 } from "../ai/types.js";
 import type { PlatformModelOption } from "../../model-options.js";
+import {
+  PLATFORM_MODEL_SETTING_KEY,
+  normalizePlatformModelProfileIds,
+} from "../../model-options.js";
 import { decryptSecret } from "./secrets.js";
 import type { CommercialRepository } from "./repository.js";
 import type {
@@ -60,12 +64,21 @@ export async function loadRepositoryPlatformModelCatalog(
       return toModelProfile(profile, provider);
     })
     .filter((profile): profile is ModelProfile => profile !== undefined);
+  const visibleProfileIds = activeProfiles
+    .filter((profile) => profile.visibleToUser)
+    .map((profile) => profile.id);
+  const setting = await repository.getSystemSetting(PLATFORM_MODEL_SETTING_KEY);
+  const enabledModelProfileIds = new Set(
+    normalizePlatformModelProfileIds(setting?.value, visibleProfileIds),
+  );
+  const publishedProfiles = activeProfiles.filter(
+    (profile) => profile.visibleToUser && enabledModelProfileIds.has(profile.id),
+  );
 
   return {
     source: "admin",
-    profiles: activeProfiles,
-    options: activeProfiles
-      .filter((profile) => profile.visibleToUser)
+    profiles: publishedProfiles,
+    options: publishedProfiles
       .map((profile) => {
         const record = profileRecords.find((item) => item.id === profile.id);
         const provider = record

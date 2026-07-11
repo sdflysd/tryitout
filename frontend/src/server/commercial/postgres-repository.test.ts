@@ -1324,9 +1324,49 @@ test("postgres repository finds active commercial task by user id", async () => 
 
   assert.equal(result?.id, "task_1");
   assert.match(queries[0].sql, /from simulation_tasks/i);
-  assert.match(queries[0].sql, /status in \('queued', 'running'\)/i);
+  assert.match(queries[0].sql, /status in \('queued', 'running', 'recoverable_failed'\)/i);
   assert.match(queries[0].sql, /order by queued_at asc, created_at asc/i);
   assert.deepEqual(queries[0].params, ["user_1"]);
+});
+
+test("postgres repository saves and reads commercial checkpoints", async () => {
+  const { repo: writeRepo, queries: writeQueries } = createCapturingRepository();
+  await writeRepo.saveCommercialCheckpoint({
+    id: "checkpoint_1",
+    taskId: "task_1",
+    stageIndex: 2,
+    stepName: "simulate_stage",
+    checkpoint: { safetyChecked: true, nextStep: "simulate_stage" },
+    createdAt: "created",
+  });
+
+  assert.match(writeQueries[0].sql, /insert into simulation_checkpoints/i);
+  assert.deepEqual(writeQueries[0].params, [
+    "checkpoint_1",
+    "task_1",
+    2,
+    "simulate_stage",
+    JSON.stringify({ safetyChecked: true, nextStep: "simulate_stage" }),
+    "created",
+  ]);
+
+  const { repo: readRepo, queries: readQueries } = createRowRepository([
+    {
+      id: "checkpoint_2",
+      task_id: "task_1",
+      stage_index: 3,
+      step_name: "simulate_stage",
+      checkpoint: { safetyChecked: true, nextStep: "generate_report" },
+      created_at: "created",
+    },
+  ]);
+
+  const checkpoint = await readRepo.getLatestCommercialCheckpoint("task_1");
+
+  assert.equal(checkpoint?.id, "checkpoint_2");
+  assert.equal(checkpoint?.stageIndex, 3);
+  assert.equal(checkpoint?.checkpoint.nextStep, "generate_report");
+  assert.deepEqual(readQueries[0].params, ["task_1"]);
 });
 
 test("postgres repository finds commercial task by idempotency key", async () => {
@@ -1470,7 +1510,8 @@ test("postgres repository supplies defaults for not-null optional fields", async
   assert.equal(queries[0].params?.[8], 0);
   assert.equal(queries[0].params?.[9], 1);
   assert.equal(queries[0].params?.[11], "{}");
-  assert.equal(queries[0].params?.[14], "created");
+  assert.equal(queries[0].params?.[12], null);
+  assert.equal(queries[0].params?.[15], "created");
   assert.equal(queries[1].params?.[7], 0);
   assert.equal(queries[2].params?.[3], 1);
   assert.equal(queries[3].params?.[16], 0);
@@ -2746,6 +2787,7 @@ test("postgres repository maps model provider writes and reads", async () => {
     status: "active",
     lastTestedAt: "tested",
     lastTestStatus: "passed",
+    lastTestError: "ok",
     createdAt: "created",
     updatedAt: "updated",
   });
@@ -2765,6 +2807,7 @@ test("postgres repository maps model provider writes and reads", async () => {
     "active",
     "tested",
     "passed",
+    "ok",
     "created",
     "updated",
   ]);
@@ -2784,6 +2827,7 @@ test("postgres repository maps model provider writes and reads", async () => {
       status: "disabled",
       last_tested_at: new Date("2026-07-07T00:00:00.000Z"),
       last_test_status: "failed",
+      last_test_error: "model rejected prompt",
       created_at: "created",
       updated_at: new Date("2026-07-07T00:01:00.000Z"),
     },
@@ -2802,6 +2846,7 @@ test("postgres repository maps model provider writes and reads", async () => {
       status: "disabled",
       lastTestedAt: "2026-07-07T00:00:00.000Z",
       lastTestStatus: "failed",
+      lastTestError: "model rejected prompt",
       createdAt: "created",
       updatedAt: "2026-07-07T00:01:00.000Z",
     },

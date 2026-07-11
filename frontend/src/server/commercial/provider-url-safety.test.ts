@@ -58,6 +58,26 @@ test("provider URL safety rejects DNS records resolving to blocked addresses", a
   );
 });
 
+test("provider URL safety permits blocked DNS records only for explicitly allowed hostnames", async () => {
+  const result = await assertSafeProviderUrl("https://grok.mini2000.top/v1", {
+    resolveHostname: async () => ["198.18.2.90"],
+    allowedHostnames: ["grok.mini2000.top"],
+  });
+
+  assert.deepEqual(result, {
+    url: "https://grok.mini2000.top/v1",
+    hostname: "grok.mini2000.top",
+    addresses: ["198.18.2.90"],
+  });
+
+  await assert.rejects(
+    assertSafeProviderUrl("https://127.0.0.1/v1", {
+      allowedHostnames: ["127.0.0.1"],
+    }),
+    /private|blocked/i,
+  );
+});
+
 test("provider URL safety rejects blocked redirects", async () => {
   await assert.rejects(
     assertSafeProviderUrl("https://api.example.test/v1", {

@@ -85,6 +85,7 @@ export interface PublicModelProviderDto {
   status: "active" | "disabled";
   lastTestedAt?: string;
   lastTestStatus?: "passed" | "failed";
+  lastTestError?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -27,12 +27,17 @@ test("commercial mode resolves required URLs and numeric budgets", () => {
     ACCESS_CODE_PEPPER: "pepper-with-at-least-32-characters",
     USER_SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
     MAX_WEIGHTED_CONCURRENCY: "12",
+    ALLOWED_MODEL_PROVIDER_HOSTNAMES: "grok.mini2000.top, API.EXAMPLE.test. ,grok.mini2000.top",
   });
 
   assert.equal(config.enabled, true);
   assert.equal(config.databaseUrl, databaseUrl);
   assert.equal(config.redisUrl, redisUrl);
   assert.equal(config.maxWeightedConcurrency, 12);
+  assert.deepEqual(config.allowedModelProviderHostnames, [
+    "grok.mini2000.top",
+    "api.example.test",
+  ]);
 });
 
 test("commercial mode requires a base64 encoded 32-byte user secret encryption key", () => {

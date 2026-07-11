@@ -263,11 +263,92 @@ test("worker records step-run cost logs", async () => {
   assert.equal(costs[0]?.status, "completed");
 });
 
-test("worker marks failure and releases credits on errors", async () => {
+test("worker marks validation failures non-recoverable and releases credits", async () => {
   const scenario = await createScenario({ balance: 10 });
   const created = await scenario.service.createTask(makeCreateInput());
   const claim = await scenario.queue.claimNext();
   assert.ok(claim);
+
+  await assert.rejects(
+    runSimulationQueueJob({
+      claim,
+      queue: scenario.queue,
+      repository: scenario.repo,
+      taskService: scenario.service,
+      workerId: "worker_1",
+      runSimulation: async () => {
+        throw Object.assign(new Error("Invalid simulation input"), { status: 400 });
+      },
+      now: () => scenario.now.next(),
+      createId: (prefix = "id") => scenario.ids.create(prefix),
+    }),
+    /Invalid simulation input/,
+  );
+
+  const task = await scenario.repo.getCommercialTask(created.task.id);
+  const account = await scenario.repo.getCreditAccount("user_1");
+  const runs = await scenario.repo.listSimulationTaskRuns(created.task.id);
+  assert.equal(task?.status, "failed");
+  assert.equal(task?.errorCode, "invalid_simulation_input");
+  assert.equal(account?.balance, 10);
+  assert.equal(account?.frozenCredits, 0);
+  assert.equal(runs[0]?.status, "failed");
+  assert.equal(runs[0]?.errorCode, "invalid_simulation_input");
+});
+
+test("worker marks transient provider timeout recoverable even before a checkpoint exists", async () => {
+  const scenario = await createScenario({ balance: 10 });
+  const created = await scenario.service.createTask(makeCreateInput());
+  const claim = await scenario.queue.claimNext();
+  assert.ok(claim);
+
+  await assert.rejects(
+    runSimulationQueueJob({
+      claim,
+      queue: scenario.queue,
+      repository: scenario.repo,
+      taskService: scenario.service,
+      workerId: "worker_1",
+      runSimulation: async () => {
+        throw Object.assign(
+          new Error("OpenAI-compatible request start timeout"),
+          { code: "ETIMEDOUT" },
+        );
+      },
+      now: () => scenario.now.next(),
+      createId: (prefix = "id") => scenario.ids.create(prefix),
+    }),
+    /request start timeout/,
+  );
+
+  const task = await scenario.repo.getCommercialTask(created.task.id);
+  const account = await scenario.repo.getCreditAccount("user_1");
+  const checkpoint = await scenario.repo.getLatestCommercialCheckpoint(created.task.id);
+  assert.equal(task?.status, "recoverable_failed");
+  assert.equal(task?.errorCode, "openai_compatible_request_start_timeout");
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
+  assert.equal(checkpoint?.checkpoint.safetyChecked, undefined);
+  assert.equal(checkpoint?.checkpoint.nextStep, "safety_check");
+});
+
+test("worker marks failures recoverable when a checkpoint exists", async () => {
+  const scenario = await createScenario({ balance: 10 });
+  const created = await scenario.service.createTask(makeCreateInput());
+  const claim = await scenario.queue.claimNext();
+  assert.ok(claim);
+  await scenario.repo.saveCommercialCheckpoint({
+    id: "checkpoint_1",
+    taskId: created.task.id,
+    stageIndex: 3,
+    stepName: "simulate_stage",
+    checkpoint: {
+      safetyChecked: true,
+      completedStages: [{ stageIndex: 3 } as never],
+      nextStep: "simulate_stage",
+    },
+    createdAt: "2026-07-07T00:02:00.000Z",
+  });
 
   await assert.rejects(
     runSimulationQueueJob({
@@ -287,13 +368,10 @@ test("worker marks failure and releases credits on errors", async () => {
 
   const task = await scenario.repo.getCommercialTask(created.task.id);
   const account = await scenario.repo.getCreditAccount("user_1");
-  const runs = await scenario.repo.listSimulationTaskRuns(created.task.id);
-  assert.equal(task?.status, "failed");
+  assert.equal(task?.status, "recoverable_failed");
   assert.equal(task?.errorCode, "provider_timed_out");
-  assert.equal(account?.balance, 10);
-  assert.equal(account?.frozenCredits, 0);
-  assert.equal(runs[0]?.status, "failed");
-  assert.equal(runs[0]?.errorCode, "provider_timed_out");
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
 });
 
 test("weighted capacity is released in finally", async () => {
@@ -334,6 +412,13 @@ async function createScenario(
   await repo.saveUser(makeUser("user_2"));
   await repo.saveCreditAccount(makeCreditAccount("user_1", options.balance ?? 10));
   await repo.saveCreditAccount(makeCreditAccount("user_2", options.balance ?? 10));
+  await repo.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["anthropic_sonnet_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   const creditService = new CreditService({
     repository: repo,
     accessCodePepper: ACCESS_CODE_PEPPER,

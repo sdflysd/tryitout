@@ -95,6 +95,43 @@ test("model settings page renders BYOK provider settings when BYOK is selected",
   assert.match(html, /Test provider/);
 });
 
+test("model settings page shows BYOK provider test failure details", () => {
+  const html = renderToStaticMarkup(
+    <AccountPanel
+      language="en-US"
+      modelPage
+      user={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "pro",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      providerMode="byok"
+      byokAvailable
+      modelProvider={{
+        id: "provider_1",
+        provider: "openai",
+        displayName: "OpenAI-compatible",
+        baseUrl: "https://api.openai.com/v1",
+        apiKeyMask: "sk-liv...3456",
+        status: "active",
+        lastTestStatus: "failed",
+        lastTestError: "Model grok-4.2 failed: 401 Unauthorized",
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+    />,
+  );
+
+  assert.match(html, /Test failed/);
+  assert.match(html, /Failure reason: Model grok-4\.2 failed: 401 Unauthorized/);
+});
+
 test("model settings page keeps BYOK configuration collapsed until selected", () => {
   const html = renderToStaticMarkup(
     <AccountPanel
@@ -265,7 +302,7 @@ test("account panel summary links to model settings without embedding model setu
   assert.doesNotMatch(html, /BYOK model settings/);
 });
 
-test("account panel renders selectable platform model options", () => {
+test("account panel lets users select an admin-enabled platform model", () => {
   const html = renderToStaticMarkup(
     <AccountPanel
       language="en-US"
@@ -311,6 +348,9 @@ test("account panel renders selectable platform model options", () => {
   assert.match(html, /gemini-3\.5-flash/);
   assert.match(html, /Claude Sonnet Balanced/);
   assert.match(html, /claude-sonnet-4-20250514/);
+  assert.match(html, /<button[^>]*type="button"[^>]*data-model-profile-id="gemini_flash_balanced"/);
+  assert.match(html, /<button[^>]*type="button"[^>]*data-model-profile-id="anthropic_sonnet_balanced"/);
+  assert.doesNotMatch(html, /<select[^>]*aria-label="Platform model choice"/);
 });
 
 test("account panel only renders platform models supplied by admin configuration", () => {

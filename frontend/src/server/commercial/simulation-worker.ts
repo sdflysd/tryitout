@@ -12,6 +12,7 @@ import type {
   SimulationTaskRunRecord,
 } from "./types.js";
 import { getSimulationJobWeight } from "./simulation-queue.js";
+import type { SimulationCheckpointSnapshot } from "../simulations/multi-agent-runner.js";
 
 export type SimulationWorkerStepRunInput = Omit<
   SimulationStepRunCostRecord,
@@ -105,7 +106,18 @@ export async function runSimulationQueueJob(
       completedAt: failedAt,
     };
     await options.repository.saveSimulationTaskRun(taskRun);
-    await options.taskService.markFailed({ taskId, error });
+    const checkpoint = await options.repository.getLatestCommercialCheckpoint(taskId);
+    const recoverableCheckpoint = checkpoint?.checkpoint ??
+      (isRecoverableWorkerError(error) ? buildInitialRecoverableCheckpoint() : undefined);
+    if (recoverableCheckpoint !== undefined) {
+      await options.taskService.markRecoverableFailed({
+        taskId,
+        error,
+        checkpoint: recoverableCheckpoint,
+      });
+    } else {
+      await options.taskService.markFailed({ taskId, error });
+    }
     throw error;
   } finally {
     await options.queue.release(options.claim.claimId);
@@ -159,4 +171,77 @@ function normalizeErrorCode(error: unknown): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
   return normalized || "unknown_error";
+}
+
+function buildInitialRecoverableCheckpoint(): SimulationCheckpointSnapshot {
+  return {
+    nextStep: "safety_check",
+  };
+}
+
+function isRecoverableWorkerError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return true;
+  }
+
+  const code = getErrorCode(error);
+  if (
+    code !== undefined &&
+    [
+      "ETIMEDOUT",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+      "ABORT_ERR",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_SOCKET",
+      "AI_JSON_PARSE_ERROR",
+    ].includes(code)
+  ) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /timeout|timed out|deadline|network|fetch failed|rate limit|too many requests|temporar|unavailable|service unavailable|malformed json|unterminated string/i
+    .test(error.message);
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const record = error as Record<string, unknown>;
+  const status = record.status ?? record.statusCode;
+  if (typeof status === "number") {
+    return Number.isInteger(status) ? status : undefined;
+  }
+  if (typeof status === "string") {
+    const parsed = Number(status);
+    return Number.isInteger(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" ? code.toUpperCase() : undefined;
 }

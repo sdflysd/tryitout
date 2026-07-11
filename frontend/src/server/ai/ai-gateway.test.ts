@@ -96,6 +96,39 @@ test("createUserOpenAiCompatibleGateway resolves requests to user BYOK profile m
   assert.equal(adapter.calls[0], request);
 });
 
+test("createUserOpenAiCompatibleGateway maps BYOK fast balanced and deep models from step policy", () => {
+  const gateway = createUserOpenAiCompatibleGateway({
+    apiKey: "sk-user-secret",
+    baseUrl: "https://api.openai.com/v1",
+    model: {
+      fast: "grok-fast",
+      balanced: "grok-balanced",
+      deep: "grok-deep",
+    },
+    adapter: new StubOpenAiCompatibleAdapter(),
+  });
+
+  const safety = gateway.createRequest({
+    step: "safety_check",
+    scenarioType: "life_choice",
+    userPrompt: "{}",
+  });
+  const agents = gateway.createRequest({
+    step: "generate_agents",
+    scenarioType: "life_choice",
+    userPrompt: "{}",
+  });
+  const report = gateway.createRequest({
+    step: "generate_report",
+    scenarioType: "life_choice",
+    userPrompt: "{}",
+  });
+
+  assert.equal(safety.modelProfile.modelId, "grok-fast");
+  assert.equal(agents.modelProfile.modelId, "grok-balanced");
+  assert.equal(report.modelProfile.modelId, "grok-deep");
+});
+
 test("createRequest uses json_schema response format when a schema is provided", () => {
   const gateway = new AiGateway("test-key", { adapters: [] });
   const schema = {

@@ -204,7 +204,7 @@ test("AdminApp renders dedicated operations pages instead of reusing overview", 
     { view: "Credits", marker: /Credit Ledger/ },
     { view: "Queue", marker: /Queue Operations/ },
     { view: "Feedback", marker: /Feedback Operations/ },
-    { view: "Settings", marker: /Settings Operations/ },
+    { view: "Settings", marker: /Model Configuration Workbench/ },
     { view: "Audit Logs", marker: /Audit Trail/ },
   ];
 

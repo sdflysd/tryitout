@@ -33,6 +33,7 @@ test("commercial constants expose platform account, credit, task, and audit stat
   assert.deepEqual(COMMERCIAL_TASK_STATUSES, [
     "queued",
     "running",
+    "recoverable_failed",
     "completed",
     "failed",
     "cancelled",

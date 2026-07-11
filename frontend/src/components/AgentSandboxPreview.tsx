@@ -2,6 +2,7 @@ import { Network, Radar, Sparkles, Waves } from "lucide-react";
 import React from "react";
 
 import AgentLifeformNetwork from "./AgentLifeformNetwork";
+import AgentSandboxOrb from "./AgentSandboxOrb";
 import { getAgentSandboxScenario } from "./agent-sandbox-model";
 import type { SimulationType } from "../types";
 import { DEFAULT_LANGUAGE, Language } from "../language";
@@ -100,6 +101,20 @@ export default function AgentSandboxPreview({
       </div>
 
       <div className="relative z-10 grid gap-4">
+        <AgentSandboxOrb
+          scenario={scenario}
+          interactionMode="support"
+          activeAgentIds={[
+            scenario.agents[0]?.id,
+            scenario.agents[3]?.id,
+            scenario.agents[5]?.id,
+          ].filter((agentId): agentId is string => Boolean(agentId))}
+          activeStageLabel={isEnglish ? "30-day preview" : "30 天预演"}
+          activeStageTitle={scenario.centerLabel}
+          progressPercent={32}
+          language={language}
+        />
+
         <AgentLifeformNetwork
           scenario={scenario}
           interactionMode="support"

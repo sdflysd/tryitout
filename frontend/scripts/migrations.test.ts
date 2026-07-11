@@ -52,6 +52,11 @@ test("admin management migration adds access-code deletion and platform model co
 test("fresh platformized commercial schema includes admin management columns and tables", () => {
   const sql = readMigration("001_platformized_commercial.sql");
 
+  assert.match(sql, /'recoverable_failed'/i);
+  assert.match(sql, /user_input\s+jsonb/i);
+  assert.match(sql, /simulation_tasks_user_input_object_check/i);
+  assert.match(sql, /create\s+table\s+simulation_checkpoints/i);
+  assert.match(sql, /simulation_checkpoints_checkpoint_object_check/i);
   assert.match(sql, /deleted_at\s+timestamptz/i);
   assert.match(sql, /access_code_batches[\s\S]*entitlement_duration_days\s+integer/i);
   assert.match(sql, /access_codes[\s\S]*entitlement_duration_days\s+integer/i);
@@ -74,6 +79,18 @@ test("fresh platformized commercial schema includes admin management columns and
   ]) {
     assert.match(sql, new RegExp(`'${action}'`, "i"));
   }
+});
+
+test("commercial checkpoint migration adds recoverable status and checkpoint storage", () => {
+  const sql = readMigration("008_commercial_simulation_checkpoints.sql");
+
+  assert.match(sql, /drop\s+constraint\s+if\s+exists\s+simulation_tasks_status_check/i);
+  assert.match(sql, /'recoverable_failed'/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+user_input\s+jsonb/i);
+  assert.match(sql, /simulation_tasks_user_input_object_check/i);
+  assert.match(sql, /create\s+table\s+if\s+not\s+exists\s+simulation_checkpoints/i);
+  assert.match(sql, /checkpoint\s+jsonb\s+not\s+null/i);
+  assert.match(sql, /simulation_checkpoints_task_id_created_at_idx/i);
 });
 
 test("access-code restore migration updates admin audit action constraint", () => {
@@ -116,4 +133,11 @@ test("timed access-code entitlement migration adds grant windows", () => {
   ]) {
     assert.match(sql, new RegExp(constraint, "i"));
   }
+});
+
+test("user model provider test error migration stores BYOK diagnostics", () => {
+  const sql = readMigration("007_user_model_provider_test_error.sql");
+
+  assert.match(sql, /alter\s+table\s+user_model_providers/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+last_test_error\s+text/i);
 });

@@ -78,16 +78,20 @@ export const PLATFORM_MODEL_OPTIONS: PlatformModelOption[] = [
 
 export function filterPlatformModelOptions(
   enabledModelProfileIds: string[],
+  options: PlatformModelOption[] = PLATFORM_MODEL_OPTIONS,
 ): PlatformModelOption[] {
   const enabled = new Set(enabledModelProfileIds);
-  return PLATFORM_MODEL_OPTIONS.filter((model) => enabled.has(model.id));
+  return options.filter((model) => enabled.has(model.id));
 }
 
-export function normalizePlatformModelProfileIds(value: unknown): string[] {
+export function normalizePlatformModelProfileIds(
+  value: unknown,
+  allowedModelProfileIds: Iterable<string> = PLATFORM_MODEL_OPTIONS.map((model) => model.id),
+): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  const knownIds = new Set(PLATFORM_MODEL_OPTIONS.map((model) => model.id));
+  const knownIds = new Set(allowedModelProfileIds);
   const normalized: string[] = [];
   for (const item of value) {
     if (

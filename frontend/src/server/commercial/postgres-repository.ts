@@ -11,6 +11,7 @@ import type {
   AdminAuditLogRecord,
   AnalyticsEventRecord,
   CommercialSessionRecord,
+  CommercialSimulationCheckpointRecord,
   CommercialSimulationReportRecord,
   CommercialSimulationTaskRecord,
   CommercialUserRecord,
@@ -1692,12 +1693,12 @@ export class PostgresCommercialRepository implements CommercialRepository {
         insert into simulation_tasks (
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, model_selection, input_summary, error_code,
+          idempotency_key, model_selection, user_input, input_summary, error_code,
           queued_at, started_at, completed_at, created_at, updated_at
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13::jsonb, $14, $15, $16, $17, $18, $19
+          $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20
         )
         on conflict (id) do update set
           user_id = excluded.user_id,
@@ -1711,6 +1712,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           queue_weight = excluded.queue_weight,
           idempotency_key = excluded.idempotency_key,
           model_selection = excluded.model_selection,
+          user_input = excluded.user_input,
           input_summary = excluded.input_summary,
           error_code = excluded.error_code,
           queued_at = excluded.queued_at,
@@ -1732,6 +1734,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         task.queueWeight ?? 1,
         task.idempotencyKey ?? null,
         toJsonb(task.modelSelection ?? {}),
+        nullableJsonb(task.userInput),
         toJsonb(task.inputSummary ?? {}),
         task.errorCode ?? null,
         task.queuedAt ?? task.createdAt,
@@ -1751,7 +1754,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, model_selection, input_summary, error_code,
+          idempotency_key, model_selection, user_input, input_summary, error_code,
           queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where id = $1
@@ -1770,7 +1773,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, model_selection, input_summary, error_code,
+          idempotency_key, model_selection, user_input, input_summary, error_code,
           queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         ${userId === undefined ? "" : "where user_id = $1"}
@@ -1789,7 +1792,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, model_selection, input_summary, error_code,
+          idempotency_key, model_selection, user_input, input_summary, error_code,
           queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where idempotency_key = $1
@@ -1807,11 +1810,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
-          idempotency_key, model_selection, input_summary, error_code,
+          idempotency_key, model_selection, user_input, input_summary, error_code,
           queued_at, started_at, completed_at, created_at, updated_at
         from simulation_tasks
         where user_id = $1
-          and status in ('queued', 'running')
+          and status in ('queued', 'running', 'recoverable_failed')
         order by queued_at asc, created_at asc
         limit 1
       `,
@@ -1959,6 +1962,49 @@ export class PostgresCommercialRepository implements CommercialRepository {
       params,
     );
     return rows.map(mapSimulationStepRunCost);
+  }
+
+  async saveCommercialCheckpoint(
+    checkpoint: CommercialSimulationCheckpointRecord,
+  ): Promise<void> {
+    await this.query(
+      `
+        insert into simulation_checkpoints (
+          id, task_id, stage_index, step_name, checkpoint, created_at
+        )
+        values ($1, $2, $3, $4, $5::jsonb, $6)
+        on conflict (id) do update set
+          task_id = excluded.task_id,
+          stage_index = excluded.stage_index,
+          step_name = excluded.step_name,
+          checkpoint = excluded.checkpoint,
+          created_at = excluded.created_at
+      `,
+      [
+        checkpoint.id,
+        checkpoint.taskId,
+        checkpoint.stageIndex ?? null,
+        checkpoint.stepName,
+        toJsonb(checkpoint.checkpoint),
+        checkpoint.createdAt,
+      ],
+    );
+  }
+
+  async getLatestCommercialCheckpoint(
+    taskId: string,
+  ): Promise<CommercialSimulationCheckpointRecord | undefined> {
+    const { rows } = await this.query<DbRow>(
+      `
+        select id, task_id, stage_index, step_name, checkpoint, created_at
+        from simulation_checkpoints
+        where task_id = $1
+        order by created_at desc, id desc
+        limit 1
+      `,
+      [taskId],
+    );
+    return mapOptional(rows[0], mapCommercialCheckpoint);
   }
 
   async saveCommercialReport(
@@ -2151,10 +2197,10 @@ export class PostgresCommercialRepository implements CommercialRepository {
         insert into user_model_providers (
           id, user_id, provider, display_name, base_url, encrypted_api_key,
           api_key_mask, model_fast, model_balanced, model_deep, status,
-          last_tested_at, last_test_status, created_at, updated_at
+          last_tested_at, last_test_status, last_test_error, created_at, updated_at
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
         )
         on conflict (id) do update set
           -- Updates are keyed by stable id to match InMemoryCommercialRepository.
@@ -2172,6 +2218,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           status = excluded.status,
           last_tested_at = excluded.last_tested_at,
           last_test_status = excluded.last_test_status,
+          last_test_error = excluded.last_test_error,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `,
@@ -2189,6 +2236,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         provider.status,
         provider.lastTestedAt ?? null,
         provider.lastTestStatus ?? null,
+        provider.lastTestError ?? null,
         provider.createdAt,
         provider.updatedAt,
       ],
@@ -2203,7 +2251,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         select
           id, user_id, provider, display_name, base_url, encrypted_api_key,
           api_key_mask, model_fast, model_balanced, model_deep, status,
-          last_tested_at, last_test_status, created_at, updated_at
+          last_tested_at, last_test_status, last_test_error, created_at, updated_at
         from user_model_providers
         where user_id = $1
         order by created_at asc, id asc
@@ -3079,6 +3127,13 @@ function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
   assignIfDefined(record, "queueWeight", optionalNumberField(row, "queue_weight", table));
   assignIfDefined(record, "idempotencyKey", optionalStringField(row, "idempotency_key", table));
   assignIfDefined(record, "modelSelection", optionalNonEmptyJsonObjectField(row, "model_selection", table));
+  assignIfDefined(
+    record,
+    "userInput",
+    optionalJsonObjectField(row, "user_input", table) as unknown as
+      | CommercialSimulationTaskRecord["userInput"]
+      | undefined,
+  );
   assignIfDefined(record, "inputSummary", optionalJsonObjectField(row, "input_summary", table));
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
   assignIfDefined(record, "queuedAt", optionalTimestampField(row, "queued_at", table));
@@ -3129,6 +3184,20 @@ function mapSimulationStepRunCost(row: DbRow): SimulationStepRunCostRecord {
   assignIfDefined(record, "errorCode", optionalStringField(row, "error_code", table));
   assignIfDefined(record, "completedAt", optionalTimestampField(row, "completed_at", table));
   assignIfDefined(record, "metadata", optionalJsonObjectField(row, "metadata", table));
+  return record;
+}
+
+function mapCommercialCheckpoint(row: DbRow): CommercialSimulationCheckpointRecord {
+  const table = "simulation_checkpoints";
+  const record: CommercialSimulationCheckpointRecord = {
+    id: stringField(row, "id", table),
+    taskId: stringField(row, "task_id", table),
+    stepName: stringField(row, "step_name", table),
+    checkpoint: jsonObjectField(row, "checkpoint", table) as unknown as
+      CommercialSimulationCheckpointRecord["checkpoint"],
+    createdAt: timestampField(row, "created_at", table),
+  };
+  assignIfDefined(record, "stageIndex", optionalNumberField(row, "stage_index", table));
   return record;
 }
 
@@ -3225,6 +3294,7 @@ function mapUserModelProvider(row: DbRow): UserModelProviderRecord {
   assignIfDefined(record, "modelDeep", optionalStringField(row, "model_deep", table));
   assignIfDefined(record, "lastTestedAt", optionalTimestampField(row, "last_tested_at", table));
   assignIfDefined(record, "lastTestStatus", optionalStringField(row, "last_test_status", table) as UserModelProviderRecord["lastTestStatus"]);
+  assignIfDefined(record, "lastTestError", optionalStringField(row, "last_test_error", table));
   return record;
 }
 

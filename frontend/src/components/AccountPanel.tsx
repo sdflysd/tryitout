@@ -71,7 +71,7 @@ const ACCOUNT_PANEL_COPY = {
     modelConfig: "模型配置",
     modelConfigDescription: "当前推演使用的模型来源与模型配置。",
     modelSettingsTitle: "模型设置",
-    modelSettingsDescription: "选择平台模型，或使用你自己的 API Key 发起推演。",
+    modelSettingsDescription: "高级用户可以接入自己的 OpenAI 兼容供应商；平台模型由管理员托管。",
     openModelConfig: "模型配置",
     currentSelection: "当前选择",
     usePlatformModel: "使用平台模型",
@@ -93,6 +93,7 @@ const ACCOUNT_PANEL_COPY = {
     byokLockedTitle: "我的 API Key 未开通",
     byokLockedDescription: "该能力由卡密权益授予。请兑换包含 custom_model_provider 权益的卡密后再配置。",
     testStatus: "测试",
+    testError: "失败原因",
     provider: "供应商",
     displayName: "显示名称",
     baseUrl: "OpenAI 兼容 Base URL",
@@ -128,7 +129,7 @@ const ACCOUNT_PANEL_COPY = {
     modelConfig: "Model configuration",
     modelConfigDescription: "Model source and credentials used for simulations.",
     modelSettingsTitle: "Model settings",
-    modelSettingsDescription: "Choose a platform model, or run simulations with your own API key.",
+    modelSettingsDescription: "Advanced users can connect their own OpenAI-compatible provider; platform models are managed by admins.",
     openModelConfig: "Model configuration",
     currentSelection: "Current selection",
     usePlatformModel: "Use platform model",
@@ -150,6 +151,7 @@ const ACCOUNT_PANEL_COPY = {
     byokLockedTitle: "My API key is locked",
     byokLockedDescription: "This option is granted by access-code entitlement. Redeem a code with custom_model_provider before configuring it.",
     testStatus: "Test",
+    testError: "Failure reason",
     provider: "Provider",
     displayName: "Display name",
     baseUrl: "OpenAI-compatible base URL",
@@ -207,6 +209,7 @@ const ACCOUNT_PANEL_COPY = {
   byokLockedTitle: string;
   byokLockedDescription: string;
   testStatus: string;
+  testError: string;
   provider: string;
   displayName: string;
   baseUrl: string;
@@ -700,28 +703,14 @@ function ModelSourceSelector({
           <div className="mb-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/42">
             {copy.platformModelChoice}
           </div>
-          <select
-            aria-label={copy.platformModelChoice}
-            value={selectedPlatformId}
-            onChange={(event) => {
-              onModelProfileChange?.(event.target.value);
-              onProviderModeChange?.("platform");
-            }}
-            className="min-h-9 w-full rounded-md border border-white/10 bg-black/20 px-3 text-xs font-semibold text-white outline-none focus:border-cyan-200/40 focus:ring-2 focus:ring-cyan-200/10"
-          >
-            {platformModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label} - {model.modelId}
-              </option>
-            ))}
-          </select>
-          <div className="mt-2 grid gap-2">
+          <div className="grid gap-2">
             {platformModels.map((model) => {
               const selected = model.id === selectedPlatformId;
               return (
                 <button
                   key={model.id}
                   type="button"
+                  data-model-profile-id={model.id}
                   onClick={() => {
                     onModelProfileChange?.(model.id);
                     onProviderModeChange?.("platform");
@@ -729,7 +718,7 @@ function ModelSourceSelector({
                   className={`min-h-[4.25rem] border p-3 text-left transition-colors ${
                     selected
                       ? "border-cyan-200/40 bg-cyan-200/10 text-white"
-                      : "border-white/10 bg-white/7 text-white/70 hover:border-white/20 hover:bg-white/10"
+                      : "border-white/10 bg-white/7 text-white/70 hover:border-cyan-200/25 hover:bg-white/10"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -862,6 +851,11 @@ function ByokProviderForm({
           </span>
         )}
       </div>
+      {modelProvider?.lastTestStatus === "failed" && modelProvider.lastTestError && (
+        <p className="mt-2 border border-rose-200/20 bg-rose-200/10 p-2 text-[11px] font-bold leading-relaxed text-rose-100">
+          {copy.testError}: {modelProvider.lastTestError}
+        </p>
+      )}
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/42">{copy.provider}</span>

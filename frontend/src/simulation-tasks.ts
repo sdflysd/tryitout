@@ -153,9 +153,15 @@ async function pollSimulationTaskUntilComplete(
     onProgress,
   }: RunSimulationTaskOptions = {},
 ): Promise<SimulationApiResponse> {
+  let highestProgressPercent: number | undefined;
   while (true) {
     const status = await getSimulationTaskStatus(simulationId, fetchImpl);
-    onProgress?.(toProgressEvent(status));
+    const progressEvent = toProgressEvent(status);
+    highestProgressPercent = Math.max(
+      highestProgressPercent ?? progressEvent.percent,
+      progressEvent.percent,
+    );
+    onProgress?.({ ...progressEvent, percent: highestProgressPercent });
 
     if (status.status === "completed") {
       const report = await getSimulationTaskReport(simulationId, fetchImpl);
@@ -283,7 +289,7 @@ function normalizeSimulationTaskStatusResponse(
       mode: task.interactionMode === "enabled" ? "enabled" : "legacy",
       status: normalizeTaskStatus(task.status),
       progressPercent,
-      recoverable: false,
+      recoverable: task.status === "recoverable_failed",
       ...(typeof task.currentStepName === "string"
         ? { currentStepName: task.currentStepName }
         : {}),

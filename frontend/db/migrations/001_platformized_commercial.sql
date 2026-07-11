@@ -137,6 +137,7 @@ CREATE TABLE simulation_tasks (
   queue_weight integer NOT NULL DEFAULT 1,
   idempotency_key text,
   model_selection jsonb NOT NULL DEFAULT '{}'::jsonb,
+  user_input jsonb,
   input_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
   error_code text,
   queued_at timestamptz NOT NULL DEFAULT now(),
@@ -147,11 +148,14 @@ CREATE TABLE simulation_tasks (
   CONSTRAINT simulation_tasks_interaction_mode_check CHECK (interaction_mode IN ('legacy', 'enabled')),
   CONSTRAINT simulation_tasks_provider_mode_check CHECK (provider_mode IN ('platform', 'byok')),
   CONSTRAINT simulation_tasks_status_check CHECK (
-    status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'refunded')
+    status IN ('queued', 'running', 'recoverable_failed', 'completed', 'failed', 'cancelled', 'refunded')
   ),
   CONSTRAINT simulation_tasks_credit_cost_check CHECK (credit_cost >= 0),
   CONSTRAINT simulation_tasks_queue_weight_check CHECK (queue_weight > 0),
   CONSTRAINT simulation_tasks_model_selection_object_check CHECK (jsonb_typeof(model_selection) = 'object'),
+  CONSTRAINT simulation_tasks_user_input_object_check CHECK (
+    user_input IS NULL OR jsonb_typeof(user_input) = 'object'
+  ),
   CONSTRAINT simulation_tasks_input_summary_object_check CHECK (jsonb_typeof(input_summary) = 'object'),
   CONSTRAINT simulation_tasks_idempotency_key_unique UNIQUE (idempotency_key)
 );
@@ -245,6 +249,16 @@ CREATE TABLE simulation_step_runs (
   CONSTRAINT simulation_step_runs_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
 );
 
+CREATE TABLE simulation_checkpoints (
+  id text PRIMARY KEY,
+  task_id text NOT NULL REFERENCES simulation_tasks(id) ON DELETE CASCADE,
+  stage_index integer,
+  step_name text NOT NULL,
+  checkpoint jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT simulation_checkpoints_checkpoint_object_check CHECK (jsonb_typeof(checkpoint) = 'object')
+);
+
 CREATE TABLE simulation_reports (
   id text PRIMARY KEY,
   task_id text NOT NULL REFERENCES simulation_tasks(id) ON DELETE CASCADE,
@@ -298,6 +312,7 @@ CREATE TABLE user_model_providers (
   status text NOT NULL DEFAULT 'active',
   last_tested_at timestamptz,
   last_test_status text,
+  last_test_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT user_model_providers_user_provider_unique UNIQUE (user_id, provider),
@@ -426,6 +441,8 @@ CREATE INDEX simulation_tasks_user_id_idx ON simulation_tasks(user_id);
 CREATE INDEX simulation_task_runs_task_id_idx ON simulation_task_runs(task_id);
 CREATE INDEX worker_heartbeats_current_task_id_idx ON worker_heartbeats(current_task_id);
 CREATE INDEX simulation_step_runs_task_id_idx ON simulation_step_runs(task_id);
+CREATE INDEX simulation_checkpoints_task_id_created_at_idx
+  ON simulation_checkpoints(task_id, created_at DESC);
 CREATE INDEX simulation_reports_task_id_idx ON simulation_reports(task_id);
 CREATE INDEX analytics_events_event_type_idx ON analytics_events(event_type);
 CREATE INDEX user_feedback_user_id_idx ON user_feedback(user_id);

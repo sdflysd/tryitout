@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import React from "react";
 
 import AgentLifeformNetwork from "./AgentLifeformNetwork";
+import AgentSandboxOrb from "./AgentSandboxOrb";
 import { getAgentSandboxScenario, getLiveSandboxPhase } from "./agent-sandbox-model";
 import type { SimulationProgressEvent, SimulationType } from "../types";
 import { DEFAULT_LANGUAGE, Language } from "../language";
@@ -168,16 +169,28 @@ export default function AgentSandboxLive({
         </div>
 
         <div className="relative z-10 mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.72fr)]">
-          <AgentLifeformNetwork
-            scenario={scenario}
-            interactionMode={phase.interactionMode}
-            activeAgentIds={phase.activeAgentIds}
-            activeStageLabel={activeStage.label}
-            activeStageTitle={activeStage.title}
-            progressPercent={percent}
-            variant="live"
-            language={language}
-          />
+          <div className="grid min-w-0 gap-4">
+            <AgentSandboxOrb
+              scenario={scenario}
+              interactionMode={phase.interactionMode}
+              activeAgentIds={phase.activeAgentIds}
+              activeStageLabel={activeStage.label}
+              activeStageTitle={activeStage.title}
+              progressPercent={percent}
+              language={language}
+            />
+
+            <AgentLifeformNetwork
+              scenario={scenario}
+              interactionMode={phase.interactionMode}
+              activeAgentIds={phase.activeAgentIds}
+              activeStageLabel={activeStage.label}
+              activeStageTitle={activeStage.title}
+              progressPercent={percent}
+              variant="live"
+              language={language}
+            />
+          </div>
 
           <aside className="min-w-0 space-y-4">
             <div className="rounded-3xl border border-white/10 bg-white/[0.055] p-4 shadow-xl shadow-black/20 backdrop-blur-xl">

@@ -208,6 +208,71 @@ test("account path links to a dedicated model configuration page", async () => {
   }
 });
 
+test("account path honors stored platform model selection on first render", async () => {
+  const { default: App, MODEL_PROFILE_STORAGE_KEY } = await import("./App.js");
+  const originalLocation = globalThis.location;
+  const originalLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/account" },
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) =>
+        key === MODEL_PROFILE_STORAGE_KEY ? "gpt_5_5_balanced" : null,
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    },
+  });
+
+  try {
+    const html = renderToStaticMarkup(<App
+      initialLanguage="en-US"
+      initialCommercialUser={{
+        id: "user_1",
+        email: "buyer@example.test",
+        emailNormalized: "buyer@example.test",
+        role: "user",
+        tier: "business",
+        status: "active",
+        features: ["custom_model_provider"],
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+      }}
+      initialPlatformModels={[
+        {
+          id: "gemini_3_1_pro",
+          label: "gemini-3.1-pro",
+          providerLabel: "lemon",
+          modelId: "gemini-3.1-pro",
+          quality: "balanced",
+        },
+        {
+          id: "gpt_5_5_balanced",
+          label: "gpt-5.5",
+          providerLabel: "lemon",
+          modelId: "gpt-5.5",
+          quality: "balanced",
+        },
+      ]}
+    />);
+
+    assert.match(html, /Current selection/);
+    assert.match(html, /gpt-5\.5 \(gpt-5\.5\)/);
+    assert.doesNotMatch(html, /gemini-3\.1-pro \(gemini-3\.1-pro\)/);
+  } finally {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: originalLocalStorage,
+    });
+  }
+});
+
 test("model configuration path renders selectable platform and BYOK settings", async () => {
   const { default: App } = await import("./App.js");
   const originalLocation = globalThis.location;
@@ -356,6 +421,12 @@ test("commercial provider helpers gate BYOK and calculate selected credit costs"
         modelSelection?: ModelSelection;
       },
     ) => unknown;
+    buildCommercialModelSelection?: (input: {
+      providerMode: "platform" | "byok";
+      selectedModelProfileId?: string;
+      selectedCredentialId?: string;
+      deepAgentMode: boolean;
+    }) => ModelSelection | undefined;
   };
 
   assert.equal(appModule.canConfigureByokProvider?.({
@@ -413,6 +484,20 @@ test("commercial provider helpers gate BYOK and calculate selected credit costs"
       mode: "deep",
     },
     idempotencyKey: "simulation_123_test-id",
+  });
+  assert.deepEqual(appModule.buildCommercialModelSelection?.({
+    providerMode: "platform",
+    selectedModelProfileId: "anthropic_sonnet_balanced",
+    deepAgentMode: true,
+  }), {
+    modelProfileId: "anthropic_sonnet_balanced",
+  });
+  assert.deepEqual(appModule.buildCommercialModelSelection?.({
+    providerMode: "byok",
+    selectedCredentialId: "provider_1",
+    deepAgentMode: true,
+  }), {
+    userCredentialId: "provider_1",
   });
 });
 

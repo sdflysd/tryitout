@@ -43,7 +43,7 @@ export function getSimulationJobWeight(
 
 export function toSimulationQueueJob(
   task: CommercialSimulationTaskRecord,
-  input: { userInput: UserInput },
+  input: { userInput: UserInput; idempotencyKey?: string },
 ): SimulationQueueJob {
   return {
     taskId: task.id,
@@ -54,7 +54,7 @@ export function toSimulationQueueJob(
     modelSelection: task.modelSelection,
     weight: getSimulationJobWeight(task),
     priority: task.priority ?? 0,
-    idempotencyKey: task.idempotencyKey ?? task.id,
+    idempotencyKey: input.idempotencyKey ?? task.idempotencyKey ?? task.id,
     queuedAt: task.queuedAt ?? task.createdAt,
   };
 }

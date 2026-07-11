@@ -164,6 +164,48 @@ test("provider test timeout is enforced and updates public status", async () => 
   assert.equal("encryptedApiKey" in tested, false);
 });
 
+test("provider test calls the configured BYOK provider models and exposes failure reason safely", async () => {
+  const calls: unknown[] = [];
+  const { repo, service } = createScenario({
+    testProviderConnection: (input) => {
+      calls.push(input);
+      return Promise.resolve({ ok: false, error: "model grok-4.2 rejected test prompt" });
+    },
+  });
+  await repo.saveUser(makeUser({
+    tier: "pro",
+    features: ["custom_model_provider"],
+  }));
+  await service.saveProvider({
+    userId: "user_1",
+    provider: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "sk-live-secret123456",
+    modelFast: "grok-4.2-fast",
+    modelBalanced: "grok-4.2",
+    modelDeep: "grok-4.2-deep",
+  });
+
+  const tested = await service.testProviderConnection("user_1");
+
+  assert.deepEqual(calls, [
+    {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-live-secret123456",
+      provider: "openai",
+      models: {
+        fast: "grok-4.2-fast",
+        balanced: "grok-4.2",
+        deep: "grok-4.2-deep",
+      },
+    },
+  ]);
+  assert.equal(tested.lastTestStatus, "failed");
+  assert.equal(tested.lastTestError, "model grok-4.2 rejected test prompt");
+  assert.equal(JSON.stringify(tested).includes("sk-live-secret123456"), false);
+});
+
 test("deleteProvider disables active BYOK provider and resolveProviderForTask falls back to platform", async () => {
   const { repo, service } = createScenario();
   await repo.saveUser(makeUser({
@@ -191,7 +233,7 @@ test("deleteProvider disables active BYOK provider and resolveProviderForTask fa
 function createScenario(
   options: {
     randomBytes?: (length: number) => Buffer;
-    testProviderConnection?: () => Promise<{ ok: boolean }>;
+    testProviderConnection?: NonNullable<ConstructorParameters<typeof ModelProviderService>[0]["testProviderConnection"]>;
   } = {},
 ) {
   const repo = new InMemoryCommercialRepository();

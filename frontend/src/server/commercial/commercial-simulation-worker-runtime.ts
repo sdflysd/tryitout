@@ -1,16 +1,19 @@
+import { randomUUID } from "node:crypto";
+
 import { AiGateway, createUserOpenAiCompatibleGateway } from "../ai/ai-gateway.js";
 import type { AiCallLogEntry } from "../ai/call-log.js";
 import { estimateCostForModel } from "../simulations/cost-ledger.js";
 import { addSimulationAiCallLogListener } from "../simulations/token-usage-log.js";
 import type { MultiAgentSimulationResult } from "../simulations/multi-agent-runner.js";
+import type { SimulationCheckpointSnapshot } from "../simulations/multi-agent-runner.js";
 import { runMultiAgentSimulation } from "../simulations/multi-agent-runner.js";
 import type {
   AgentRuntimeCapabilities,
-  ModelSelectionMode,
   SimulationApiResponse,
   SimulationProgressEvent,
   UserInput,
 } from "../../types.js";
+import type { ModelQuality } from "../ai/types.js";
 import { resolveInteractionMode } from "../interaction-mode.js";
 import { resolveAgentRuntimeCapabilities } from "../agent-runtime/capabilities.js";
 import type { ResolvedProviderForTask } from "./model-provider-service.js";
@@ -28,6 +31,8 @@ type RunCommercialSimulation = (input: {
   userInput: UserInput;
   interactionMode: SimulationQueueJob["interactionMode"];
   modelSelection?: SimulationQueueJob["modelSelection"];
+  resumeFrom?: SimulationCheckpointSnapshot;
+  onCheckpoint?: Parameters<typeof runMultiAgentSimulation>[0]["onCheckpoint"];
   onProgress: Parameters<typeof runMultiAgentSimulation>[0]["onProgress"];
 }) => Promise<MultiAgentSimulationResult>;
 
@@ -53,9 +58,27 @@ export function createCommercialWorkerRunSimulation(
 ): SimulationWorkerRunSimulation {
   return async ({ recordStepRun }) => {
     const gateway = await resolveGateway(options);
+    const latestCheckpoint = await options.services.repository
+      ?.getLatestCommercialCheckpoint(options.job.taskId);
     const pendingStepWrites: Promise<void>[] = [];
+    const pendingCheckpointWrites: Promise<void>[] = [];
     const enqueueStepWrite = (run: SimulationWorkerStepRunInput): void => {
       pendingStepWrites.push(recordStepRun(run));
+    };
+    const enqueueCheckpointWrite = (checkpoint: SimulationCheckpointSnapshot): void => {
+      if (!options.services.repository) {
+        return;
+      }
+      pendingCheckpointWrites.push(
+        options.services.repository.saveCommercialCheckpoint({
+          id: `simulation_checkpoint_${randomUUID()}`,
+          taskId: options.job.taskId,
+          stageIndex: checkpoint.completedStages?.at(-1)?.stageIndex,
+          stepName: checkpoint.nextStep ?? "checkpoint",
+          checkpoint,
+          createdAt: new Date().toISOString(),
+        }),
+      );
     };
     const unsubscribe = recordCommercialAiCalls({
       gateway,
@@ -77,11 +100,16 @@ export function createCommercialWorkerRunSimulation(
         userInput: options.job.userInput,
         interactionMode,
         modelSelection: options.job.modelSelection,
+        resumeFrom: latestCheckpoint?.checkpoint,
+        onCheckpoint: async (checkpoint) => {
+          enqueueCheckpointWrite(checkpoint);
+        },
         onProgress: async (event) => {
           enqueueStepWrite(toProgressStepRun(event));
         },
       });
       await settleStepWrites(pendingStepWrites);
+      await settleStepWrites(pendingCheckpointWrites);
 
       return {
         ...result,
@@ -93,6 +121,7 @@ export function createCommercialWorkerRunSimulation(
     } finally {
       unsubscribe();
       await settleStepWrites(pendingStepWrites);
+      await settleStepWrites(pendingCheckpointWrites);
     }
   };
 }
@@ -108,13 +137,10 @@ async function resolveGateway(
     return createUserOpenAiCompatibleGateway({
       apiKey: provider.apiKey,
       baseUrl: provider.baseUrl,
-      model: resolveByokModel(provider, options.job.modelSelection?.mode),
+      model: resolveByokModels(provider),
     });
   }
 
-  if (options.getPlatformGateway) {
-    return options.getPlatformGateway();
-  }
   if (options.services.repository && options.platformSecretEncryptionKey) {
     const repositoryGateway = await createRepositoryPlatformGateway({
       repository: options.services.repository,
@@ -123,6 +149,9 @@ async function resolveGateway(
     if (repositoryGateway !== undefined) {
       return repositoryGateway;
     }
+  }
+  if (options.getPlatformGateway) {
+    return options.getPlatformGateway();
   }
 
   return new AiGateway();
@@ -151,17 +180,15 @@ function toStepRunStatus(
   return status === "queued" ? "started" : status;
 }
 
-function resolveByokModel(
+function resolveByokModels(
   provider: Extract<ResolvedProviderForTask, { mode: "byok" }>,
-  mode?: ModelSelectionMode,
-): string {
-  if (mode === "fast") {
-    return provider.modelFast ?? provider.modelBalanced ?? provider.modelDeep ?? "gpt-4o";
-  }
-  if (mode === "deep") {
-    return provider.modelDeep ?? provider.modelBalanced ?? provider.modelFast ?? "gpt-4o";
-  }
-  return provider.modelBalanced ?? provider.modelDeep ?? provider.modelFast ?? "gpt-4o";
+): Record<ModelQuality, string> {
+  const balanced = provider.modelBalanced ?? provider.modelDeep ?? provider.modelFast ?? "gpt-4o";
+  return {
+    fast: provider.modelFast ?? balanced,
+    balanced,
+    deep: provider.modelDeep ?? balanced,
+  };
 }
 
 function recordCommercialAiCalls({

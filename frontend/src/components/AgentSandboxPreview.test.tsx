@@ -10,6 +10,7 @@ test("preview sandbox renders an AI starmap for side hustle", () => {
 
   assert.match(html, /AI 星图沙盘/);
   assert.match(html, /agent-starmap-preview/);
+  assert.match(html, /agent-sandbox-orb/);
   assert.match(html, /agent-starmap-orbit/);
   assert.match(html, /agent-starmap-spectral-core/);
   assert.match(html, /agent-lifeform-network/);

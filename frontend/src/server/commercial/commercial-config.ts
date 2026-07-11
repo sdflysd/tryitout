@@ -13,6 +13,7 @@ export type CommercialConfig =
       accessCodePepper: string;
       userSecretEncryptionKey: Buffer;
       maxWeightedConcurrency: number;
+      allowedModelProviderHostnames: string[];
     };
 
 const REQUIRED_COMMERCIAL_ENV_KEYS = [
@@ -47,6 +48,9 @@ export function resolveCommercialConfig(env: CommercialEnv): CommercialConfig {
   const userSecretEncryptionKey = decodeUserSecretEncryptionKey(
     requireEnvValue(env, "USER_SECRET_ENCRYPTION_KEY"),
   );
+  const allowedModelProviderHostnames = parseCsvList(
+    env.ALLOWED_MODEL_PROVIDER_HOSTNAMES,
+  );
 
   validateUrl(databaseUrl, "DATABASE_URL");
   validateUrl(redisUrl, "REDIS_URL");
@@ -59,6 +63,7 @@ export function resolveCommercialConfig(env: CommercialEnv): CommercialConfig {
     accessCodePepper,
     userSecretEncryptionKey,
     maxWeightedConcurrency,
+    allowedModelProviderHostnames,
   };
 }
 
@@ -106,4 +111,14 @@ function resolveMaxWeightedConcurrency(value: string | undefined): number {
   }
 
   return parsed;
+}
+
+function parseCsvList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim().toLowerCase().replace(/\.$/, ""))
+    .filter((item, index, items) => item && items.indexOf(item) === index);
 }

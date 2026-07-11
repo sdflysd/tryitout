@@ -194,6 +194,39 @@ test("getSimulationTaskStatus preserves commercial worker progress fields", asyn
   assert.equal(result.progressPercent, 43);
 });
 
+test("getSimulationTaskStatus marks commercial recoverable failures as resumable", async () => {
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        task: {
+          id: "commercial_task_recoverable",
+          userId: "user_1",
+          scenarioType: "dating",
+          interactionMode: "enabled",
+          providerMode: "platform",
+          status: "recoverable_failed",
+          creditCost: 3,
+          currentStepName: "simulate_stage",
+          currentStageIndex: 4,
+          progressPercent: 73,
+          errorCode: "model_timeout",
+          createdAt: "2026-07-07T00:00:00.000Z",
+          updatedAt: "2026-07-07T00:05:00.000Z",
+        },
+      }),
+      { status: 200 },
+    );
+
+  const result = await getSimulationTaskStatus(
+    "commercial_task_recoverable",
+    fetchImpl as typeof fetch,
+  );
+
+  assert.equal(result.status, "recoverable_failed");
+  assert.equal(result.recoverable, true);
+  assert.equal(result.errorCode, "model_timeout");
+});
+
 test("fetchActiveSimulationTask reads the current commercial active task", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl = async (url: string, init?: RequestInit) => {
@@ -364,6 +397,91 @@ test("runSimulationTaskUntilComplete creates, polls, emits progress, and reads f
   assert.deepEqual(
     progress.map((event) => `${event.step}:${event.percent}`),
     ["generate_agents:20", "generate_report:100"],
+  );
+});
+
+test("runSimulationTaskUntilComplete does not emit regressing progress percentages", async () => {
+  const statuses = [
+    {
+      simulationId: "sim_monotonic",
+      scenarioType: "side_hustle",
+      mode: "enabled",
+      status: "running",
+      currentStepName: "arbitrate_stage",
+      currentStageIndex: 4,
+      progressPercent: 73,
+      recoverable: false,
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    },
+    {
+      simulationId: "sim_monotonic",
+      scenarioType: "side_hustle",
+      mode: "enabled",
+      status: "running",
+      currentStepName: "generate_agent_actions",
+      currentStageIndex: 5,
+      progressPercent: 67,
+      recoverable: false,
+      updatedAt: "2026-07-02T00:00:01.000Z",
+    },
+    {
+      simulationId: "sim_monotonic",
+      scenarioType: "side_hustle",
+      mode: "enabled",
+      status: "completed",
+      currentStepName: "generate_report",
+      progressPercent: 100,
+      recoverable: false,
+      updatedAt: "2026-07-02T00:00:02.000Z",
+    },
+  ];
+  const progress: SimulationProgressEvent[] = [];
+  const fetchImpl = async (url: string) => {
+    if (url === "/api/simulation-tasks") {
+      return new Response(JSON.stringify({ simulationId: "sim_monotonic", status: "queued" }), {
+        status: 200,
+      });
+    }
+    if (url === "/api/simulation-tasks/sim_monotonic/status") {
+      return new Response(JSON.stringify(statuses.shift()), { status: 200 });
+    }
+    if (url === "/api/simulation-tasks/sim_monotonic/report") {
+      return new Response(
+        JSON.stringify({
+          simulationId: "sim_monotonic",
+          status: "completed",
+          report: makeReport("sim_monotonic"),
+        }),
+        { status: 200 },
+      );
+    }
+
+    throw new Error(`Unexpected call ${url}`);
+  };
+
+  await runSimulationTaskUntilComplete(
+    {
+      userInput: {
+        type: "side_hustle",
+        projectIdea: "AI 简历优化",
+      },
+      interactionMode: "enabled",
+    },
+    {
+      fetchImpl: fetchImpl as typeof fetch,
+      pollIntervalMs: 0,
+      sleep: async () => undefined,
+      onProgress: (event) => progress.push(event),
+    },
+  );
+
+  assert.deepEqual(
+    progress.map((event) => `${event.step}:${event.percent}`),
+    [
+      "arbitrate_stage:73",
+      "generate_agent_actions:73",
+      "generate_report:100",
+    ],
   );
 });
 

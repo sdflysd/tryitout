@@ -10,6 +10,7 @@ export interface SafeProviderUrlResult {
 export interface ProviderUrlSafetyOptions {
   resolveHostname?: (hostname: string) => Promise<string[]>;
   followRedirect?: (url: string) => Promise<string | undefined>;
+  allowedHostnames?: Iterable<string>;
 }
 
 const BLOCKED_HOSTNAMES = new Set([
@@ -94,8 +95,14 @@ async function assertUrlTargetIsSafe(
   if (addresses.length === 0) {
     throw new Error("Provider URL hostname did not resolve");
   }
+  const allowBlockedResolvedAddresses = isAllowedHostname(
+    hostname,
+    options.allowedHostnames,
+  );
   for (const address of addresses) {
-    assertPublicAddress(address);
+    assertPublicAddress(address, {
+      allowBlocked: allowBlockedResolvedAddresses,
+    });
   }
 }
 
@@ -110,12 +117,15 @@ async function resolveAddresses(
   return records.map((record) => record.address);
 }
 
-function assertPublicAddress(address: string): void {
+function assertPublicAddress(
+  address: string,
+  options: { allowBlocked?: boolean } = {},
+): void {
   const normalized = normalizeIpLiteral(address);
   if (normalized === undefined) {
     throw new Error("Provider URL resolved to an invalid address");
   }
-  if (isBlockedIp(normalized)) {
+  if (isBlockedIp(normalized) && options.allowBlocked !== true) {
     throw new Error(`Provider URL resolved to private or blocked address ${address}`);
   }
 }
@@ -131,6 +141,22 @@ function normalizeIpLiteral(value: string): string | undefined {
       ? trimmed.slice(1, -1)
       : trimmed;
   return isIP(unbracketed) === 0 ? undefined : unbracketed;
+}
+
+function isAllowedHostname(
+  hostname: string,
+  allowedHostnames: Iterable<string> | undefined,
+): boolean {
+  if (allowedHostnames === undefined) {
+    return false;
+  }
+  const normalized = normalizeHostname(hostname);
+  for (const allowed of allowedHostnames) {
+    if (normalizeHostname(allowed) === normalized) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isBlockedIp(address: string): boolean {

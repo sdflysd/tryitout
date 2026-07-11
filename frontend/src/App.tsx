@@ -34,7 +34,6 @@ import ReportView from "./components/ReportView";
 import ShareCard from "./components/ShareCard";
 import {
   DEFAULT_PLATFORM_MODEL_PROFILE_ID,
-  isKnownPlatformModelProfileId,
   type PlatformModelOption,
 } from "./model-options";
 import {
@@ -286,6 +285,23 @@ export function getInitialLanguageFromStorage(storage: Storage | undefined): Lan
   return parseStoredLanguage(storage?.getItem(LANGUAGE_STORAGE_KEY) ?? null) ?? DEFAULT_LANGUAGE;
 }
 
+export function getInitialModelProfileIdFromStorage(
+  storage: Storage | undefined,
+  initialPlatformModels?: PlatformModelOption[],
+): string {
+  const fallback = initialPlatformModels?.[0]?.id ?? DEFAULT_PLATFORM_MODEL_PROFILE_ID;
+  try {
+    const stored = storage?.getItem(MODEL_PROFILE_STORAGE_KEY);
+    if (stored?.trim()) {
+      return stored;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
 export function buildShareCardOpenedEvent(simulation: Simulation): ClientValidationEvent {
   return {
     type: "share_card_opened",
@@ -340,7 +356,6 @@ export function buildCommercialModelSelection({
   providerMode,
   selectedModelProfileId,
   selectedCredentialId,
-  deepAgentMode,
 }: {
   providerMode: ProviderMode;
   selectedModelProfileId?: string;
@@ -351,7 +366,6 @@ export function buildCommercialModelSelection({
     return selectedCredentialId
       ? {
           userCredentialId: selectedCredentialId,
-          mode: deepAgentMode ? "deep" : "balanced",
         }
       : undefined;
   }
@@ -483,8 +497,8 @@ export default function App({
   const [commercialModelProvider, setCommercialModelProvider] = useState<PublicModelProviderDto | undefined>(initialCommercialModelProvider);
   const [providerMode, setProviderMode] = useState<ProviderMode>("platform");
   const [platformModels, setPlatformModels] = useState<PlatformModelOption[]>(initialPlatformModels ?? []);
-  const [selectedModelProfileId, setSelectedModelProfileId] = useState(
-    initialPlatformModels?.[0]?.id ?? DEFAULT_PLATFORM_MODEL_PROFILE_ID,
+  const [selectedModelProfileId, setSelectedModelProfileId] = useState(() =>
+    getInitialModelProfileIdFromStorage(globalThis.localStorage, initialPlatformModels),
   );
   const [selectedCredentialId, setSelectedCredentialId] = useState<string | undefined>(initialCommercialModelProvider?.id);
   const [commercialAvailable, setCommercialAvailable] = useState(
@@ -522,10 +536,7 @@ export default function App({
       }
       setLastInputDraft(parseStoredUserInput(localStorage.getItem(LAST_INPUT_DRAFT_STORAGE_KEY)));
       const storedModelProfileId = localStorage.getItem(MODEL_PROFILE_STORAGE_KEY);
-      if (
-        storedModelProfileId &&
-        isKnownPlatformModelProfileId(storedModelProfileId)
-      ) {
+      if (storedModelProfileId && storedModelProfileId.trim()) {
         setSelectedModelProfileId(storedModelProfileId);
       }
       const storedCredentialId = localStorage.getItem(MODEL_CREDENTIAL_STORAGE_KEY);
@@ -1125,7 +1136,7 @@ export default function App({
       setCommercialModelProvider(result.provider);
       setCommercialStatus(result.provider.lastTestStatus === "passed"
         ? appCopy.commercialStatus.providerTestPassed
-        : appCopy.commercialStatus.providerTestFailed);
+        : `${appCopy.commercialStatus.providerTestFailed}${result.provider.lastTestError ? ` ${result.provider.lastTestError}` : ""}`);
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
     } finally {
@@ -1283,7 +1294,7 @@ export default function App({
             providerMode={providerMode}
             byokAvailable={byokAvailable}
             showModelConfiguration={false}
-            selectedModelProfileId={selectedModelProfileId}
+            selectedModelProfileId={selectedPlatformModelId}
             selectedCredentialId={selectedCredentialId}
             platformModels={platformModels}
             busy={commercialBusy}
@@ -1308,7 +1319,7 @@ export default function App({
             providerMode={providerMode}
             byokAvailable={byokAvailable}
             showModelConfiguration
-            selectedModelProfileId={selectedModelProfileId}
+            selectedModelProfileId={selectedPlatformModelId}
             selectedCredentialId={selectedCredentialId}
             platformModels={platformModels}
             busy={commercialBusy}

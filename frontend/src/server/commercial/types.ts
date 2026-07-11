@@ -15,11 +15,15 @@ import type {
   ModelQuality,
 } from "../ai/types.js";
 import type {
+  SimulationCheckpointSnapshot,
+} from "../simulations/multi-agent-runner.js";
+import type {
   InteractionMode,
   ModelSelection,
   Report,
   SimulationApiResponse,
   SimulationType,
+  UserInput,
 } from "../../types.js";
 
 export type JsonObject = Record<string, unknown>;
@@ -139,6 +143,7 @@ export interface CommercialSimulationTaskRecord {
   interactionMode: InteractionMode;
   providerMode: ProviderMode;
   modelSelection?: ModelSelection;
+  userInput?: UserInput;
   status: CommercialTaskStatus;
   creditCost: number;
   creditHoldLedgerId?: string;
@@ -198,6 +203,15 @@ export interface SimulationStepRunCostRecord {
   metadata?: JsonObject;
 }
 
+export interface CommercialSimulationCheckpointRecord {
+  id: string;
+  taskId: string;
+  stageIndex?: number;
+  stepName: string;
+  checkpoint: SimulationCheckpointSnapshot;
+  createdAt: string;
+}
+
 export interface CommercialSimulationReportRecord {
   id: string;
   taskId: string;
@@ -247,6 +261,7 @@ export interface UserModelProviderRecord {
   status: UserModelProviderStatus;
   lastTestedAt?: string;
   lastTestStatus?: UserModelProviderTestStatus;
+  lastTestError?: string;
   createdAt: string;
   updatedAt: string;
 }

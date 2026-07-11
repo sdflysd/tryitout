@@ -21,6 +21,7 @@ export const CREDIT_LEDGER_ENTRY_TYPES = [
 export const COMMERCIAL_TASK_STATUSES = [
   "queued",
   "running",
+  "recoverable_failed",
   "completed",
   "failed",
   "cancelled",

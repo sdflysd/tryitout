@@ -117,7 +117,7 @@ CREATE TABLE simulation_tasks (
   error_code TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT simulation_tasks_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'refunded')),
+  CONSTRAINT simulation_tasks_status_check CHECK (status IN ('queued', 'running', 'recoverable_failed', 'completed', 'failed', 'cancelled', 'refunded')),
   CONSTRAINT simulation_tasks_scenario_check CHECK (scenario IN ('side_hustle', 'dating', 'life_choice')),
   CONSTRAINT simulation_tasks_interaction_mode_check CHECK (interaction_mode IN ('legacy', 'enabled')),
   CONSTRAINT simulation_tasks_provider_mode_check CHECK (provider_mode IN ('platform', 'byok')),

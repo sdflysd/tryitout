@@ -105,6 +105,7 @@ export function createCommercialServices(
   const modelProviderService = new ModelProviderService({
     ...commonOptions,
     encryptionKey: config.userSecretEncryptionKey,
+    allowedHostnames: config.allowedModelProviderHostnames,
   });
 
   return {

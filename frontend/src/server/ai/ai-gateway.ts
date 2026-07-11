@@ -18,6 +18,7 @@ import type {
   AiCallResult,
   AiProviderType,
   ModelProfile,
+  ModelQuality,
   ModelSelection,
   SimulationStep,
   SimulationType,
@@ -150,7 +151,7 @@ export class AiGateway {
 export function createUserOpenAiCompatibleGateway(input: {
   apiKey: string;
   baseUrl: string;
-  model: string;
+  model: string | Record<ModelQuality, string>;
   adapter?: AiProviderAdapter;
 }): AiGateway {
   return new AiGateway("", {
@@ -161,13 +162,34 @@ export function createUserOpenAiCompatibleGateway(input: {
           baseUrl: input.baseUrl,
         }),
     ],
-    resolveModel: (selection, _scenarioType, _step) =>
+    resolveModel: (selection, scenarioType, step) =>
       createUserOpenAiCompatibleProfile({
-        quality: selection?.mode ?? "balanced",
+        quality: resolveUserModelQuality(selection, scenarioType, step),
         baseUrl: input.baseUrl,
-        model: input.model,
+        model: resolveUserModelId(input.model, selection, scenarioType, step),
       }),
   });
+}
+
+function resolveUserModelQuality(
+  selection: ModelSelection | undefined,
+  scenarioType: SimulationType,
+  step: SimulationStep,
+): ModelQuality {
+  return selection?.mode ?? getPolicyForScenario(scenarioType).steps[step]?.quality ?? "balanced";
+}
+
+function resolveUserModelId(
+  model: string | Record<ModelQuality, string>,
+  selection: ModelSelection | undefined,
+  scenarioType: SimulationType,
+  step: SimulationStep,
+): string {
+  if (typeof model === "string") {
+    return model;
+  }
+  const quality = resolveUserModelQuality(selection, scenarioType, step);
+  return model[quality] || model.balanced || model.deep || model.fast;
 }
 
 function buildPromptHashInput(request: AiCallRequest): string {

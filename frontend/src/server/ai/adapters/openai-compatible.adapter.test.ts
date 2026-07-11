@@ -237,6 +237,17 @@ test("OpenAiCompatibleAdapter streams chat completions and reconstructs JSON con
 
   const result = await adapter.generateJson<{ ok: boolean }>(
     makeRequest({
+      modelProfile: {
+        ...modelProfile,
+        capabilities: {
+          ...modelProfile.capabilities,
+          supportsStreaming: true,
+        },
+        defaults: {
+          ...modelProfile.defaults,
+          stream: true,
+        },
+      },
       generationConfig: {
         maxOutputTokens: 400,
         timeoutMs: 5_000,
@@ -261,6 +272,51 @@ test("OpenAiCompatibleAdapter streams chat completions and reconstructs JSON con
   const body = JSON.parse(String(calls[0]?.init.body));
   assert.equal(body.stream, true);
   assert.deepEqual(body.stream_options, { include_usage: true });
+});
+
+test("OpenAiCompatibleAdapter honors profiles that disable streaming", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const adapter = new OpenAiCompatibleAdapter({
+    apiKey: "test-openai-compatible-key",
+    baseUrl: "https://server-configured.example/v1",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init: init ?? {} });
+
+      return new Response(JSON.stringify({
+        id: "chatcmpl_non_stream",
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: "{\"ok\":true}",
+            },
+          },
+        ],
+      }));
+    },
+  });
+
+  const result = await adapter.generateJson<{ ok: boolean }>(
+    makeRequest({
+      modelProfile: {
+        ...modelProfile,
+        capabilities: {
+          ...modelProfile.capabilities,
+          supportsStreaming: false,
+        },
+        defaults: {
+          ...modelProfile.defaults,
+          stream: false,
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.data, { ok: true });
+  const body = JSON.parse(String(calls[0]?.init.body));
+  assert.equal(body.stream, false);
+  assert.equal("stream_options" in body, false);
+  assert.equal(result.transport, "single_response");
 });
 
 test("OpenAiCompatibleAdapter treats timeout as stream idle timeout instead of total duration", async () => {
@@ -291,6 +347,17 @@ test("OpenAiCompatibleAdapter treats timeout as stream idle timeout instead of t
 
   const result = await adapter.generateJson<{ ok: boolean }>(
     makeRequest({
+      modelProfile: {
+        ...modelProfile,
+        capabilities: {
+          ...modelProfile.capabilities,
+          supportsStreaming: true,
+        },
+        defaults: {
+          ...modelProfile.defaults,
+          stream: true,
+        },
+      },
       generationConfig: {
         maxOutputTokens: 400,
         timeoutMs: 40,

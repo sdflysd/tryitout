@@ -23,6 +23,7 @@ test("live sandbox renders backend progress and active phase", () => {
   assert.match(html, /实时 AI 星图沙盘/);
   assert.match(html, /agent-starmap-live/);
   assert.match(html, /simulation-command-center/);
+  assert.match(html, /agent-sandbox-orb/);
   assert.match(html, /agent-lifeform-network/);
   assert.match(html, /live-scan-plane/);
   assert.match(html, /signal-cascade/);

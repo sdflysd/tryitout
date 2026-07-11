@@ -10,10 +10,12 @@ import type {
 import {
   PLATFORM_MODEL_OPTIONS,
   PLATFORM_MODEL_SETTING_KEY,
-  filterPlatformModelOptions,
   normalizePlatformModelProfileIds,
   type PlatformModelOption,
 } from "../../model-options.js";
+import { AnthropicAdapter } from "../ai/adapters/anthropic.adapter.js";
+import { GeminiAdapter } from "../ai/adapters/gemini.adapter.js";
+import { OpenAiCompatibleAdapter } from "../ai/adapters/openai-compatible.adapter.js";
 import { hashPassword as defaultHashPassword } from "./passwords.js";
 import {
   decryptSecret,
@@ -59,6 +61,7 @@ export type CommercialAdminServiceErrorCode =
   | "user_not_found"
   | "access_code_not_found"
   | "platform_model_provider_not_found"
+  | "platform_model_provider_display_name_taken"
   | "task_not_found"
   | "report_not_found";
 
@@ -89,6 +92,12 @@ export interface CommercialAdminServiceOptions {
     provider: PlatformModelProviderRecord["provider"];
     baseUrl?: string;
     apiKey: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  testPlatformModelConnection?: (input: {
+    provider: PlatformModelProviderRecord["provider"];
+    baseUrl?: string;
+    apiKey: string;
+    modelId: string;
   }) => Promise<{ ok: boolean; error?: string }>;
   discoverPlatformProviderModels?: (input: {
     provider: PlatformModelProviderRecord["provider"];
@@ -548,6 +557,15 @@ export interface AdminPlatformProviderModelCatalog {
   error?: string;
 }
 
+export interface AdminPlatformModelProfileTestResult {
+  providerConfigId: string;
+  profileId: string;
+  modelId: string;
+  ok: boolean;
+  checkedAt: string;
+  error?: string;
+}
+
 export interface SavePlatformModelProviderInput {
   actorUserId: string;
   provider: AdminPlatformProviderType;
@@ -583,6 +601,14 @@ export interface TestPlatformModelProviderInput {
 export interface ListPlatformProviderModelsInput {
   actorUserId: string;
   providerConfigId: string;
+  requestContext?: AdminRequestContext;
+}
+
+export interface TestPlatformModelProfileInput {
+  actorUserId: string;
+  providerConfigId: string;
+  profileId: string;
+  modelId: string;
   requestContext?: AdminRequestContext;
 }
 
@@ -622,6 +648,9 @@ export class CommercialAdminService {
   private readonly testPlatformProviderConnection: NonNullable<
     CommercialAdminServiceOptions["testPlatformProviderConnection"]
   >;
+  private readonly testPlatformModelConnection: NonNullable<
+    CommercialAdminServiceOptions["testPlatformModelConnection"]
+  >;
   private readonly discoverPlatformProviderModels: NonNullable<
     CommercialAdminServiceOptions["discoverPlatformProviderModels"]
   >;
@@ -641,7 +670,9 @@ export class CommercialAdminService {
     this.decryptSecret = options.decryptSecret ?? decryptSecret;
     this.maskSecret = options.maskSecret ?? maskSecret;
     this.testPlatformProviderConnection =
-      options.testPlatformProviderConnection ?? (async () => ({ ok: true }));
+      options.testPlatformProviderConnection ?? testProviderConnection;
+    this.testPlatformModelConnection =
+      options.testPlatformModelConnection ?? testModelConnection;
     this.discoverPlatformProviderModels =
       options.discoverPlatformProviderModels ?? discoverProviderModels;
   }
@@ -1285,25 +1316,32 @@ export class CommercialAdminService {
       this.repository.listPlatformModelProviders(),
       this.repository.listPlatformModelProfiles(),
     ]);
-    const enabledModelProfileIds = normalizePlatformModelProfileIds(
-      items.find((item) => item.key === PLATFORM_MODEL_SETTING_KEY)?.value,
-    );
-    const adminModels = profileRecords.map((profile) =>
-      toAdminPlatformModelOption(profile, providers.find((provider) => provider.id === profile.providerConfigId)),
-    );
+    const activeProviders = providers.filter((provider) => provider.status === "active");
+    const activeProvidersById = new Map(activeProviders.map((provider) => [provider.id, provider]));
+    const adminModels = profileRecords
+      .map((profile) => {
+        const provider = activeProvidersById.get(profile.providerConfigId);
+        if (provider === undefined || profile.status !== "active") {
+          return undefined;
+        }
+        return toAdminPlatformModelOption(profile, provider);
+      })
+      .filter((model): model is AdminPlatformModelOption => model !== undefined);
     const availableModels = adminModels.length > 0
       ? adminModels
-      : PLATFORM_MODEL_OPTIONS.map((model) => ({
-          ...model,
-          source: "fallback" as const,
-          visibleToUser: true,
-          status: "active" as const,
-        }));
-    const effectiveEnabledIds = adminModels.length > 0
-      ? adminModels
-          .filter((model) => model.status === "active" && model.visibleToUser !== false)
-          .map((model) => model.id)
-      : enabledModelProfileIds;
+      : buildFallbackAdminPlatformModels();
+    const enabledModelProfileIds = normalizePlatformModelProfileIds(
+      items.find((item) => item.key === PLATFORM_MODEL_SETTING_KEY)?.value,
+      availableModels.map((model) => model.id),
+    );
+    const publishableModelIds = new Set(
+      availableModels
+        .filter((model) => model.status === "active" && model.visibleToUser !== false)
+        .map((model) => model.id),
+    );
+    const effectiveEnabledIds = enabledModelProfileIds.filter((id) =>
+      publishableModelIds.has(id),
+    );
 
     return {
       items,
@@ -1312,7 +1350,7 @@ export class CommercialAdminService {
         enabled: availableModels.filter((model) => effectiveEnabledIds.includes(model.id)),
         enabledModelProfileIds: effectiveEnabledIds,
       },
-      platformModelProviders: providers.map(toAdminPlatformModelProviderDto),
+      platformModelProviders: activeProviders.map(toAdminPlatformModelProviderDto),
     };
   }
 
@@ -1320,8 +1358,10 @@ export class CommercialAdminService {
     input: UpdatePlatformModelsInput,
   ): Promise<AdminSettingsResult> {
     validateRequired(input.actorUserId, "Actor user id");
+    const availableModelIds = await this.listPublishablePlatformModelIds();
     const enabledModelProfileIds = normalizePlatformModelProfileIds(
       input.enabledModelProfileIds,
+      availableModelIds,
     );
     if (enabledModelProfileIds.length !== input.enabledModelProfileIds.length) {
       throw new CommercialAdminServiceError(
@@ -1361,13 +1401,17 @@ export class CommercialAdminService {
     const nowIso = this.currentDate().toISOString();
     const existing = input.providerConfigId !== undefined
       ? await this.repository.getPlatformModelProvider(input.providerConfigId)
-      : undefined;
+      : await this.findDisabledPlatformProviderByDisplayName(input.displayName);
     if (input.providerConfigId !== undefined && existing === undefined) {
       throw new CommercialAdminServiceError(
         "platform_model_provider_not_found",
         "Platform model provider not found",
       );
     }
+    await this.assertPlatformProviderDisplayNameAvailable(
+      input.displayName,
+      existing?.id,
+    );
     const apiKey = input.apiKey?.trim();
     if (!existing && !apiKey) {
       throw new CommercialAdminServiceError("invalid_admin_input", "API key is required");
@@ -1541,6 +1585,116 @@ export class CommercialAdminService {
       unsupported: discovery.unsupported === true,
       ...(discovery.error !== undefined ? { error: discovery.error } : {}),
     };
+  }
+
+  async testPlatformModelProfile(
+    input: TestPlatformModelProfileInput,
+  ): Promise<AdminPlatformModelProfileTestResult> {
+    validateRequired(input.actorUserId, "Actor user id");
+    validateRequired(input.providerConfigId, "Provider config id");
+    validateRequired(input.profileId, "Profile id");
+    validateRequired(input.modelId, "Model id");
+    const provider = await this.repository.getPlatformModelProvider(input.providerConfigId);
+    if (!provider) {
+      throw new CommercialAdminServiceError(
+        "platform_model_provider_not_found",
+        "Platform model provider not found",
+      );
+    }
+    const apiKey = this.decryptSecret(provider.encryptedApiKey, this.secretEncryptionKey);
+    const result = await this.testPlatformModelConnection({
+      provider: provider.provider,
+      baseUrl: provider.baseUrl,
+      apiKey,
+      modelId: input.modelId.trim(),
+    });
+    const checkedAt = this.currentDate().toISOString();
+    await this.auditService.append({
+      actorUserId: input.actorUserId,
+      action: "platform_model_profiles_updated",
+      targetType: "platform_model_profile",
+      targetId: input.profileId,
+      metadata: {
+        operation: "test_model",
+        providerConfigId: provider.id,
+        modelId: input.modelId.trim(),
+        ok: result.ok,
+        error: result.error,
+      },
+      ipHash: input.requestContext?.ipHash,
+      userAgent: input.requestContext?.userAgent,
+    });
+    return {
+      providerConfigId: provider.id,
+      profileId: input.profileId.trim(),
+      modelId: input.modelId.trim(),
+      ok: result.ok,
+      checkedAt,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    };
+  }
+
+  private async listPublishablePlatformModelIds(): Promise<string[]> {
+    const [providers, profileRecords] = await Promise.all([
+      this.repository.listPlatformModelProviders(),
+      this.repository.listPlatformModelProfiles(),
+    ]);
+    const activeProviderIds = new Set(
+      providers
+        .filter((provider) => provider.status === "active")
+        .map((provider) => provider.id),
+    );
+    const adminProfileIds = profileRecords
+      .filter((profile) =>
+        profile.status === "active" &&
+        activeProviderIds.has(profile.providerConfigId),
+      )
+      .map((profile) => ({
+        id: profile.id,
+        visibleToUser: profile.visibleToUser,
+      }));
+    return adminProfileIds.length > 0
+      ? adminProfileIds
+          .filter((profile) => profile.visibleToUser !== false)
+          .map((profile) => profile.id)
+      : PLATFORM_MODEL_OPTIONS.map((model) => model.id);
+  }
+
+  private async findDisabledPlatformProviderByDisplayName(
+    displayName: string,
+  ): Promise<PlatformModelProviderRecord | undefined> {
+    const normalizedDisplayName = displayName.trim();
+    if (!normalizedDisplayName) {
+      return undefined;
+    }
+    const providers = await this.repository.listPlatformModelProviders();
+    return providers.find(
+      (provider) =>
+        provider.status === "disabled" &&
+        provider.displayName === normalizedDisplayName,
+    );
+  }
+
+  private async assertPlatformProviderDisplayNameAvailable(
+    displayName: string,
+    allowedProviderId: string | undefined,
+  ): Promise<void> {
+    const normalizedDisplayName = displayName.trim();
+    if (!normalizedDisplayName) {
+      return;
+    }
+    const providers = await this.repository.listPlatformModelProviders();
+    const conflict = providers.find(
+      (provider) =>
+        provider.id !== allowedProviderId &&
+        provider.displayName === normalizedDisplayName,
+    );
+    if (conflict !== undefined) {
+      throw new CommercialAdminServiceError(
+        "platform_model_provider_display_name_taken",
+        "Display name is already used by another platform model provider",
+      );
+    }
   }
 
   async createAccessCodeBatch(
@@ -1898,27 +2052,134 @@ function toAdminPlatformModelOption(
   };
 }
 
+function buildFallbackAdminPlatformModels(): AdminPlatformModelOption[] {
+  return PLATFORM_MODEL_OPTIONS.map((model) => ({
+    ...model,
+    source: "fallback" as const,
+    visibleToUser: true,
+    status: "active" as const,
+  }));
+}
+
 async function discoverProviderModels(input: {
   provider: PlatformModelProviderRecord["provider"];
   baseUrl?: string;
   apiKey: string;
 }): Promise<AdminPlatformProviderModelDiscoveryResult> {
-  if (input.provider === "anthropic") {
+  try {
+    if (input.provider === "anthropic") {
+      return {
+        models: [],
+        unsupported: true,
+        error: "Anthropic does not expose a stable model-list API for this admin console; enter model IDs manually.",
+      };
+    }
+
+    if (input.provider === "openai_compatible") {
+      if (!input.baseUrl?.trim()) {
+        return { models: [], error: "Base URL is required to fetch OpenAI-compatible models." };
+      }
+      return await fetchOpenAiCompatibleModels(input.baseUrl, input.apiKey);
+    }
+
+    return await fetchGeminiModels(input.apiKey);
+  } catch (error) {
     return {
       models: [],
-      unsupported: true,
-      error: "Anthropic does not expose a stable model-list API for this admin console; enter model IDs manually.",
+      error: `Provider model discovery failed: ${error instanceof Error ? error.message : "request failed"}`,
     };
   }
+}
 
-  if (input.provider === "openai_compatible") {
-    if (!input.baseUrl?.trim()) {
-      return { models: [], error: "Base URL is required to fetch OpenAI-compatible models." };
-    }
-    return fetchOpenAiCompatibleModels(input.baseUrl, input.apiKey);
+async function testProviderConnection(input: {
+  provider: PlatformModelProviderRecord["provider"];
+  baseUrl?: string;
+  apiKey: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const discovery = await discoverProviderModels(input);
+  if (discovery.error !== undefined) {
+    return { ok: false, error: discovery.error };
+  }
+  if (discovery.unsupported === true) {
+    return testAnthropicProvider(input);
+  }
+  return { ok: true };
+}
+
+async function testModelConnection(input: {
+  provider: PlatformModelProviderRecord["provider"];
+  baseUrl?: string;
+  apiKey: string;
+  modelId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const modelId = input.modelId.trim();
+  if (!modelId) {
+    return { ok: false, error: "Model id is required." };
   }
 
-  return fetchGeminiModels(input.apiKey);
+  try {
+    const profile = makeConnectivityModelProfile({
+      provider: input.provider,
+      baseUrl: input.baseUrl,
+      modelId,
+    });
+    const adapter =
+      input.provider === "gemini"
+        ? new GeminiAdapter(input.apiKey)
+        : input.provider === "anthropic"
+          ? new AnthropicAdapter(input.apiKey, {
+            ...(input.baseUrl?.trim() ? { baseUrl: input.baseUrl.trim() } : {}),
+          })
+          : new OpenAiCompatibleAdapter({
+            apiKey: input.apiKey,
+            baseUrl: input.baseUrl ?? "",
+          });
+
+    await adapter.generateJson<{ ok: boolean }>({
+      step: "safety_check",
+      scenarioType: "life_choice",
+      modelProfile: profile,
+      generationConfig: {
+        maxOutputTokens: 32,
+        timeoutMs: 10_000,
+        maxRetries: 0,
+      },
+      systemPrompt: "Return only valid JSON.",
+      userPrompt: "Reply with exactly this JSON object: {\"ok\":true}",
+      responseFormat: "json",
+      metadata: {},
+    });
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Model test failed",
+    };
+  }
+}
+
+async function testAnthropicProvider(input: {
+  baseUrl?: string;
+  apiKey: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const normalizedBaseUrl = (input.baseUrl?.trim() || "https://api.anthropic.com").replace(/\/+$/, "");
+  const response = await fetch(`${normalizedBaseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": input.apiKey,
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-haiku-latest",
+      max_tokens: 8,
+      messages: [{ role: "user", content: "Return OK" }],
+    }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: `Anthropic test request failed with status ${response.status}` };
+  }
+  return { ok: true };
 }
 
 async function fetchOpenAiCompatibleModels(
@@ -1977,6 +2238,56 @@ async function fetchGeminiModels(
         return { id, label };
       })
       .filter((model): model is AdminDiscoveredProviderModelDto => model !== undefined),
+  };
+}
+
+function makeConnectivityModelProfile(input: {
+  provider: PlatformModelProviderRecord["provider"];
+  baseUrl?: string;
+  modelId: string;
+}): import("../ai/types.js").ModelProfile {
+  const baseUrl = input.baseUrl?.trim().replace(/\/+$/, "");
+  return {
+    id: "admin_connectivity_test",
+    name: "Admin Connectivity Test",
+    provider: input.provider,
+    displayName: "Admin Connectivity Test",
+    modelId: input.modelId,
+    visibleToUser: false,
+    allowUserModelOverride: false,
+    allowUserApiKey: false,
+    allowCustomBaseUrl: false,
+    ...(baseUrl ? { baseUrl, allowedBaseUrls: [baseUrl] } : {}),
+    capabilities: {
+      supportsJsonMode: true,
+      supportsStructuredOutput: false,
+      supportsStreaming: false,
+      supportsVision: false,
+      supportsToolUse: false,
+      supportsSystemPrompt: true,
+      supportsReasoningEffort: false,
+      supportsThinking: false,
+      maxInputTokens: 8_192,
+      maxOutputTokens: 64,
+      recommendedForLongReport: false,
+      recommendedForFastTasks: true,
+      recommendedForDeepSimulation: false,
+    },
+    defaults: {
+      maxOutputTokens: 32,
+      quality: "balanced",
+      responseFormat: "json",
+      stream: false,
+      timeoutMs: 10_000,
+      maxRetries: 0,
+    },
+    limits: {
+      maxInputChars: 1_000,
+      maxOutputTokens: 64,
+    },
+    status: "active",
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
   };
 }
 

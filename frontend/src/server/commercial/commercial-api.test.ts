@@ -22,6 +22,7 @@ import {
   handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
+  handleResumeCommercialTaskRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleDeleteModelProviderRequest,
@@ -49,6 +50,7 @@ import {
   handleSaveModelProviderRequest,
   handleSaveAdminModelProfileRequest,
   handleSaveAdminModelProviderRequest,
+  handleTestAdminModelProfileRequest,
   handleTestModelProviderRequest,
   handleTestAdminModelProviderRequest,
   handleUpdateAdminUserRequest,
@@ -278,6 +280,7 @@ test("credits endpoint requires auth and returns the account balance", async () 
 test("commercial task creation rejects insufficient credits", async () => {
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
+  await seedPlatformModelsEnabled(deps);
 
   const result = await handleCreateCommercialTaskRequest(
     request({
@@ -302,6 +305,7 @@ test("commercial task creation holds credits and returns task status", async () 
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
   await seedCredits(deps, sessionToken);
+  await seedPlatformModelsEnabled(deps);
 
   const created = await handleCreateCommercialTaskRequest(
     request({
@@ -341,13 +345,7 @@ test("commercial task creation preserves selected platform model in queue job", 
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
   await seedCredits(deps, sessionToken);
-  await deps.repository.saveSystemSetting({
-    key: "platform.models.enabled",
-    value: ["anthropic_sonnet_balanced"],
-    description: "Platform model profiles enabled for users",
-    createdAt: CREATED_AT,
-    updatedAt: CREATED_AT,
-  });
+  await seedPlatformModelsEnabled(deps);
 
   const created = await handleCreateCommercialTaskRequest(
     request({
@@ -405,6 +403,53 @@ test("commercial task status includes latest worker step progress", async () => 
   assert.equal(status.body.task.progressMessage, "第 2 阶段 Agent 行动生成开始。");
 });
 
+test("commercial task status keeps progress percent monotonic across step updates", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  const task = await createPaidTask(deps, sessionToken);
+  await deps.taskService.markRunning({ taskId: task.id });
+  await deps.repository.appendSimulationStepRunCost({
+    id: "simulation_step_run_high",
+    taskId: task.id,
+    stepName: "arbitrate_stage",
+    stageIndex: 4,
+    status: "completed",
+    startedAt: "2026-07-07T00:03:00.000Z",
+    completedAt: "2026-07-07T00:04:00.000Z",
+    metadata: {
+      progressPercent: 73,
+      progressMessage: "第 4 阶段裁决完成。",
+    },
+  });
+  await deps.repository.appendSimulationStepRunCost({
+    id: "simulation_step_run_low",
+    taskId: task.id,
+    stepName: "generate_agent_actions",
+    stageIndex: 5,
+    status: "started",
+    startedAt: "2026-07-07T00:05:00.000Z",
+    metadata: {
+      progressPercent: 67,
+      progressMessage: "第 5 阶段 Agent 行动生成开始。",
+    },
+  });
+
+  const status = await handleGetCommercialTaskStatusRequest(
+    task.id,
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(status.status, 200);
+  assert.equal("task" in status.body, true);
+  if (!("task" in status.body)) return;
+  assert.equal(status.body.task.currentStepName, "generate_agent_actions");
+  assert.equal(status.body.task.currentStageIndex, 5);
+  assert.equal(status.body.task.progressPercent, 73);
+  assert.equal(status.body.task.progressMessage, "第 5 阶段 Agent 行动生成开始。");
+});
+
 test("active commercial task endpoint returns the current user's queued task", async () => {
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
@@ -424,6 +469,33 @@ test("active commercial task endpoint returns the current user's queued task", a
   assert.equal(active.body.task?.id, task.id);
   assert.equal(active.body.task?.status, "queued");
   assert.equal(active.body.task?.userId, "user_1");
+});
+
+test("commercial resume endpoint requeues a recoverable task for the owner", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  const task = await createPaidTask(deps, sessionToken);
+  await deps.queue.claimNext();
+  await deps.taskService.markRunning({ taskId: task.id });
+  await deps.taskService.markRecoverableFailed({
+    taskId: task.id,
+    error: "provider_error",
+  });
+
+  const result = await handleResumeCommercialTaskRequest(
+    task.id,
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal("ok" in result.body, true);
+  if (!("ok" in result.body)) return;
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.task?.id, task.id);
+  assert.equal(result.body.task?.status, "queued");
+  assert.equal((await deps.queue.claimNext())?.job.taskId, task.id);
 });
 
 test("task report is returned only to the task owner after completion", async () => {
@@ -689,7 +761,7 @@ test("admin platform model settings drive the public platform model list", async
   );
 });
 
-test("repository-backed platform profiles drive the public platform model list", async () => {
+test("repository-backed platform profiles require admin enablement before appearing publicly", async () => {
   const deps = makeDeps();
   const adminSession = await loginAdmin(deps);
   const adminRequest = (body?: unknown) =>
@@ -731,6 +803,15 @@ test("repository-backed platform profiles drive the public platform model list",
     deps,
   );
 
+  const hiddenUntilEnabled = await handleGetPlatformModelsRequest(deps);
+  assert.deepEqual(hiddenUntilEnabled.body, { models: [] });
+
+  await handleUpdateAdminPlatformModelsRequest(
+    adminRequest({
+      enabledModelProfileIds: ["openrouter_balanced"],
+    }),
+    deps,
+  );
   const publicModels = await handleGetPlatformModelsRequest(deps);
 
   assert.deepEqual(publicModels.body, {
@@ -744,6 +825,59 @@ test("repository-backed platform profiles drive the public platform model list",
       },
     ],
   });
+});
+
+test("disabled repository-backed platform profiles are removed from public model list", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+  const savedProvider = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      status: "active",
+    }),
+    deps,
+  );
+  assert.equal("provider" in savedProvider.body, true);
+  if (!("provider" in savedProvider.body)) return;
+  await handleSaveAdminModelProfileRequest(
+    adminRequest({
+      id: "openrouter_balanced",
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Balanced",
+      modelId: "vendor/balanced",
+      quality: "balanced",
+      visibleToUser: true,
+      status: "active",
+    }),
+    deps,
+  );
+  await handleUpdateAdminPlatformModelsRequest(
+    adminRequest({
+      enabledModelProfileIds: ["openrouter_balanced"],
+    }),
+    deps,
+  );
+
+  await handleSaveAdminModelProfileRequest(
+    adminRequest({
+      providerConfigId: savedProvider.body.provider.id,
+      label: "OpenRouter Balanced",
+      modelId: "vendor/balanced",
+      quality: "balanced",
+      visibleToUser: true,
+      status: "disabled",
+    }),
+    deps,
+    "openrouter_balanced",
+  );
+  const publicModels = await handleGetPlatformModelsRequest(deps);
+
+  assert.deepEqual(publicModels.body, { models: [] });
 });
 
 test("admin can create a single copyable access code without exposing stored hashes", async () => {
@@ -1122,6 +1256,53 @@ test("admin platform model endpoints save masked providers, test them, and save 
   assert.equal(profiles.body.profiles[0]?.id, "openrouter_balanced");
 });
 
+test("admin platform provider save maps duplicate display names to structured errors", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+
+  const first = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+    }),
+    deps,
+  );
+  assert.equal(first.status, 200);
+
+  const duplicate = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "gemini",
+      displayName: "OpenRouter",
+      apiKey: "gemini-platform-secret1234",
+    }),
+    deps,
+  );
+
+  assert.deepEqual(duplicate, {
+    status: 400,
+    body: {
+      error: "Display name is already used by another platform model provider",
+      code: "platform_model_provider_display_name_taken",
+    },
+  });
+});
+
+test("admin model profile inventory excludes fallback platform models", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+
+  const profiles = await handleListAdminModelProfilesRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession } }),
+    deps,
+  );
+
+  assert.deepEqual(profiles.body, { profiles: [] });
+});
+
 test("admin can fetch provider model catalog without exposing provider secrets", async () => {
   const deps = makeDeps({
     discoverPlatformProviderModels: async (input) => {
@@ -1173,6 +1354,60 @@ test("admin can fetch provider model catalog without exposing provider secrets",
     },
   });
   assert.equal(JSON.stringify(catalogResult.body).includes("sk-platform-secret1234"), false);
+});
+
+test("admin can test a provider-backed model id before publishing it", async () => {
+  const observed: unknown[] = [];
+  const deps = makeDeps({
+    testPlatformModelConnection: async (input) => {
+      observed.push(input);
+      return { ok: true };
+    },
+  });
+  const adminSession = await loginAdmin(deps);
+  const adminRequest = (body?: unknown) =>
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession }, body });
+  const savedProvider = await handleSaveAdminModelProviderRequest(
+    adminRequest({
+      provider: "openai_compatible",
+      displayName: "OpenRouter",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      status: "active",
+    }),
+    deps,
+  );
+  assert.equal("provider" in savedProvider.body, true);
+  if (!("provider" in savedProvider.body)) return;
+
+  const result = await handleTestAdminModelProfileRequest(
+    "openrouter_balanced",
+    adminRequest({
+      providerConfigId: savedProvider.body.provider.id,
+      modelId: "vendor/balanced",
+    }),
+    deps,
+  );
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, {
+    result: {
+      providerConfigId: savedProvider.body.provider.id,
+      profileId: "openrouter_balanced",
+      modelId: "vendor/balanced",
+      ok: true,
+      checkedAt: "2026-07-07T00:06:00.000Z",
+    },
+  });
+  assert.deepEqual(observed, [
+    {
+      provider: "openai_compatible",
+      baseUrl: "https://openrouter.example/api/v1",
+      apiKey: "sk-platform-secret1234",
+      modelId: "vendor/balanced",
+    },
+  ]);
+  assert.equal(JSON.stringify(result.body).includes("sk-platform-secret1234"), false);
 });
 
 test("admin can adjust user credits and list resulting audit logs", async () => {
@@ -1289,6 +1524,7 @@ test("user model provider endpoints save, mask, test, and delete BYOK configurat
 
 function makeDeps(options: {
   discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
+  testPlatformModelConnection?: ConstructorParameters<typeof CommercialAdminService>[0]["testPlatformModelConnection"];
   clockValues?: string[];
 } = {}) {
   const repository = new InMemoryCommercialRepository();
@@ -1349,7 +1585,9 @@ function makeDeps(options: {
     creditService,
     auditService,
     now,
+    testPlatformProviderConnection: async () => ({ ok: true }),
     discoverPlatformProviderModels: options.discoverPlatformProviderModels,
+    testPlatformModelConnection: options.testPlatformModelConnection,
   });
   const modelProviderService = new ModelProviderService({
     repository,
@@ -1473,6 +1711,7 @@ async function createPaidTask(
   deps: ReturnType<typeof makeDeps>,
   sessionToken: string,
 ): Promise<CommercialSimulationTaskRecord> {
+  await seedPlatformModelsEnabled(deps);
   const result = await handleCreateCommercialTaskRequest(
     request({
       cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken },
@@ -1490,6 +1729,18 @@ async function createPaidTask(
     throw new Error("task creation failed");
   }
   return result.body.task;
+}
+
+async function seedPlatformModelsEnabled(
+  deps: ReturnType<typeof makeDeps>,
+): Promise<void> {
+  await deps.repository.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["anthropic_sonnet_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
 }
 
 function request({

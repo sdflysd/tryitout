@@ -10,6 +10,7 @@ import type {
   AdminAuditLogRecord,
   AnalyticsEventRecord,
   CommercialSessionRecord,
+  CommercialSimulationCheckpointRecord,
   CommercialSimulationReportRecord,
   CommercialSimulationTaskRecord,
   CommercialUserRecord,
@@ -175,6 +176,12 @@ export interface CommercialRepository {
   listSimulationStepRunCosts(
     taskId?: string,
   ): Promise<SimulationStepRunCostRecord[]>;
+  saveCommercialCheckpoint(
+    checkpoint: CommercialSimulationCheckpointRecord,
+  ): Promise<void>;
+  getLatestCommercialCheckpoint(
+    taskId: string,
+  ): Promise<CommercialSimulationCheckpointRecord | undefined>;
   saveWorkerHeartbeat(heartbeat: WorkerHeartbeatRecord): Promise<void>;
   listWorkerHeartbeats(): Promise<WorkerHeartbeatRecord[]>;
   saveCommercialReport(report: CommercialSimulationReportRecord): Promise<void>;
@@ -217,6 +224,7 @@ export class InMemoryCommercialRepository implements CommercialRepository {
   >();
   private readonly taskRuns: SimulationTaskRunRecord[] = [];
   private readonly stepRunCosts: SimulationStepRunCostRecord[] = [];
+  private readonly checkpoints: CommercialSimulationCheckpointRecord[] = [];
   private readonly workerHeartbeats = new Map<string, WorkerHeartbeatRecord>();
   private readonly reports = new Map<string, CommercialSimulationReportRecord>();
   private readonly analyticsEvents: AnalyticsEventRecord[] = [];
@@ -978,7 +986,11 @@ export class InMemoryCommercialRepository implements CommercialRepository {
       .filter(
         (task) =>
           task.userId === userId &&
-          (task.status === "queued" || task.status === "running"),
+          (
+            task.status === "queued" ||
+            task.status === "running" ||
+            task.status === "recoverable_failed"
+          ),
       )
       .sort((left, right) => {
         const leftQueuedAt = left.queuedAt ?? left.createdAt;
@@ -1021,6 +1033,26 @@ export class InMemoryCommercialRepository implements CommercialRepository {
         }
         return left.id.localeCompare(right.id);
       });
+  }
+
+  async saveCommercialCheckpoint(
+    checkpoint: CommercialSimulationCheckpointRecord,
+  ): Promise<void> {
+    upsertById(this.checkpoints, checkpoint);
+  }
+
+  async getLatestCommercialCheckpoint(
+    taskId: string,
+  ): Promise<CommercialSimulationCheckpointRecord | undefined> {
+    return this.checkpoints
+      .filter((checkpoint) => checkpoint.taskId === taskId)
+      .sort((left, right) => {
+        if (left.createdAt !== right.createdAt) {
+          return left.createdAt.localeCompare(right.createdAt);
+        }
+        return left.id.localeCompare(right.id);
+      })
+      .at(-1);
   }
 
   async saveWorkerHeartbeat(

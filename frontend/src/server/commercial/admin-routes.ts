@@ -30,6 +30,7 @@ import {
   handleRestoreAdminUserRequest,
   handleSaveAdminModelProfileRequest,
   handleSaveAdminModelProviderRequest,
+  handleTestAdminModelProfileRequest,
   handleTestAdminModelProviderRequest,
   handleUpdateAdminUserRequest,
   handleUpdateAdminPlatformModelsRequest,
@@ -332,6 +333,18 @@ export function registerCommercialAdminRoutes(
       toCommercialRequest(req),
       services,
       req.params.id,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/model-profiles/:id/test", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleTestAdminModelProfileRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      services,
     );
     sendCommercialApiResult(res, result);
   });

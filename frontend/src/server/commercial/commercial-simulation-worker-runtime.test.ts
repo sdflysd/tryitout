@@ -7,7 +7,7 @@ import { encryptSecret } from "./secrets.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import type { SimulationQueueJob } from "./simulation-queue.js";
 import type { AiProviderAdapter } from "../ai/adapters/provider-adapter.js";
-import type { AiGateway } from "../ai/ai-gateway.js";
+import { AiGateway } from "../ai/ai-gateway.js";
 import type { AiCallRequest, AiCallResult } from "../ai/types.js";
 import type { Report, UserInput } from "../../types.js";
 
@@ -98,6 +98,66 @@ test("commercial worker runtime passes queued model selection into simulation", 
   assert.deepEqual(observedSelection, modelSelection);
 });
 
+test("BYOK gateway resolves configured fast, balanced, and deep models per simulation step", async () => {
+  const observedProfiles: Array<{ step: string; modelId: string; quality: string }> = [];
+
+  const runSimulation = createCommercialWorkerRunSimulation({
+    job: job({
+      providerMode: "byok",
+      modelSelection: { userCredentialId: "provider_1" },
+    }),
+    services: {
+      modelProviderService: {
+        resolveProviderForTask: async () => ({
+          mode: "byok" as const,
+          provider: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          apiKey: "sk-user-secret",
+          modelFast: "grok-fast",
+          modelBalanced: "grok-balanced",
+          modelDeep: "grok-deep",
+        }),
+      },
+    },
+    resolveCapabilities: () => ({
+      providerConfigured: true,
+      deepModeAvailable: true,
+      defaultInteractionMode: "enabled",
+      fallbackPolicy: "safe_stage_fallback",
+      reason: "",
+    }),
+    runSimulation: async ({ gateway }) => {
+      for (const step of ["safety_check", "generate_agents", "generate_report"] as const) {
+        const request = gateway.createRequest({
+          step,
+          scenarioType: "life_choice",
+          userPrompt: "{}",
+        });
+        observedProfiles.push({
+          step,
+          modelId: request.modelProfile.modelId,
+          quality: request.modelProfile.defaults.quality,
+        });
+      }
+      return {
+        agents: [],
+        stages: [],
+        report: makeReport(),
+      };
+    },
+  });
+
+  await runSimulation({
+    recordStepRun: async () => undefined,
+  });
+
+  assert.deepEqual(observedProfiles, [
+    { step: "safety_check", modelId: "grok-fast", quality: "fast" },
+    { step: "generate_agents", modelId: "grok-balanced", quality: "balanced" },
+    { step: "generate_report", modelId: "grok-deep", quality: "deep" },
+  ]);
+});
+
 test("commercial worker runtime builds a platform gateway from repository-backed model config", async () => {
   const repository = new InMemoryCommercialRepository();
   await repository.savePlatformModelProvider({
@@ -122,6 +182,13 @@ test("commercial worker runtime builds a platform gateway from repository-backed
     capabilities: {
       maxOutputTokens: 8192,
     },
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["openrouter_balanced"],
+    description: "Platform model profiles enabled for users",
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
   });
@@ -169,6 +236,78 @@ test("commercial worker runtime builds a platform gateway from repository-backed
   assert.equal(request.modelProfile.baseUrl, "https://openrouter.example/api/v1");
 });
 
+test("commercial worker runtime prefers repository platform gateway over legacy env gateway", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await repository.savePlatformModelProvider({
+    id: "platform_provider_1",
+    provider: "openai_compatible",
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.example/api/v1",
+    encryptedApiKey: encryptSecret("sk-platform-secret1234", MODEL_PROVIDER_KEY),
+    apiKeyMask: "sk-****",
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.savePlatformModelProfile({
+    id: "openrouter_balanced",
+    providerConfigId: "platform_provider_1",
+    label: "OpenRouter Balanced",
+    modelId: "vendor/balanced",
+    quality: "balanced",
+    visibleToUser: true,
+    status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["openrouter_balanced"],
+    description: "Platform model profiles enabled for users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  let observedModelProfileId: string | undefined;
+
+  const runSimulation = createCommercialWorkerRunSimulation({
+    job: job({ modelSelection: { modelProfileId: "openrouter_balanced" } }),
+    services: {
+      modelProviderService: {
+        resolveProviderForTask: async () => ({ mode: "platform" as const }),
+      },
+      repository,
+    },
+    getPlatformGateway: () => new AiGateway(),
+    platformSecretEncryptionKey: MODEL_PROVIDER_KEY,
+    resolveCapabilities: () => ({
+      providerConfigured: true,
+      deepModeAvailable: true,
+      defaultInteractionMode: "enabled",
+      fallbackPolicy: "safe_stage_fallback",
+      reason: "",
+    }),
+    runSimulation: async ({ gateway }) => {
+      observedModelProfileId = gateway.createRequest({
+        step: "generate_agents",
+        scenarioType: "life_choice",
+        modelSelection: { modelProfileId: "openrouter_balanced" },
+        userPrompt: "{}",
+      }).modelProfile.id;
+      return {
+        agents: [],
+        stages: [],
+        report: makeReport(),
+      };
+    },
+  });
+
+  await runSimulation({
+    recordStepRun: async () => undefined,
+  });
+
+  assert.equal(observedModelProfileId, "openrouter_balanced");
+});
+
 test("repository platform gateway routes same-provider profiles to their configured provider", async () => {
   const repository = new InMemoryCommercialRepository();
   await repository.savePlatformModelProvider({
@@ -212,6 +351,13 @@ test("repository platform gateway routes same-provider profiles to their configu
     quality: "balanced",
     visibleToUser: true,
     status: "active",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
+  await repository.saveSystemSetting({
+    key: "platform.models.enabled",
+    value: ["provider_a_balanced", "provider_b_balanced"],
+    description: "Platform model profiles enabled for users",
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
   });
@@ -338,6 +484,63 @@ test("commercial worker runtime records every simulation progress event", async 
       },
     ],
   );
+});
+
+test("commercial worker runtime saves checkpoints and resumes from latest checkpoint", async () => {
+  const repository = new InMemoryCommercialRepository();
+  await repository.saveCommercialCheckpoint({
+    id: "checkpoint_existing",
+    taskId: "task_1",
+    stageIndex: 2,
+    stepName: "simulate_stage",
+    checkpoint: {
+      safetyChecked: true,
+      completedStages: [{ stageIndex: 2 } as never],
+      nextStep: "simulate_stage",
+    },
+    createdAt: "2026-07-07T00:00:00.000Z",
+  });
+  let observedResumeStageCount: number | undefined;
+
+  const runSimulation = createCommercialWorkerRunSimulation({
+    job: job(),
+    services: {
+      modelProviderService: {
+        resolveProviderForTask: async () => ({ mode: "platform" as const }),
+      },
+      repository,
+    },
+    getPlatformGateway: () => ({ onLog: undefined }) as never,
+    resolveCapabilities: () => ({
+      providerConfigured: true,
+      deepModeAvailable: true,
+      defaultInteractionMode: "enabled",
+      fallbackPolicy: "safe_stage_fallback",
+      reason: "",
+    }),
+    runSimulation: async ({ resumeFrom, onCheckpoint }) => {
+      observedResumeStageCount = resumeFrom?.completedStages?.length;
+      await onCheckpoint?.({
+        safetyChecked: true,
+        completedStages: [{ stageIndex: 3 } as never],
+        nextStep: "generate_report",
+      });
+      return {
+        agents: [],
+        stages: [],
+        report: makeReport(),
+      };
+    },
+  });
+
+  await runSimulation({
+    recordStepRun: async () => undefined,
+  });
+
+  const checkpoint = await repository.getLatestCommercialCheckpoint("task_1");
+  assert.equal(observedResumeStageCount, 1);
+  assert.equal(checkpoint?.stepName, "generate_report");
+  assert.equal(checkpoint?.stageIndex, 3);
 });
 
 function job(overrides: Partial<SimulationQueueJob> = {}): SimulationQueueJob {

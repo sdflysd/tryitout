@@ -1,5 +1,17 @@
 export function parseJsonResponse<T>(rawText: string): T {
-  return JSON.parse(cleanJsonText(rawText)) as T;
+  const cleaned = cleanJsonText(rawText);
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      Object.assign(error, {
+        code: "ai_json_parse_error",
+        rawText: cleaned,
+        parserMessage: error.message,
+      });
+    }
+    throw error;
+  }
 }
 
 export function cleanJsonText(rawText: string): string {

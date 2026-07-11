@@ -458,6 +458,32 @@ async function runStep<T>({
 
     return result.data;
   } catch (error) {
+    if (isAiJsonParseError(error)) {
+      try {
+        const repaired = await repairJsonStep<T>({
+          gateway,
+          simulationId,
+          type,
+          failedStep: step,
+          rawText: error.rawText,
+          parserMessage: error.parserMessage ?? error.message,
+          modelSelection,
+          stageIndex,
+        });
+
+        emitSimulationProgress({
+          simulationId,
+          step,
+          stageIndex,
+          status: "completed",
+          onProgress,
+        });
+
+        return repaired;
+      } catch {
+        // Fall through and report the original step as failed.
+      }
+    }
     emitSimulationProgress({
       simulationId,
       step,
@@ -467,6 +493,64 @@ async function runStep<T>({
     });
     throw error;
   }
+}
+
+async function repairJsonStep<T>({
+  gateway,
+  simulationId,
+  type,
+  failedStep,
+  rawText,
+  parserMessage,
+  modelSelection,
+  stageIndex,
+}: {
+  gateway: AiGateway;
+  simulationId: string;
+  type: SimulationType;
+  failedStep: SimulationProgressStep;
+  rawText: string;
+  parserMessage: string;
+  modelSelection?: ModelSelection;
+  stageIndex?: number;
+}): Promise<T> {
+  const repairRequest = gateway.createRequest({
+    step: "json_repair",
+    scenarioType: type,
+    modelSelection,
+    systemPrompt: [
+      "你是严格的 JSON 修复器。",
+      "只输出修复后的合法 JSON，不要输出 markdown、解释、代码围栏或额外字段。",
+      "必须保留原始 JSON 里已有的字段语义，只修复截断、引号、逗号、括号和转义问题。",
+    ].join("\n"),
+    userPrompt: [
+      `原步骤：${failedStep}`,
+      stageIndex === undefined ? undefined : `阶段：${stageIndex}`,
+      `解析错误：${parserMessage}`,
+      "请把下面的模型输出修复为合法 JSON，并保持它符合原步骤要求：",
+      rawText,
+    ]
+      .filter((line): line is string => line !== undefined)
+      .join("\n"),
+    metadata: {
+      simulationId,
+      stageIndex,
+    },
+  });
+  const repaired = await gateway.generateJson<T>(repairRequest);
+  return repaired.data;
+}
+
+function isAiJsonParseError(error: unknown): error is SyntaxError & {
+  code: "ai_json_parse_error";
+  rawText: string;
+  parserMessage?: string;
+} {
+  return (
+    error instanceof SyntaxError &&
+    (error as { code?: unknown }).code === "ai_json_parse_error" &&
+    typeof (error as { rawText?: unknown }).rawText === "string"
+  );
 }
 
 function buildGenerateAgentsPrompt(type: SimulationType, userInput: UserInput): string {

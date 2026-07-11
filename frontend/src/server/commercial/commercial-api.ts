@@ -218,6 +218,11 @@ type SaveAdminModelProfileBody = {
   limits?: Partial<ModelLimits>;
 };
 
+type TestAdminModelProfileBody = {
+  providerConfigId: string;
+  modelId: string;
+};
+
 type SaveModelProviderBody = {
   provider: string;
   displayName: string;
@@ -1176,7 +1181,11 @@ export async function handleListAdminModelProfilesRequest(
     const settings = await deps.adminService.getSettings();
     return {
       status: 200,
-      body: { profiles: settings.platformModels.available },
+      body: {
+        profiles: settings.platformModels.available.filter(
+          (profile) => profile.source === "admin",
+        ),
+      },
     };
   } catch (error) {
     return mapAdminError(error);
@@ -1207,6 +1216,41 @@ export async function handleSaveAdminModelProfileRequest(
       body: {
         profile: await deps.adminService.savePlatformModelProfile({
           actorUserId: auth.user.id,
+          ...parsed.value,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleTestAdminModelProfileRequest(
+  profileId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<
+  CommercialApiResult<
+    { result: Awaited<ReturnType<CommercialAdminService["testPlatformModelProfile"]>> } | CommercialApiErrorBody
+  >
+> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseTestAdminModelProfileBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        result: await deps.adminService.testPlatformModelProfile({
+          actorUserId: auth.user.id,
+          profileId,
           ...parsed.value,
           requestContext: getAdminRequestContext(request),
         }),
@@ -1448,6 +1492,31 @@ export async function handleGetCommercialTaskReportRequest(
     return {
       status: 200,
       body: { report: await deps.taskService.getReport(taskId) },
+    };
+  } catch (error) {
+    return mapTaskError(error);
+  }
+}
+
+export async function handleResumeCommercialTaskRequest(
+  taskId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ ok: boolean; task?: CommercialSimulationTaskRecord } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const task = await deps.taskService.getStatus(taskId);
+    if (task.userId !== auth.user.id) {
+      return notFound("Task not found", "task_not_found");
+    }
+    const result = await deps.taskService.resumeTask({ taskId });
+    return {
+      status: 200,
+      body: { ok: true, task: result.task },
     };
   } catch (error) {
     return mapTaskError(error);
@@ -2064,6 +2133,26 @@ function parseSaveAdminModelProfileBody(
   };
 }
 
+function parseTestAdminModelProfileBody(
+  body: unknown,
+): { ok: true; value: TestAdminModelProfileBody } | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  const providerConfigId = readRequiredString(body, "providerConfigId");
+  if (providerConfigId.ok === false) return providerConfigId;
+  const modelId = readRequiredString(body, "modelId");
+  if (modelId.ok === false) return modelId;
+
+  return {
+    ok: true,
+    value: {
+      providerConfigId: providerConfigId.value,
+      modelId: modelId.value,
+    },
+  };
+}
+
 function parseSaveModelProviderBody(
   body: unknown,
 ): { ok: true; value: SaveModelProviderBody } | { ok: false; error: string } {
@@ -2330,7 +2419,7 @@ async function decorateTaskProgress(
 ): Promise<CommercialSimulationTaskStatusDto> {
   const stepRuns = await repository.listSimulationStepRunCosts(task.id);
   const latestProgressRun = findLatestProgressStepRun(stepRuns);
-  const progressPercent = readProgressPercent(latestProgressRun?.metadata);
+  const progressPercent = findMaxProgressPercent(stepRuns);
   const progressMessage = readProgressMessage(latestProgressRun?.metadata);
 
   return {
@@ -2360,6 +2449,22 @@ function findLatestProgressStepRun(
     }
   }
   return undefined;
+}
+
+function findMaxProgressPercent(
+  runs: SimulationStepRunCostRecord[],
+): number | undefined {
+  let maxProgress: number | undefined;
+  for (const run of runs) {
+    const progressPercent = readProgressPercent(run.metadata);
+    if (
+      progressPercent !== undefined &&
+      (maxProgress === undefined || progressPercent > maxProgress)
+    ) {
+      maxProgress = progressPercent;
+    }
+  }
+  return maxProgress;
 }
 
 function isSimulationProgressStep(value: string): value is SimulationProgressStep {

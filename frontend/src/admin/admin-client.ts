@@ -286,6 +286,21 @@ export interface AdminPlatformModelProfileDto {
   limits?: Record<string, unknown>;
 }
 
+export interface AdminModelProfileTestInputDto {
+  profileId: string;
+  providerConfigId: string;
+  modelId: string;
+}
+
+export interface AdminModelProfileTestResultDto {
+  providerConfigId: string;
+  profileId: string;
+  modelId: string;
+  ok: boolean;
+  checkedAt: string;
+  error?: string;
+}
+
 export interface AdminDiscoveredModelDto {
   id: string;
   label?: string;
@@ -798,6 +813,19 @@ export async function saveAdminModelProvider(
   return body.provider as unknown as AdminPlatformModelProviderDto;
 }
 
+export async function softDeleteAdminModelProvider(
+  provider: AdminPlatformModelProviderDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProviderDto> {
+  return saveAdminModelProvider({
+    provider: provider.provider,
+    providerConfigId: provider.id,
+    displayName: provider.displayName,
+    baseUrl: provider.baseUrl,
+    status: "disabled",
+  }, fetchImpl);
+}
+
 export async function testAdminModelProvider(
   providerId: string,
   fetchImpl: typeof fetch = globalThis.fetch,
@@ -854,6 +882,36 @@ export async function saveAdminModelProfile(
   );
   assertObjectWithProperty(body, "profile", "Invalid model profile response");
   return body.profile as unknown as AdminPlatformModelProfileDto;
+}
+
+export async function testAdminModelProfile(
+  input: AdminModelProfileTestInputDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminModelProfileTestResultDto> {
+  const body = await requestAdminJson(
+    `/api/admin/model-profiles/${encodeURIComponent(input.profileId)}/test`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        providerConfigId: input.providerConfigId,
+        modelId: input.modelId,
+      }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "result", "Invalid model profile test response");
+  return body.result as unknown as AdminModelProfileTestResultDto;
+}
+
+export async function softDeleteAdminModelProfile(
+  profile: AdminPlatformModelProfileDto,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminPlatformModelProfileDto> {
+  return saveAdminModelProfile({
+    ...profile,
+    status: "disabled",
+  }, fetchImpl);
 }
 
 export async function fetchAdminAuditLogs(

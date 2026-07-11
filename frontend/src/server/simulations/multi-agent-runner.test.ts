@@ -96,6 +96,27 @@ class ThrowingRouteComparisonAdapter extends StepwiseStubAdapter {
   }
 }
 
+class MalformedAgentsThenRepairAdapter extends StepwiseStubAdapter {
+  override async generateJson<T>(request: AiCallRequest): Promise<AiCallResult<T>> {
+    if (request.step === "generate_agents") {
+      this.calls.push(request);
+      const error = new SyntaxError("Unterminated string in JSON at position 1375");
+      Object.assign(error, {
+        code: "ai_json_parse_error",
+        rawText: '{"agents":[{"id":"agent_1","name":"半截输出}',
+      });
+      throw error;
+    }
+
+    if (request.step === "json_repair") {
+      this.calls.push(request);
+      return makeResult<T>(request, { agents: makeAgents() });
+    }
+
+    return super.generateJson<T>(request);
+  }
+}
+
 class ThrowingActionsWithLegacyFallbackAdapter implements AiProviderAdapter {
   readonly provider = "gemini" as const;
   readonly calls: AiCallRequest[] = [];
@@ -251,6 +272,32 @@ test("runMultiAgentSimulation emits backend progress events in actual step order
   assert.equal(progressEvents.at(-1)?.status, "completed");
   assert.equal(progressEvents.at(-1)?.percent, 100);
   assert.ok(progressEvents.every((event) => event.simulationId === "sim-progress"));
+});
+
+test("runMultiAgentSimulation repairs malformed JSON step output once before continuing", async () => {
+  const adapter = new MalformedAgentsThenRepairAdapter();
+  const gateway = new AiGateway("test-key", { adapters: [adapter] });
+
+  const result = await runMultiAgentSimulation({
+    gateway,
+    simulationId: "sim-json-repair",
+    userInput: makeDatingInput(),
+  });
+
+  assert.equal(result.agents.length, 7);
+  assert.deepEqual(
+    adapter.calls.slice(0, 4).map((call) => call.step),
+    [
+      "safety_check",
+      "generate_agents",
+      "json_repair",
+      "initialize_world_state",
+    ],
+  );
+  const repairCall = adapter.calls.find((call) => call.step === "json_repair");
+  assert.ok(repairCall);
+  assert.match(repairCall.userPrompt, /generate_agents/);
+  assert.match(repairCall.userPrompt, /半截输出/);
 });
 
 test("runMultiAgentSimulation runs interactive stages when interaction mode is enabled", async () => {

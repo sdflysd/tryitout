@@ -30,6 +30,7 @@ import {
   handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
+  handleResumeCommercialTaskRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
   handleGetModelProviderRequest,
@@ -451,6 +452,21 @@ app.get("/api/simulation-tasks/:id/status", async (req, res) => {
 });
 
 app.post("/api/simulation-tasks/:id/resume", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) === "commercial_task") {
+    if (!commercialServices.enabled) {
+      return res.status(503).json({
+        error: "Commercial services are unavailable",
+        code: "commercial_services_unavailable",
+      });
+    }
+    const result = await handleResumeCommercialTaskRequest(
+      req.params.id,
+      toCommercialRequest(req),
+      commercialServices,
+    );
+    return sendCommercialApiResult(res, result);
+  }
+
   const result = await handleResumeSimulationTaskRequest(req.params.id, {
     service: taskService,
   });
