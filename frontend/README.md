@@ -34,9 +34,11 @@ npm run dev      # Start the local app server
 npm run worker   # Start the commercial worker entrypoint
 npm run lint     # Type-check
 npm test         # Run tests
-npm run build    # Build frontend and server
+npm run build    # Build frontend, server, worker, and admin seed bundle
 npm start        # Run built server
+npm run start:worker          # Run built worker
 npm run seed:admin             # Seed an owner/admin in commercial mode
+npm run seed:admin:dist        # Seed admin from the built Docker/runtime bundle
 npm run export:access-codes    # Safely export creation-time raw access codes
 ```
 
@@ -45,6 +47,8 @@ npm run export:access-codes    # Safely export creation-time raw access codes
 Commercial mode is enabled with `COMMERCIAL_MODE_ENABLED=true` and requires Postgres, Redis, session/access-code secrets, and a base64 32-byte `USER_SECRET_ENCRYPTION_KEY`.
 
 Read the production runbook before deploying paid usage: [`docs/operations/commercial-platform-runbook.md`](../docs/operations/commercial-platform-runbook.md).
+
+For a single-server Docker Compose deployment with Postgres, Redis, API, and worker, see [`docs/operations/docker-deployment.md`](../docs/operations/docker-deployment.md).
 
 ## Agent Runtime
 
@@ -60,11 +64,10 @@ Deep mode makes extra AI calls for world events, agent actions, votes, arbitrati
 
 Commercial mode is the paid path. It requires real backing services and must not use in-memory repositories for accounts, credits, tasks, analytics, feedback, or audit logs.
 
-Set both server and client flags:
+Enable commercial mode:
 
 ```bash
 COMMERCIAL_MODE_ENABLED="true"
-VITE_COMMERCIAL_MODE_ENABLED="true"
 ```
 
 Required services and secrets:

@@ -148,11 +148,10 @@ ENABLE_AGENT_INTERACTION_MODE="true"
 
 Commercial mode is the paid path, not the in-memory demo path. Accounts, server sessions, access-code credits, paid tasks, reports, feedback, analytics, settings, and audit logs must use Postgres; queue execution must use Redis/BullMQ.
 
-Enable both server and client flags:
+Enable commercial mode:
 
 ```bash
 COMMERCIAL_MODE_ENABLED="true"
-VITE_COMMERCIAL_MODE_ENABLED="true"
 ```
 
 Required external services and secrets:
@@ -181,16 +180,32 @@ BYOK_DEEP_CREDIT_COST="2"
 
 BYOK custom model providers require the `custom_model_provider` entitlement. User API keys are AES-GCM encrypted with `USER_SECRET_ENCRYPTION_KEY`; provider URLs must be HTTPS, explicitly allowed, and blocked from localhost, private networks, link-local ranges, metadata IPs, and unsafe redirects.
 
+### Docker Compose Deployment
+
+Single-server deployment is supported with Docker Compose:
+
+```bash
+cp deploy/docker.env.example deploy/docker.env
+# Edit deploy/docker.env with real secrets and provider keys.
+docker compose build
+docker compose up -d postgres redis
+```
+
+Apply the platformized migrations, seed the first admin, then start `app` and `worker`. See the full guide: [`docs/operations/docker-deployment.md`](docs/operations/docker-deployment.md).
+
 ## Scripts
 
 Run from `frontend/`:
 
 ```bash
-npm run dev      # Start local app server
-npm run lint     # Type-check with tsc
-npm test         # Run test suite
-npm run build    # Build frontend and bundled server
-npm start        # Run built server
+npm run dev           # Start local app server
+npm run worker        # Start commercial worker with tsx
+npm run lint          # Type-check with tsc
+npm test              # Run test suite
+npm run build         # Build frontend, server, worker, and admin seed bundle
+npm start             # Run built server
+npm run start:worker  # Run built worker
+npm run seed:admin    # Seed an owner/admin in commercial mode
 ```
 
 ## Verification Snapshot
@@ -214,7 +229,7 @@ Generated content is for simulation and decision support only. It is not financi
 
 ## Roadmap
 
-- Cleaner deployment guide.
+- Managed Postgres/Redis deployment recipes.
 - Demo mode with deterministic mock data.
 - More provider-specific setup notes.
 - Report export and better share images.

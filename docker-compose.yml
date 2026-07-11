@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ./deploy/docker.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-tryitout} -d $${POSTGRES_DB:-tryitout}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: tryitout:local
+    restart: unless-stopped
+    env_file:
+      - ./deploy/docker.env
+    environment:
+      NODE_ENV: production
+      COMMERCIAL_MODE_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: tryitout:local
+    restart: unless-stopped
+    command: ["node", "dist/worker.cjs"]
+    env_file:
+      - ./deploy/docker.env
+    environment:
+      NODE_ENV: production
+      COMMERCIAL_MODE_ENABLED: "true"
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

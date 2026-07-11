@@ -148,11 +148,10 @@ ENABLE_AGENT_INTERACTION_MODE="true"
 
 商用模式是付费路径，不是内存演示路径。开启后账号、服务端 session、访问码、积分、任务、报告、反馈、分析事件、系统设置和审计日志都必须落到 Postgres；队列必须使用 Redis/BullMQ。
 
-同时开启服务端和前端标记：
+开启商用模式：
 
 ```bash
 COMMERCIAL_MODE_ENABLED="true"
-VITE_COMMERCIAL_MODE_ENABLED="true"
 ```
 
 必需的外部服务和密钥：
@@ -181,17 +180,31 @@ BYOK_DEEP_CREDIT_COST="2"
 
 BYOK 自定义模型服务只开放给带有 `custom_model_provider` 权益的用户。用户 API Key 使用 `USER_SECRET_ENCRYPTION_KEY` 做 AES-GCM 加密；Provider URL 必须是 HTTPS、显式允许的 Host，且不能指向 localhost、私网、链路本地地址、云元数据 IP 或不安全重定向。
 
+### Docker Compose 部署
+
+单机 Docker Compose 部署已提供 `app`、`worker`、`postgres`、`redis`：
+
+```bash
+cp deploy/docker.env.example deploy/docker.env
+# 编辑 deploy/docker.env，填入真实密钥和模型服务 Key。
+docker compose build
+docker compose up -d postgres redis
+```
+
+之后按顺序执行平台化数据库迁移、初始化管理员，再启动 `app` 和 `worker`。完整步骤见 [`docs/operations/docker-deployment.md`](docs/operations/docker-deployment.md)。
+
 ## 常用命令
 
 在 `frontend/` 目录运行：
 
 ```bash
-npm run dev      # 启动本地服务
-npm run worker   # 启动商业 worker 入口
-npm run lint     # TypeScript 类型检查
-npm test         # 运行测试
-npm run build    # 构建前端和服务端
-npm start        # 运行构建后的服务
+npm run dev                  # 启动本地服务
+npm run worker               # 用 tsx 启动商业 worker
+npm run lint                 # TypeScript 类型检查
+npm test                     # 运行测试
+npm run build                # 构建前端、服务端、worker 和 admin seed
+npm start                    # 运行构建后的服务
+npm run start:worker         # 运行构建后的 worker
 npm run seed:admin             # 初始化 owner/admin
 npm run export:access-codes    # 安全导出创建期兑换码 raw payload
 ```
@@ -200,7 +213,7 @@ npm run export:access-codes    # 安全导出创建期兑换码 raw payload
 
 商业正式版通过 `COMMERCIAL_MODE_ENABLED=true` 开启，需要 Postgres、Redis、API 进程、worker 进程、会话密钥、兑换码 pepper 和 32 字节 base64 的 `USER_SECRET_ENCRYPTION_KEY`。
 
-完整部署和运维文档见 [`docs/operations/commercial-platform-runbook.md`](docs/operations/commercial-platform-runbook.md)，覆盖数据库迁移、管理员 seed、额度和兑换码、BYOK 密钥加密、队列监控、备份、隐私、安全和故障处理。
+Docker Compose 部署见 [`docs/operations/docker-deployment.md`](docs/operations/docker-deployment.md)。更完整的商业平台运维文档见 [`docs/operations/commercial-platform-runbook.md`](docs/operations/commercial-platform-runbook.md)，覆盖数据库迁移、管理员 seed、额度和兑换码、BYOK 密钥加密、队列监控、备份、隐私、安全和故障处理。
 
 ## 当前验证状态
 
