@@ -328,9 +328,38 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
     }
   }[simType];
 
+  const recommendedRoute =
+    simulation.routeComparison?.routes.find(
+      (route) => route.id === simulation.routeComparison?.recommendedRouteId,
+    ) ?? simulation.routeComparison?.routes[0];
+  const firstAction = visibleActionPlan[0] ?? report.actionPlan7Days[0];
+  const actionPreview = visibleActionPlan.slice(0, 3);
+  const riskLabel =
+    report.riskLevel === "low"
+      ? "低风险"
+      : report.riskLevel === "medium"
+        ? "中等风险"
+        : report.riskLevel === "high"
+          ? "高风险"
+          : "极高风险";
+  const projectTitle =
+    simType === "side_hustle"
+      ? `项目：《${report.projectName || simulation.userInput.projectIdea.slice(0, 15) + "..."}》`
+      : simType === "dating"
+        ? `关系阶段：《${report.projectName || "聊天破冰矛盾解套"}》`
+        : `重大抉择天平：《${report.projectName || "天平碰撞抉择"}》`;
+  const avoidNote =
+    simType === "dating"
+      ? "别急着连环解释或高压推进，先保留对方的安全感和回应空间。"
+      : simType === "life_choice"
+        ? "别把选择做成不可逆豪赌，先保留现金流、退路和阶段性退出阈值。"
+        : "别先重资产开发或大额投放，先用人工服务和小样本确认真实付费。";
+  const evidenceSummaryCount =
+    arbiterEvidence.length + agentEvidence.rows.length + keyVariables.length + reportEvidenceRows.length;
+
   return (
-    <div id="report-view-container" className="max-w-4xl mx-auto px-4 py-6 space-y-8">
-      
+    <div id="report-view-container" className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+
       {/* Top Banner Navigation */}
       <div id="report-navbar" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <button
@@ -363,12 +392,325 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
       </div>
 
+      <section id="report-layout-workbench" className="hidden lg:grid grid-cols-[320px_minmax(0,1fr)] gap-5">
+        <aside id="report-decision-rail" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left space-y-4">
+          <div>
+            <span className="text-2xs font-bold text-gray-400 uppercase tracking-widest">Decision Brief</span>
+            <h1 className="mt-2 text-2xl font-black leading-tight text-gray-950">{verdict.title}</h1>
+            <p className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">{report.finalRecommendation}</p>
+          </div>
+
+          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+            <span className="block text-3xs font-black text-amber-700">行动大裁决</span>
+            <p className="mt-1 text-xs font-bold leading-relaxed text-amber-950">{verdict.desc}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <span className="block text-3xs font-bold text-gray-400">胜率</span>
+              <b className="mt-1 block text-xl text-gray-950">{report.successProbability}%</b>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <span className="block text-3xs font-bold text-gray-400">风险</span>
+              <b className="mt-1 block text-sm text-gray-950">{riskLabel}</b>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+            <span className="block text-3xs font-bold text-blue-500">推荐路线</span>
+            <p className="mt-1 text-sm font-black text-blue-950">
+              {recommendedRoute ? recommendedRoute.title : "按当前裁决小步验证"}
+            </p>
+          </div>
+
+          {firstAction && (
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+              <span className="block text-3xs font-bold text-emerald-600">今天立刻做</span>
+              <p className="mt-1 text-sm font-black text-emerald-950">{firstAction.title}</p>
+              <p className="mt-1 text-2xs leading-relaxed text-emerald-800">{firstAction.action}</p>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
+            <span className="block text-3xs font-bold text-rose-500">先别急着做</span>
+            <p className="mt-1 text-2xs font-semibold leading-relaxed text-rose-800">{avoidNote}</p>
+          </div>
+        </aside>
+
+        <section id="report-workspace" className="space-y-4">
+          <div className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="text-2xs font-bold text-gray-400 uppercase tracking-widest">Report Workbench</span>
+                <h2 className="mt-1 text-xl font-black text-gray-950">{projectTitle}</h2>
+                <p className="mt-1 text-xs leading-relaxed text-gray-500">{reportModeSummary.detail}</p>
+              </div>
+              <span className={`shrink-0 rounded-xl px-3 py-1.5 text-2xs font-black text-white ${theme.badgeBg}`}>
+                {theme.badgeText}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 text-left shadow-xs">
+              <span className="text-3xs font-bold text-gray-400">路线对比</span>
+              <p className="mt-1 text-sm font-black text-gray-950">
+                {recommendedRoute ? recommendedRoute.title : "暂无路线对比"}
+              </p>
+              <p className="mt-1 text-2xs leading-relaxed text-gray-500">
+                {recommendedRoute ? recommendedRoute.premise : "按最终建议先做最小验证。"}
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 text-left shadow-xs">
+              <span className="text-3xs font-bold text-gray-400">证据摘要</span>
+              <p className="mt-1 text-sm font-black text-gray-950">{evidenceSummaryCount} 条信号</p>
+              <p className="mt-1 text-2xs leading-relaxed text-gray-500">
+                裁判依据、Agent 观点和关键变量已收进下方折叠证据库。
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 text-left shadow-xs">
+              <span className="text-3xs font-bold text-gray-400">30 天推演</span>
+              <p className="mt-1 text-sm font-black text-gray-950">
+                {stages[expandedStageIndex]?.timeRange ?? "阶段推演"}
+              </p>
+              <p className="mt-1 text-2xs leading-relaxed text-gray-500">
+                共 {stages.length} 个阶段，可展开查看事件、状态变化和 Agent 回放。
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+              <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
+                <TrendingUp className={`w-5 h-5 ${theme.text}`} />
+                <span>六维评分速览</span>
+              </h2>
+              <div className="mt-4 space-y-3">
+                {Object.entries({
+                  [theme.scoresMap.demandStrength]: report.scores.demandStrength,
+                  [theme.scoresMap.willingnessToPay]: report.scores.willingnessToPay,
+                  [theme.scoresMap.acquisitionDifficulty]: report.scores.acquisitionDifficulty,
+                  [theme.scoresMap.executionFit]: report.scores.executionFit,
+                }).map(([key, score]) => (
+                  <div key={key} className="grid grid-cols-[1fr_120px_34px] items-center gap-3 text-2xs font-bold text-gray-700">
+                    <span className="truncate">{key}</span>
+                    <span className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                      <span className="block h-full rounded-full bg-amber-500" style={{ width: `${score}%` }} />
+                    </span>
+                    <span className="text-right font-mono text-gray-950">{score}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+              <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                <span>前 3 天行动</span>
+              </h2>
+              <div className="mt-4 space-y-2">
+                {actionPreview.map((item) => (
+                  <div key={item.day} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                    <span className="text-3xs font-black text-emerald-600">DAY {item.day}</span>
+                    <p className="mt-1 text-xs font-black text-gray-950">{item.title}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="report-mobile-decision-flow" className="lg:hidden space-y-4">
+        <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <span className="text-2xs font-bold text-gray-400 uppercase tracking-widest">Decision Report</span>
+          <h1 className="mt-2 text-2xl font-black leading-tight text-gray-950">{verdict.title}</h1>
+          <div className={`mt-4 rounded-2xl border p-4 ${verdict.color}`}>
+            <p className="text-xs font-black">行动大裁决：{report.finalRecommendation}</p>
+            <p className="mt-2 text-2xs leading-relaxed opacity-90">{verdict.desc}</p>
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <span className="block text-3xs font-bold text-gray-400">胜率</span>
+              <b className="mt-1 block text-sm text-gray-950">{report.successProbability}%</b>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <span className="block text-3xs font-bold text-gray-400">风险</span>
+              <b className="mt-1 block text-xs text-gray-950">{riskLabel}</b>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <span className="block text-3xs font-bold text-gray-400">路线</span>
+              <b className="mt-1 block truncate text-xs text-gray-950">
+                {recommendedRoute?.label ?? "验证"}
+              </b>
+            </div>
+          </div>
+        </div>
+
+        <div id="report-mobile-action-preview" className="bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-black text-gray-950">接下来先做</h2>
+            <span className="rounded-full bg-gray-950 px-3 py-1 text-3xs font-black text-white">3 天</span>
+          </div>
+          <div className="mt-4 divide-y divide-gray-100">
+            {actionPreview.map((item, index) => (
+              <div key={item.day} className="grid grid-cols-[30px_1fr] gap-3 py-3 first:pt-0 last:pb-0">
+                <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-emerald-50 text-2xs font-black text-emerald-700">
+                  {index + 1}
+                </span>
+                <div>
+                  <h3 className="text-xs font-black text-gray-950">{item.title}</h3>
+                  <p className="mt-1 text-2xs leading-relaxed text-gray-500">{item.action}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="report-detail-accordion" className="space-y-3">
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>机会与风险</span>
+            <span className="text-2xs font-bold text-gray-400">各 {Math.max(report.opportunities.length, report.risks.length)} 条</span>
+          </summary>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <h3 className="text-xs font-black text-emerald-800">最大机会</h3>
+              <ul className="mt-3 space-y-2">
+                {report.opportunities.map((item, index) => (
+                  <li key={index} className="text-2xs leading-relaxed text-emerald-800">
+                    {index + 1}. {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
+              <h3 className="text-xs font-black text-rose-800">最大风险</h3>
+              <ul className="mt-3 space-y-2">
+                {report.risks.map((item, index) => (
+                  <li key={index} className="text-2xs leading-relaxed text-rose-800">
+                    {index + 1}. {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>为什么这么判断</span>
+            <span className="text-2xs font-bold text-gray-400">{evidenceSummaryCount} 条信号</span>
+          </summary>
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <h3 className="text-xs font-black text-gray-800">裁判依据</h3>
+              <ul className="mt-2 space-y-2">
+                {arbiterEvidence.slice(0, 4).map((item, index) => (
+                  <li key={index} className="text-2xs leading-relaxed text-gray-600">{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-gray-800">{agentEvidence.title}</h3>
+              <div className="mt-2 space-y-2">
+                {agentEvidence.rows.length > 0 ? agentEvidence.rows.slice(0, 3).map((row, index) => (
+                  <p key={index} className="text-2xs leading-relaxed text-gray-600">
+                    第 {row.stageIndex} 阶段 · {row.agentName}：{row.rationale}
+                  </p>
+                )) : (
+                  <p className="text-2xs leading-relaxed text-gray-500">当前报告没有逐 Agent 投票数据。</p>
+                )}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-gray-800">关键变量</h3>
+              <ul className="mt-2 space-y-2">
+                {keyVariables.slice(0, 4).map((item, index) => (
+                  <li key={index} className="text-2xs leading-relaxed text-gray-600">{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>Agent 分歧证据</span>
+            <span className="text-2xs font-bold text-gray-400">
+              {reportEvidenceRows.length > 0 ? `${reportEvidenceRows.length} 个冲突点` : `${agentEvidence.rows.length} 条观点`}
+            </span>
+          </summary>
+          <div className="mt-4 space-y-3">
+            {report.disagreementSummary && (
+              <p className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-2xs leading-relaxed text-gray-600">
+                {report.disagreementSummary}
+              </p>
+            )}
+            {reportEvidenceRows.length > 0 ? reportEvidenceRows.map((row, index) => (
+              <div key={`${row.conclusion}-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <h3 className="text-xs font-black text-gray-950">{row.conclusion}</h3>
+                <p className="mt-2 text-2xs leading-relaxed text-gray-600">{row.evidence}</p>
+              </div>
+            )) : agentEvidence.rows.slice(0, 4).map((row, index) => (
+              <p key={index} className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-2xs leading-relaxed text-gray-600">
+                第 {row.stageIndex} 阶段 · {row.agentName}：{row.rationale}
+              </p>
+            ))}
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>30 天推演时间线</span>
+            <span className="text-2xs font-bold text-gray-400">{stages.length} 个阶段</span>
+          </summary>
+          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-5">
+            {stages.map((stage) => (
+              <button
+                key={stage.stageIndex}
+                type="button"
+                onClick={() => setExpandedStageIndex(stage.stageIndex - 1)}
+                className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100"
+              >
+                <span className="text-3xs font-black text-gray-400">{stage.timeRange}</span>
+                <span className="mt-1 block text-xs font-black text-gray-950">{stage.title}</span>
+              </button>
+            ))}
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>完整 7 天计划</span>
+            <span className="text-2xs font-bold text-gray-400">{visibleActionPlan.length} 天</span>
+          </summary>
+          <div className="mt-4 space-y-2">
+            {visibleActionPlan.map((item) => (
+              <div key={item.day} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <span className="text-3xs font-black text-emerald-600">DAY {item.day}</span>
+                <h3 className="mt-1 text-xs font-black text-gray-950">{item.title}</h3>
+                <p className="mt-1 text-2xs leading-relaxed text-gray-500">{item.action}</p>
+              </div>
+            ))}
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>完整证据与原报告详情</span>
+            <span className="text-2xs font-bold text-gray-400 group-open:hidden">点击展开</span>
+            <span className="hidden text-2xs font-bold text-gray-400 group-open:inline">点击收起</span>
+          </summary>
+          <div className="mt-6 space-y-8">
+
       {/* Hero Overview Header */}
       <motion.div 
         id="report-hero-card"
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-3xl border border-gray-150 p-6 md:p-8 shadow-xs relative overflow-hidden text-left"
+        className="bg-white rounded-3xl border border-gray-200 p-6 md:p-8 shadow-xs relative overflow-hidden text-left"
       >
         <div className={`absolute top-0 right-0 ${theme.badgeBg} text-white text-3xs font-black px-3 py-1.5 rounded-bl-xl tracking-wider uppercase`}>
           {theme.badgeText}
@@ -468,7 +810,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
       </motion.div>
 
-      <div id="report-explainability-panel" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left space-y-5">
+      <div id="report-explainability-panel" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left space-y-5">
         <h2 className="text-base font-bold text-gray-950">为什么 AI 会这么判断</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -505,7 +847,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {(report.disagreementSummary || reportEvidenceRows.length > 0) && (
-        <div id="report-agent-disagreement-evidence" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left space-y-4">
+        <div id="report-agent-disagreement-evidence" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left space-y-4">
           <div>
             <h2 className="text-base font-bold text-gray-950">Agent 分歧证据</h2>
             {report.disagreementSummary && (
@@ -517,7 +859,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           {reportEvidenceRows.length > 0 && (
             <div className="space-y-3">
               {reportEvidenceRows.map((row, index) => (
-                <div key={`${row.conclusion}-${index}`} className="bg-gray-50 border border-gray-150 rounded-2xl p-4 space-y-2">
+                <div key={`${row.conclusion}-${index}`} className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-2">
                   <p className="text-xs font-bold text-gray-900">{row.conclusion}</p>
                   <p className="text-2xs text-gray-600 leading-relaxed">{row.evidence}</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-3xs text-gray-500">
@@ -532,7 +874,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       )}
 
       {agentMemoryEvidence.length > 0 && (
-        <div id="report-agent-memory-evidence" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left space-y-3">
+        <div id="report-agent-memory-evidence" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left space-y-3">
           <h2 className="text-base font-bold text-gray-950">Agent 记忆证据</h2>
           <ul className="space-y-2">
             {agentMemoryEvidence.map((item, index) => (
@@ -547,7 +889,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       <RouteComparisonPanel simulation={simulation} />
 
       {/* Score Radar / Bar Grid */}
-      <div id="report-score-panel" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left">
+      <div id="report-score-panel" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
         <h2 className="text-base font-bold text-gray-950 mb-5 flex items-center gap-2">
           <TrendingUp className={`w-5 h-5 ${theme.text}`} />
           <span>{theme.scoreTitle}</span>
@@ -587,7 +929,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {/* Multi-Agent Sandbox Objections Dialog (多智能体拷打面板) */}
-      <div id="report-agents-sandbox" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-6 text-left">
+      <div id="report-agents-sandbox" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-6 text-left">
         <div>
           <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
             <Compass className={`w-5 h-5 ${theme.text}`} />
@@ -631,7 +973,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
                 className={`px-4 py-3.5 rounded-2xl border text-xs shrink-0 font-bold transition-all text-left flex items-center gap-2.5 cursor-pointer ${
                   isSelected
                     ? "bg-gray-950 border-gray-950 text-white shadow-md scale-98"
-                    : "bg-gray-50 hover:bg-gray-100 border-gray-150 text-gray-700"
+                    : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-700"
                 }`}
               >
                 <span className="text-base">
@@ -661,9 +1003,9 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
-            className="bg-gray-50 border border-gray-150 rounded-2xl p-5 text-left relative"
+            className="bg-gray-50 border border-gray-200 rounded-2xl p-5 text-left relative"
           >
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-2 border-b border-gray-150 pb-3 mb-4">
+            <div className="flex flex-col md:flex-row justify-between md:items-center gap-2 border-b border-gray-200 pb-3 mb-4">
               <div className="flex items-center gap-2.5">
                 <span className="text-lg">
                   {selectedAgent.role.includes("客户") || selectedAgent.role.includes("伴侣") || selectedAgent.role.includes("对方") ? "🛍️" 
@@ -720,7 +1062,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {/* 30-Day Timeline (30天推演时间线) */}
-      <div id="report-timeline" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-6 text-left">
+      <div id="report-timeline" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-6 text-left">
         <div>
           <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
             <Calendar className={`w-5 h-5 ${theme.text}`} />
@@ -744,7 +1086,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
                 className={`py-2 px-1 text-center rounded-xl border text-[10px] md:text-xs font-bold transition-all cursor-pointer truncate ${
                   isExpanded
                     ? simType === "side_hustle" ? "bg-amber-500 border-amber-500 text-gray-950 shadow-sm" : simType === "dating" ? "bg-rose-500 border-rose-500 text-white shadow-sm" : "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                    : "bg-gray-50 hover:bg-gray-100 border-gray-150 text-gray-500"
+                    : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-500"
                 }`}
               >
                 <span className="block md:hidden">段 {idx + 1}</span>
@@ -755,8 +1097,8 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
 
         {/* Expanded Stage Log Content */}
-        <div id="timeline-stage-detail" className="bg-gray-50 border border-gray-150 rounded-2xl p-5 space-y-5 text-left">
-          <div className="flex items-center justify-between border-b border-gray-150 pb-2.5">
+        <div id="timeline-stage-detail" className="bg-gray-50 border border-gray-200 rounded-2xl p-5 space-y-5 text-left">
+          <div className="flex items-center justify-between border-b border-gray-200 pb-2.5">
             <h3 className="font-black text-gray-950 text-sm">
               {stages[expandedStageIndex].timeRange} · {stages[expandedStageIndex].title}
             </h3>
@@ -780,7 +1122,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
             <span className="block text-2xs font-bold text-gray-400 uppercase tracking-wider">发生摩擦大事件：</span>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {stages[expandedStageIndex].events.map((evt, i) => (
-                <div key={i} className="bg-white p-3 rounded-xl border border-gray-150 shadow-2xs space-y-1">
+                <div key={i} className="bg-white p-3 rounded-xl border border-gray-200 shadow-2xs space-y-1">
                   <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-sm ${
                     evt.impact === "positive" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
                   }`}>
@@ -794,7 +1136,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           </div>
 
           {/* World state status list */}
-          <div className="bg-white p-4 rounded-xl border border-gray-150 space-y-2">
+          <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-2">
             <span className="block text-2xs font-bold text-gray-400 uppercase tracking-wider mb-2">该阶段结束后的核心要素状态：</span>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
               <div className="p-2 border-r border-gray-100 last:border-0 text-left">
@@ -849,7 +1191,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       {/* Bento Opportunities vs Risks */}
       <div id="report-opportunities-risks" className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
         {/* Opportunities card */}
-        <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-4">
+        <div className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-4">
           <div className="flex items-center gap-2 font-bold text-gray-950 text-sm">
             <Lightbulb className="w-5 h-5 text-emerald-500" />
             <span>
@@ -871,7 +1213,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
 
         {/* Risks card */}
-        <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-4">
+        <div className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-4">
           <div className="flex items-center gap-2 font-bold text-gray-950 text-sm">
             <ShieldAlert className="w-5 h-5 text-rose-500" />
             <span>
@@ -894,7 +1236,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {/* Pivot suggestions (转型与变现方向建议) */}
-      <div id="report-pivot-suggestions" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-5 text-left">
+      <div id="report-pivot-suggestions" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-5 text-left">
         <div>
           <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
             <Lightbulb className="w-5 h-5 text-purple-500" />
@@ -921,7 +1263,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {/* 7-Day Action Plan (落地一期爆款执行红书计划) */}
-      <div id="report-action-plan" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-5 text-left">
+      <div id="report-action-plan" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-5 text-left">
         <div>
           <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-500" />
@@ -943,7 +1285,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
                 className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start gap-3.5 ${
                   isChecked
                     ? "bg-emerald-50/50 border-emerald-300 opacity-75"
-                    : "bg-gray-50 hover:bg-gray-100 border-gray-150"
+                    : "bg-gray-50 hover:bg-gray-100 border-gray-200"
                 }`}
               >
                 <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
@@ -971,7 +1313,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
       </div>
 
-      <div id="deep-report-paywall" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left">
+      <div id="deep-report-paywall" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
         <h2 className="text-base font-bold text-gray-950">{deepReportPaywallCopy.title}</h2>
         <p className="text-xs text-gray-500 mt-1">{deepReportPaywallCopy.description}</p>
         <div className="grid grid-cols-3 gap-2 mt-4">
@@ -1028,7 +1370,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       <OutcomeFeedbackPanel simulation={simulation} />
 
       {/* User Feedback Panel */}
-      <div id="report-feedback-section" className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs text-left">
+      <div id="report-feedback-section" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
         <h2 className="text-base font-bold text-gray-950 mb-1 flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-blue-500" />
           <span>这份推演评估符合你的实际直觉吗？</span>
@@ -1134,6 +1476,10 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
       </div>
 
       {/* Bottom Disclaimer */}
+          </div>
+        </details>
+      </section>
+
       <div id="report-bottom-credits" className="text-center pt-4">
         {report.disclaimer && (
           <p id="report-disclaimer" className="mx-auto mb-2 max-w-2xl text-2xs leading-relaxed text-gray-500">

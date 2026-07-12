@@ -6,6 +6,27 @@ import { renderToStaticMarkup } from "react-dom/server";
 import AgentSandboxOrb from "./AgentSandboxOrb.js";
 import { getAgentSandboxScenario } from "./agent-sandbox-model.js";
 
+test("agent sandbox orb signal signature ignores copied scenario and active id array identity", async () => {
+  const orbModule = await import("./AgentSandboxOrb.js") as typeof import("./AgentSandboxOrb.js") & {
+    getOrbSignalSignature?: (scenario: ReturnType<typeof getAgentSandboxScenario>, activeAgentIds: string[]) => string;
+  };
+
+  assert.equal(typeof orbModule.getOrbSignalSignature, "function");
+
+  const firstScenario = getAgentSandboxScenario("life_choice");
+  const copiedScenario = getAgentSandboxScenario("life_choice");
+  const activeAgentIds = ["life_choice-option-a", "life_choice-family"];
+
+  const firstSignature = orbModule.getOrbSignalSignature(firstScenario, activeAgentIds);
+  const copiedSignature = orbModule.getOrbSignalSignature(copiedScenario, [...activeAgentIds]);
+  const reorderedSignature = orbModule.getOrbSignalSignature(copiedScenario, [...activeAgentIds].reverse());
+  const changedSignature = orbModule.getOrbSignalSignature(copiedScenario, ["life_choice-option-b"]);
+
+  assert.equal(firstSignature, copiedSignature);
+  assert.equal(firstSignature, reorderedSignature);
+  assert.notEqual(firstSignature, changedSignature);
+});
+
 test("agent sandbox orb auto motion uses steady spin without pitch oscillation", async () => {
   const orbModule = await import("./AgentSandboxOrb.js") as typeof import("./AgentSandboxOrb.js") & {
     getOrbAutoMotionStep?: () => {

@@ -103,6 +103,26 @@ test("report view exposes an edit input action for the current simulation", () =
   assert.match(html, /btn-edit-report-input/);
 });
 
+test("report view renders the B+C decision workbench and mobile accordion contract", () => {
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={reportSimulation}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.match(html, /report-layout-workbench/);
+  assert.match(html, /report-decision-rail/);
+  assert.match(html, /report-workspace/);
+  assert.match(html, /report-mobile-decision-flow/);
+  assert.match(html, /report-mobile-action-preview/);
+  assert.match(html, /report-detail-accordion/);
+  assert.match(html, /先用手动服务验证需求。/);
+  assert.match(html, /找样本/);
+});
+
 test("report view includes route comparison when available", () => {
   const html = renderToStaticMarkup(
     <ReportView

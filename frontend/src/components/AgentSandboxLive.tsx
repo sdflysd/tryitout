@@ -80,18 +80,24 @@ export default function AgentSandboxLive({
   progressEvent = null,
   language = DEFAULT_LANGUAGE,
 }: AgentSandboxLiveProps) {
-  const scenario = getAgentSandboxScenario(simulationType, language);
+  const scenario = React.useMemo(
+    () => getAgentSandboxScenario(simulationType, language),
+    [language, simulationType],
+  );
   const accent = ACCENT_STYLES[scenario.accentName];
   const shouldReduceMotion = useReducedMotion();
   const isEnglish = language === "en-US";
   const percent = clampPercent(progressEvent?.percent ?? 0);
-  const phase = getLiveSandboxPhase({
-    scenario,
-    step: progressEvent?.step,
-    percent,
-    stageIndex: progressEvent?.stageIndex,
-    language,
-  });
+  const phase = React.useMemo(
+    () => getLiveSandboxPhase({
+      scenario,
+      step: progressEvent?.step,
+      percent,
+      stageIndex: progressEvent?.stageIndex,
+      language,
+    }),
+    [language, percent, progressEvent?.stageIndex, progressEvent?.step, scenario],
+  );
   const activeStage = scenario.stages[phase.activeStageIndex] ?? scenario.stages[0];
   const message = progressEvent?.message?.trim() || (isEnglish ? "Opening sandbox connection" : "建立沙盘连接");
   const activeChipLabel = phase.label === "智能体交互"

@@ -1,8 +1,22 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Copy, X, Sparkles, Trophy, ShieldAlert, CheckCircle, Smartphone } from "lucide-react";
-import { Simulation, SimulationType } from "../types";
+import { CheckCircle, LoaderCircle, Share2, Sparkles, X } from "lucide-react";
+import { Simulation } from "../types";
 import { postValidationEvent } from "../validation-events";
+import {
+  buildShareCardText,
+  copyShareTextToClipboard,
+  createBrowserShareEnvironment,
+  getAgentObjection,
+  getDisplayName,
+  getRecommendedRoute,
+  getShareCardCopy,
+  getSimulationType,
+  renderSharePosterBlob,
+  sharePosterImageWithFallback,
+  shouldPreferNativeFileShare,
+  type SharePosterOutcome,
+} from "./share-card-sharing";
 
 interface ShareCardProps {
   simulation: Simulation;
@@ -10,138 +24,148 @@ interface ShareCardProps {
 }
 
 type ShareTheme = "space_grey" | "gold" | "cyber_purple";
-
-type ShareCardCopy = {
-  modalTitle: string;
-  modalDescription: string;
-  subjectLabel: string;
-  probabilityLabel: string;
-  expectedLabel: string;
-  riskLabel: string;
-  recommendationLabel: string;
-  planLabel: string;
-  posterBadge: string;
-  footerLine: string;
-  fallbackName: string;
+type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback" | "text-unavailable";
+type ShareThemeRenderStyles = {
+  poster: React.CSSProperties;
+  panel: React.CSSProperties;
+  label: React.CSSProperties;
+  highlight: React.CSSProperties;
 };
 
-function getSimulationType(simulation: Simulation): SimulationType {
-  return simulation.type || simulation.userInput.type || "side_hustle";
+function getInitialNativeSharePreference(): boolean {
+  return typeof window === "undefined" ? true : shouldPreferNativeFileShare(window.navigator);
 }
 
-export function getShareCardCopy(type: SimulationType): ShareCardCopy {
-  if (type === "dating") {
-    return {
-      modalTitle: "情感沟通卡片生成器",
-      modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让懂你的人一起参谋。",
-      subjectLabel: "关系课题",
-      probabilityLabel: "30天升温/修复概率",
-      expectedLabel: "预期关系走向",
-      riskLabel: "关系风险评级",
-      recommendationLabel: "AI 最终沟通建议",
-      planLabel: "未来一周高情商沟通计划",
-      posterBadge: "我的情感走向",
-      footerLine: "重要关系沟通，先模拟一次",
-      fallbackName: "情感互动修复评估",
-    };
+function getShareStatusLabel(status: ShareStatus, preferNativeShare: boolean): string {
+  switch (status) {
+    case "preparing":
+      return "正在生成图片...";
+    case "native-share":
+      return "请选择微信发送";
+    case "native-share-cancelled":
+      return "分享已取消";
+    case "image-clipboard":
+      return "图片已复制，去微信粘贴";
+    case "downloaded-text":
+      return "图片已下载，文字已复制";
+    case "downloaded":
+      return "图片已下载，去微信发送";
+    case "text-fallback":
+      return "已复制文字，去微信粘贴";
+    case "text-unavailable":
+      return "复制失败，请手动复制";
+    case "idle":
+    default:
+      return preferNativeShare ? "一键分享到微信" : "复制图片发微信";
   }
-
-  if (type === "life_choice") {
-    return {
-      modalTitle: "人生抉择卡片生成器",
-      modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让信任的人一起参谋。",
-      subjectLabel: "人生抉择",
-      probabilityLabel: "30天心安避坑系数",
-      expectedLabel: "预期抉择走向",
-      riskLabel: "后悔风险评级",
-      recommendationLabel: "AI 最终避坑建议",
-      planLabel: "未来一周后悔防御计划",
-      posterBadge: "我的抉择推演",
-      footerLine: "重大人生抉择，先模拟一次",
-      fallbackName: "人生抉择损益评估",
-    };
-  }
-
-  return {
-    modalTitle: "搞钱试错卡片生成器",
-    modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让群里兄弟们一起参谋。",
-    subjectLabel: "项目想法",
-    probabilityLabel: "30天模拟胜率",
-    expectedLabel: "预期首月收益",
-    riskLabel: "主要风险评级",
-    recommendationLabel: "AI 最终决策建议",
-    planLabel: "未来一周MVP计划",
-    posterBadge: "我的副业结局",
-    footerLine: "重要副业决定，先模拟一次",
-    fallbackName: "未命名",
-  };
-}
-
-function getDisplayName(simulation: Simulation, fallbackName: string) {
-  return (
-    simulation.report.projectName ||
-    simulation.userInput.projectIdea ||
-    simulation.userInput.chatLogOrIssue ||
-    simulation.userInput.relationshipStatus ||
-    simulation.userInput.optionA ||
-    fallbackName
-  );
-}
-
-function getRecommendedRoute(simulation: Simulation) {
-  const comparison = simulation.routeComparison;
-  if (!comparison) {
-    return undefined;
-  }
-
-  return comparison.routes.find((route) => route.id === comparison.recommendedRouteId) ?? comparison.routes[0];
-}
-
-function getAgentObjection(simulation: Simulation): string {
-  return (
-    simulation.agents.find((agent) => agent.objection)?.objection ??
-    simulation.report.risks[0] ??
-    "暂无关键反对意见"
-  );
 }
 
 export default function ShareCard({ simulation, onClose }: ShareCardProps) {
   const [selectedTheme, setSelectedTheme] = useState<ShareTheme>("gold");
-  const [copiedText, setCopiedText] = useState(false);
+  const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
+  const [preferNativeShare, setPreferNativeShare] = useState(getInitialNativeSharePreference);
+  const [posterImage, setPosterImage] = useState<Blob | null>(null);
+  const [posterImageFailed, setPosterImageFailed] = useState(false);
+  const posterRef = useRef<HTMLDivElement>(null);
   const { report } = simulation;
   const copy = getShareCardCopy(getSimulationType(simulation));
   const displayName = getDisplayName(simulation, copy.fallbackName);
   const recommendedRoute = getRecommendedRoute(simulation);
   const agentObjection = getAgentObjection(simulation);
+  const shareText = buildShareCardText(simulation);
+  const isPosterPreparing = !posterImage && !posterImageFailed;
+  const isShareButtonDisabled = shareStatus === "preparing" || isPosterPreparing;
 
-  const handleCopyText = () => {
+  useEffect(() => {
+    setPreferNativeShare(shouldPreferNativeFileShare(window.navigator));
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setPosterImage(null);
+    setPosterImageFailed(false);
+
+    const renderPoster = async () => {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      const posterElement = posterRef.current;
+      if (!posterElement) {
+        if (!isCancelled) {
+          setPosterImageFailed(true);
+        }
+        return;
+      }
+
+      try {
+        const image = await renderSharePosterBlob(posterElement);
+        if (!isCancelled) {
+          setPosterImage(image);
+        }
+      } catch {
+        if (!isCancelled) {
+          setPosterImageFailed(true);
+        }
+      }
+    };
+
+    void renderPoster();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedTheme, simulation]);
+
+  const setTemporaryShareStatus = (status: ShareStatus) => {
+    setShareStatus(status);
+
+    if (status !== "text-unavailable") {
+      window.setTimeout(() => setShareStatus("idle"), 3000);
+    }
+  };
+
+  const handleThemeSelect = (theme: ShareTheme) => {
+    setPosterImage(null);
+    setPosterImageFailed(false);
+    setSelectedTheme(theme);
+  };
+
+  const handleShareToWechat = async () => {
+    if (isShareButtonDisabled) {
+      return;
+    }
+
     void postValidationEvent({
       type: "share_clicked",
       simulationId: simulation.id,
       scenarioType: getSimulationType(simulation),
     });
 
-    const textToCopy = `
-【试一下】
-${copy.subjectLabel}：《${displayName}》
-━━━━━━━━━━━━━━━━━━━━
-${copy.probabilityLabel}：${report.successProbability}%
-${copy.expectedLabel}：${report.expectedRevenue}
-${copy.riskLabel}：${report.riskLevel === "low" ? "低风险" : report.riskLevel === "medium" ? "中等风险" : report.riskLevel === "high" ? "高风险" : "极高风险"}
-${recommendedRoute ? `推荐路线：${recommendedRoute.title}（后悔风险 ${recommendedRoute.regretRisk}%）` : ""}
-━━━━━━━━━━━━━━━━━━━━
-【${copy.recommendationLabel}】：
-${report.finalRecommendation}
+    setShareStatus("preparing");
 
-【${copy.planLabel}】：
-${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.action}`).join("\n")}
+    try {
+      if (!posterImage) {
+        const copied = await copyShareTextToClipboard(shareText, createBrowserShareEnvironment());
+        setTemporaryShareStatus(copied ? "text-fallback" : "text-unavailable");
+        return;
+      }
 
-※ ${copy.footerLine}！
-    `.trim();
-
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedText(true);
-    setTimeout(() => setCopiedText(false), 2000);
+      const outcome = await sharePosterImageWithFallback(
+        {
+          image: posterImage,
+          fileName: `tryitout-share-${simulation.id.slice(0, 8)}.png`,
+          title: copy.modalTitle,
+          text: shareText,
+          preferNativeShare,
+        },
+        createBrowserShareEnvironment(),
+      );
+      setTemporaryShareStatus(outcome);
+    } catch {
+      const copied = await copyShareTextToClipboard(shareText, createBrowserShareEnvironment());
+      setTemporaryShareStatus(copied ? "text-fallback" : "text-unavailable");
+    }
   };
 
   const getThemeStyles = (theme: ShareTheme) => {
@@ -154,7 +178,13 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           divider: "border-zinc-800",
           badge: "bg-zinc-800 text-zinc-300 border-zinc-700",
           highlight: "text-amber-400",
-          btnColor: "bg-zinc-800 hover:bg-zinc-700 text-zinc-100"
+          btnColor: "bg-zinc-800 hover:bg-zinc-700 text-zinc-100",
+          render: {
+            poster: { backgroundColor: "#18181b", borderColor: "#3f3f46", color: "#f4f4f5" },
+            panel: { backgroundColor: "#27272a", borderColor: "#52525b", color: "#d4d4d8" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#fbbf24" },
+          } satisfies ShareThemeRenderStyles,
         };
       case "cyber_purple":
         return {
@@ -164,7 +194,13 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           divider: "border-purple-900/60",
           badge: "bg-purple-900/50 text-purple-200 border-purple-800",
           highlight: "text-fuchsia-400",
-          btnColor: "bg-purple-900 hover:bg-purple-800 text-purple-100"
+          btnColor: "bg-purple-900 hover:bg-purple-800 text-purple-100",
+          render: {
+            poster: { backgroundColor: "#0b0314", borderColor: "#581c87", color: "#f3e8ff" },
+            panel: { backgroundColor: "#2e1065", borderColor: "#6b21a8", color: "#e9d5ff" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#e879f9" },
+          } satisfies ShareThemeRenderStyles,
         };
       case "gold":
       default:
@@ -175,7 +211,13 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           divider: "border-amber-800/60",
           badge: "bg-amber-900/60 text-amber-100 border-amber-700/60",
           highlight: "text-yellow-400",
-          btnColor: "bg-amber-500 hover:bg-amber-600 text-gray-950 font-bold"
+          btnColor: "bg-amber-500 hover:bg-amber-600 text-gray-950 font-bold",
+          render: {
+            poster: { backgroundColor: "#1c1005", borderColor: "#92400e", color: "#fffbeb" },
+            panel: { backgroundColor: "#3b240c", borderColor: "#92400e", color: "#fde68a" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#facc15" },
+          } satisfies ShareThemeRenderStyles,
         };
     }
   };
@@ -216,7 +258,7 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           ].map((theme) => (
             <button
               key={theme.id}
-              onClick={() => setSelectedTheme(theme.id as ShareTheme)}
+              onClick={() => handleThemeSelect(theme.id as ShareTheme)}
               className={`text-2xs px-3 py-1.5 rounded-lg border font-bold transition-all cursor-pointer ${
                 selectedTheme === theme.id
                   ? "bg-amber-500 border-amber-500 text-gray-950 shadow-xs scale-98"
@@ -230,8 +272,10 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
 
         {/* Visual Poster Card Container */}
         <div 
+          ref={posterRef}
           id="share-poster-card" 
           className={`rounded-2xl p-5 border text-left shadow-lg relative overflow-hidden transition-all duration-300 font-sans ${st.bg} ${st.cardBg}`}
+          style={st.render.poster}
         >
           {/* Subtle decor circles */}
           <div className="absolute -top-12 -right-12 w-28 h-28 bg-white/5 rounded-full blur-xl pointer-events-none" />
@@ -244,7 +288,10 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           </div>
 
           <div className="space-y-3.5">
-            <span className="text-[10px] bg-white/15 text-white border border-white/10 px-2 py-0.5 rounded-sm inline-block">
+            <span
+              className="text-[10px] bg-white/15 text-white border border-white/10 px-2 py-0.5 rounded-sm inline-block"
+              style={st.render.label}
+            >
               {copy.posterBadge}
             </span>
             
@@ -254,11 +301,11 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
 
             {/* Poster grid stats */}
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`}>
+              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60 block">{copy.probabilityLabel.replace("30天", "")}</span>
-                <span className={`text-sm font-black ${st.highlight}`}>{report.successProbability}%</span>
+                <span className={`text-sm font-black ${st.highlight}`} style={st.render.highlight}>{report.successProbability}%</span>
               </div>
-              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`}>
+              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60 block">{copy.riskLabel}</span>
                 <span className="text-xs font-black">
                   {report.riskLevel === "low" ? "低风险" : report.riskLevel === "medium" ? "中等风险" : report.riskLevel === "high" ? "高风险" : "极高风险"}
@@ -267,20 +314,20 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
             </div>
 
             {/* expected profit info */}
-            <div className={`p-3 rounded-xl border flex justify-between items-center ${st.badge}`}>
+            <div className={`p-3 rounded-xl border flex justify-between items-center ${st.badge}`} style={st.render.panel}>
               <span className="text-3xs font-semibold opacity-60">{copy.expectedLabel}</span>
-              <span className={`text-xs font-black ${st.highlight}`}>{report.expectedRevenue}</span>
+              <span className={`text-xs font-black ${st.highlight}`} style={st.render.highlight}>{report.expectedRevenue}</span>
             </div>
 
             {recommendedRoute && (
-              <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`}>
+              <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60">推荐路线</span>
-                <p className={`text-xs font-black ${st.highlight}`}>{recommendedRoute.title}</p>
+                <p className={`text-xs font-black ${st.highlight}`} style={st.render.highlight}>{recommendedRoute.title}</p>
                 <p className="text-3xs opacity-75">后悔风险 {recommendedRoute.regretRisk}%</p>
               </div>
             )}
 
-            <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`}>
+            <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`} style={st.render.panel}>
               <span className="text-3xs font-semibold opacity-60">Agent 反对意见</span>
               <p className="text-[10px] leading-relaxed opacity-90">
                 {agentObjection.length > 46 ? `${agentObjection.slice(0, 46)}...` : agentObjection}
@@ -315,30 +362,48 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           </div>
         </div>
 
-        {/* Copy text action & status */}
+        {/* WeChat-oriented image share action & status */}
         <div className="flex gap-2.5 pt-1">
           <button
-            id="btn-copy-clipboard"
-            onClick={handleCopyText}
+            id="btn-share-wechat"
+            onClick={handleShareToWechat}
+            disabled={isShareButtonDisabled}
             className={`flex-1 inline-flex items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
-              copiedText 
+              shareStatus !== "idle" && shareStatus !== "preparing"
                 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-700"
+                : isShareButtonDisabled
+                  ? "bg-amber-50 border-amber-200 text-amber-700 cursor-wait"
+                  : "bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-700"
             }`}
           >
-            {copiedText ? (
+            {shareStatus === "preparing" ? (
               <>
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>复制成功！</span>
+                <LoaderCircle className="w-4 h-4 animate-spin" />
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
+              </>
+            ) : shareStatus === "idle" ? (
+              <>
+                <Share2 className="w-4 h-4" />
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
               </>
             ) : (
               <>
-                <Copy className="w-4 h-4" />
-                <span>一键复制文字口令</span>
+                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
               </>
             )}
           </button>
         </div>
+
+        {shareStatus === "text-unavailable" && (
+          <textarea
+            aria-label="分享文字口令"
+            readOnly
+            value={shareText}
+            onFocus={(event) => event.currentTarget.select()}
+            className="w-full min-h-28 rounded-xl border border-gray-200 bg-gray-50 p-3 text-left text-[11px] leading-relaxed text-gray-700"
+          />
+        )}
       </motion.div>
     </div>
   );
