@@ -1,8 +1,20 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Copy, X, Sparkles, Trophy, ShieldAlert, CheckCircle, Smartphone } from "lucide-react";
-import { Simulation, SimulationType } from "../types";
+import { CheckCircle, LoaderCircle, Share2, Sparkles, X } from "lucide-react";
+import { Simulation } from "../types";
 import { postValidationEvent } from "../validation-events";
+import {
+  buildShareCardText,
+  createBrowserShareEnvironment,
+  getAgentObjection,
+  getDisplayName,
+  getRecommendedRoute,
+  getShareCardCopy,
+  getSimulationType,
+  renderSharePosterBlob,
+  sharePosterImageWithFallback,
+  type SharePosterOutcome,
+} from "./share-card-sharing";
 
 interface ShareCardProps {
   simulation: Simulation;
@@ -10,138 +22,78 @@ interface ShareCardProps {
 }
 
 type ShareTheme = "space_grey" | "gold" | "cyber_purple";
+type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback";
 
-type ShareCardCopy = {
-  modalTitle: string;
-  modalDescription: string;
-  subjectLabel: string;
-  probabilityLabel: string;
-  expectedLabel: string;
-  riskLabel: string;
-  recommendationLabel: string;
-  planLabel: string;
-  posterBadge: string;
-  footerLine: string;
-  fallbackName: string;
-};
-
-function getSimulationType(simulation: Simulation): SimulationType {
-  return simulation.type || simulation.userInput.type || "side_hustle";
-}
-
-export function getShareCardCopy(type: SimulationType): ShareCardCopy {
-  if (type === "dating") {
-    return {
-      modalTitle: "情感沟通卡片生成器",
-      modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让懂你的人一起参谋。",
-      subjectLabel: "关系课题",
-      probabilityLabel: "30天升温/修复概率",
-      expectedLabel: "预期关系走向",
-      riskLabel: "关系风险评级",
-      recommendationLabel: "AI 最终沟通建议",
-      planLabel: "未来一周高情商沟通计划",
-      posterBadge: "我的情感走向",
-      footerLine: "重要关系沟通，先模拟一次",
-      fallbackName: "情感互动修复评估",
-    };
+function getShareStatusLabel(status: ShareStatus): string {
+  switch (status) {
+    case "preparing":
+      return "正在生成图片...";
+    case "native-share":
+      return "请选择微信发送";
+    case "image-clipboard":
+      return "图片已复制，去微信粘贴";
+    case "downloaded-text":
+      return "图片已下载，文字已复制";
+    case "downloaded":
+      return "图片已下载，去微信发送";
+    case "text-fallback":
+      return "已复制文字，去微信粘贴";
+    case "idle":
+    default:
+      return "一键分享到微信";
   }
-
-  if (type === "life_choice") {
-    return {
-      modalTitle: "人生抉择卡片生成器",
-      modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让信任的人一起参谋。",
-      subjectLabel: "人生抉择",
-      probabilityLabel: "30天心安避坑系数",
-      expectedLabel: "预期抉择走向",
-      riskLabel: "后悔风险评级",
-      recommendationLabel: "AI 最终避坑建议",
-      planLabel: "未来一周后悔防御计划",
-      posterBadge: "我的抉择推演",
-      footerLine: "重大人生抉择，先模拟一次",
-      fallbackName: "人生抉择损益评估",
-    };
-  }
-
-  return {
-    modalTitle: "搞钱试错卡片生成器",
-    modalDescription: "选择风格，长按保存或复制文字到朋友圈/群聊，让群里兄弟们一起参谋。",
-    subjectLabel: "项目想法",
-    probabilityLabel: "30天模拟胜率",
-    expectedLabel: "预期首月收益",
-    riskLabel: "主要风险评级",
-    recommendationLabel: "AI 最终决策建议",
-    planLabel: "未来一周MVP计划",
-    posterBadge: "我的副业结局",
-    footerLine: "重要副业决定，先模拟一次",
-    fallbackName: "未命名",
-  };
-}
-
-function getDisplayName(simulation: Simulation, fallbackName: string) {
-  return (
-    simulation.report.projectName ||
-    simulation.userInput.projectIdea ||
-    simulation.userInput.chatLogOrIssue ||
-    simulation.userInput.relationshipStatus ||
-    simulation.userInput.optionA ||
-    fallbackName
-  );
-}
-
-function getRecommendedRoute(simulation: Simulation) {
-  const comparison = simulation.routeComparison;
-  if (!comparison) {
-    return undefined;
-  }
-
-  return comparison.routes.find((route) => route.id === comparison.recommendedRouteId) ?? comparison.routes[0];
-}
-
-function getAgentObjection(simulation: Simulation): string {
-  return (
-    simulation.agents.find((agent) => agent.objection)?.objection ??
-    simulation.report.risks[0] ??
-    "暂无关键反对意见"
-  );
 }
 
 export default function ShareCard({ simulation, onClose }: ShareCardProps) {
   const [selectedTheme, setSelectedTheme] = useState<ShareTheme>("gold");
-  const [copiedText, setCopiedText] = useState(false);
+  const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
+  const posterRef = useRef<HTMLDivElement>(null);
   const { report } = simulation;
   const copy = getShareCardCopy(getSimulationType(simulation));
   const displayName = getDisplayName(simulation, copy.fallbackName);
   const recommendedRoute = getRecommendedRoute(simulation);
   const agentObjection = getAgentObjection(simulation);
 
-  const handleCopyText = () => {
+  const handleShareToWechat = async () => {
+    if (shareStatus === "preparing") {
+      return;
+    }
+
     void postValidationEvent({
       type: "share_clicked",
       simulationId: simulation.id,
       scenarioType: getSimulationType(simulation),
     });
 
-    const textToCopy = `
-【试一下】
-${copy.subjectLabel}：《${displayName}》
-━━━━━━━━━━━━━━━━━━━━
-${copy.probabilityLabel}：${report.successProbability}%
-${copy.expectedLabel}：${report.expectedRevenue}
-${copy.riskLabel}：${report.riskLevel === "low" ? "低风险" : report.riskLevel === "medium" ? "中等风险" : report.riskLevel === "high" ? "高风险" : "极高风险"}
-${recommendedRoute ? `推荐路线：${recommendedRoute.title}（后悔风险 ${recommendedRoute.regretRisk}%）` : ""}
-━━━━━━━━━━━━━━━━━━━━
-【${copy.recommendationLabel}】：
-${report.finalRecommendation}
+    const text = buildShareCardText(simulation);
+    setShareStatus("preparing");
 
-【${copy.planLabel}】：
-${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.action}`).join("\n")}
+    try {
+      if (!posterRef.current) {
+        throw new Error("Share poster card is not available.");
+      }
 
-※ ${copy.footerLine}！
-    `.trim();
+      const image = await renderSharePosterBlob(posterRef.current);
+      const outcome = await sharePosterImageWithFallback(
+        {
+          image,
+          fileName: `tryitout-share-${simulation.id.slice(0, 8)}.png`,
+          title: copy.modalTitle,
+          text,
+        },
+        createBrowserShareEnvironment(),
+      );
+      setShareStatus(outcome);
+    } catch {
+      try {
+        await navigator.clipboard?.writeText(text);
+      } catch {
+        // The UI still gives the user a clear fallback state if clipboard is unavailable.
+      }
+      setShareStatus("text-fallback");
+    }
 
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedText(true);
-    setTimeout(() => setCopiedText(false), 2000);
+    window.setTimeout(() => setShareStatus("idle"), 3000);
   };
 
   const getThemeStyles = (theme: ShareTheme) => {
@@ -230,6 +182,7 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
 
         {/* Visual Poster Card Container */}
         <div 
+          ref={posterRef}
           id="share-poster-card" 
           className={`rounded-2xl p-5 border text-left shadow-lg relative overflow-hidden transition-all duration-300 font-sans ${st.bg} ${st.cardBg}`}
         >
@@ -315,26 +268,34 @@ ${report.actionPlan7Days.slice(0, 3).map(p => `Day ${p.day}: ${p.title} - ${p.ac
           </div>
         </div>
 
-        {/* Copy text action & status */}
+        {/* WeChat-oriented image share action & status */}
         <div className="flex gap-2.5 pt-1">
           <button
-            id="btn-copy-clipboard"
-            onClick={handleCopyText}
+            id="btn-share-wechat"
+            onClick={handleShareToWechat}
+            disabled={shareStatus === "preparing"}
             className={`flex-1 inline-flex items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
-              copiedText 
+              shareStatus !== "idle" && shareStatus !== "preparing"
                 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-700"
+                : shareStatus === "preparing"
+                  ? "bg-amber-50 border-amber-200 text-amber-700 cursor-wait"
+                  : "bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-700"
             }`}
           >
-            {copiedText ? (
+            {shareStatus === "preparing" ? (
               <>
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>复制成功！</span>
+                <LoaderCircle className="w-4 h-4 animate-spin" />
+                <span>{getShareStatusLabel(shareStatus)}</span>
+              </>
+            ) : shareStatus === "idle" ? (
+              <>
+                <Share2 className="w-4 h-4" />
+                <span>{getShareStatusLabel(shareStatus)}</span>
               </>
             ) : (
               <>
-                <Copy className="w-4 h-4" />
-                <span>一键复制文字口令</span>
+                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                <span>{getShareStatusLabel(shareStatus)}</span>
               </>
             )}
           </button>
