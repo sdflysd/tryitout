@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ShareCard from "./ShareCard.js";
 import {
   buildShareCardText,
+  buildSharePosterRenderOptions,
   copyShareTextToClipboard,
   sharePosterImageWithFallback,
   shouldPreferNativeFileShare,
@@ -139,6 +140,47 @@ test("share card disables the WeChat action until a poster image is prepared", (
   );
 
   assert.match(html, /id="btn-share-wechat"[^>]*disabled/);
+});
+
+test("share poster renders with an opaque inline background for image export", () => {
+  const html = renderToStaticMarkup(
+    <ShareCard simulation={baseSimulation} onClose={() => undefined} />,
+  );
+
+  assert.match(html, /id="share-poster-card"[^>]*style="[^"]*background-color:/);
+  assert.doesNotMatch(html, /id="share-poster-card"[^>]*style="[^"]*background-color:transparent/);
+});
+
+test("share poster export uses the poster background instead of forcing white", () => {
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      devicePixelRatio: 4,
+      getComputedStyle() {
+        return { backgroundColor: "rgb(28, 16, 5)" };
+      },
+    },
+  });
+
+  try {
+    const options = buildSharePosterRenderOptions({
+      style: { backgroundColor: "#1c1005" },
+    } as HTMLElement);
+
+    assert.equal(options.backgroundColor, "rgb(28, 16, 5)");
+    assert.notEqual(options.backgroundColor, "#ffffff");
+    assert.equal(options.pixelRatio, 3);
+  } finally {
+    if (previousWindow === undefined) {
+      Reflect.deleteProperty(globalThis, "window");
+    } else {
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: previousWindow,
+      });
+    }
+  }
 });
 
 test("share poster uses native file sharing when the browser supports image files", async () => {

@@ -25,6 +25,12 @@ interface ShareCardProps {
 
 type ShareTheme = "space_grey" | "gold" | "cyber_purple";
 type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback" | "text-unavailable";
+type ShareThemeRenderStyles = {
+  poster: React.CSSProperties;
+  panel: React.CSSProperties;
+  label: React.CSSProperties;
+  highlight: React.CSSProperties;
+};
 
 function getInitialNativeSharePreference(): boolean {
   return typeof window === "undefined" ? true : shouldPreferNativeFileShare(window.navigator);
@@ -172,7 +178,13 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           divider: "border-zinc-800",
           badge: "bg-zinc-800 text-zinc-300 border-zinc-700",
           highlight: "text-amber-400",
-          btnColor: "bg-zinc-800 hover:bg-zinc-700 text-zinc-100"
+          btnColor: "bg-zinc-800 hover:bg-zinc-700 text-zinc-100",
+          render: {
+            poster: { backgroundColor: "#18181b", borderColor: "#3f3f46", color: "#f4f4f5" },
+            panel: { backgroundColor: "#27272a", borderColor: "#52525b", color: "#d4d4d8" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#fbbf24" },
+          } satisfies ShareThemeRenderStyles,
         };
       case "cyber_purple":
         return {
@@ -182,7 +194,13 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           divider: "border-purple-900/60",
           badge: "bg-purple-900/50 text-purple-200 border-purple-800",
           highlight: "text-fuchsia-400",
-          btnColor: "bg-purple-900 hover:bg-purple-800 text-purple-100"
+          btnColor: "bg-purple-900 hover:bg-purple-800 text-purple-100",
+          render: {
+            poster: { backgroundColor: "#0b0314", borderColor: "#581c87", color: "#f3e8ff" },
+            panel: { backgroundColor: "#2e1065", borderColor: "#6b21a8", color: "#e9d5ff" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#e879f9" },
+          } satisfies ShareThemeRenderStyles,
         };
       case "gold":
       default:
@@ -193,7 +211,13 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           divider: "border-amber-800/60",
           badge: "bg-amber-900/60 text-amber-100 border-amber-700/60",
           highlight: "text-yellow-400",
-          btnColor: "bg-amber-500 hover:bg-amber-600 text-gray-950 font-bold"
+          btnColor: "bg-amber-500 hover:bg-amber-600 text-gray-950 font-bold",
+          render: {
+            poster: { backgroundColor: "#1c1005", borderColor: "#92400e", color: "#fffbeb" },
+            panel: { backgroundColor: "#3b240c", borderColor: "#92400e", color: "#fde68a" },
+            label: { backgroundColor: "rgba(255, 255, 255, 0.14)", borderColor: "rgba(255, 255, 255, 0.12)", color: "#ffffff" },
+            highlight: { color: "#facc15" },
+          } satisfies ShareThemeRenderStyles,
         };
     }
   };
@@ -251,6 +275,7 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           ref={posterRef}
           id="share-poster-card" 
           className={`rounded-2xl p-5 border text-left shadow-lg relative overflow-hidden transition-all duration-300 font-sans ${st.bg} ${st.cardBg}`}
+          style={st.render.poster}
         >
           {/* Subtle decor circles */}
           <div className="absolute -top-12 -right-12 w-28 h-28 bg-white/5 rounded-full blur-xl pointer-events-none" />
@@ -263,7 +288,10 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           </div>
 
           <div className="space-y-3.5">
-            <span className="text-[10px] bg-white/15 text-white border border-white/10 px-2 py-0.5 rounded-sm inline-block">
+            <span
+              className="text-[10px] bg-white/15 text-white border border-white/10 px-2 py-0.5 rounded-sm inline-block"
+              style={st.render.label}
+            >
               {copy.posterBadge}
             </span>
             
@@ -273,11 +301,11 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
 
             {/* Poster grid stats */}
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`}>
+              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60 block">{copy.probabilityLabel.replace("30天", "")}</span>
-                <span className={`text-sm font-black ${st.highlight}`}>{report.successProbability}%</span>
+                <span className={`text-sm font-black ${st.highlight}`} style={st.render.highlight}>{report.successProbability}%</span>
               </div>
-              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`}>
+              <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60 block">{copy.riskLabel}</span>
                 <span className="text-xs font-black">
                   {report.riskLevel === "low" ? "低风险" : report.riskLevel === "medium" ? "中等风险" : report.riskLevel === "high" ? "高风险" : "极高风险"}
@@ -286,20 +314,20 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
             </div>
 
             {/* expected profit info */}
-            <div className={`p-3 rounded-xl border flex justify-between items-center ${st.badge}`}>
+            <div className={`p-3 rounded-xl border flex justify-between items-center ${st.badge}`} style={st.render.panel}>
               <span className="text-3xs font-semibold opacity-60">{copy.expectedLabel}</span>
-              <span className={`text-xs font-black ${st.highlight}`}>{report.expectedRevenue}</span>
+              <span className={`text-xs font-black ${st.highlight}`} style={st.render.highlight}>{report.expectedRevenue}</span>
             </div>
 
             {recommendedRoute && (
-              <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`}>
+              <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`} style={st.render.panel}>
                 <span className="text-3xs font-semibold opacity-60">推荐路线</span>
-                <p className={`text-xs font-black ${st.highlight}`}>{recommendedRoute.title}</p>
+                <p className={`text-xs font-black ${st.highlight}`} style={st.render.highlight}>{recommendedRoute.title}</p>
                 <p className="text-3xs opacity-75">后悔风险 {recommendedRoute.regretRisk}%</p>
               </div>
             )}
 
-            <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`}>
+            <div className={`p-3 rounded-xl border space-y-1 ${st.badge}`} style={st.render.panel}>
               <span className="text-3xs font-semibold opacity-60">Agent 反对意见</span>
               <p className="text-[10px] leading-relaxed opacity-90">
                 {agentObjection.length > 46 ? `${agentObjection.slice(0, 46)}...` : agentObjection}

@@ -78,14 +78,27 @@ export async function copyShareTextToClipboard(
   }
 }
 
+export function buildSharePosterRenderOptions(element: HTMLElement) {
+  const browserWindow = typeof window !== "undefined" ? window : undefined;
+  const computedBackground =
+    typeof browserWindow?.getComputedStyle === "function"
+      ? browserWindow.getComputedStyle(element).backgroundColor
+      : "";
+  const backgroundColor =
+    computedBackground && computedBackground !== "transparent" && computedBackground !== "rgba(0, 0, 0, 0)"
+      ? computedBackground
+      : element.style.backgroundColor || "#18181b";
+
+  return {
+    cacheBust: true,
+    pixelRatio: Math.min(browserWindow?.devicePixelRatio || 2, 3),
+    backgroundColor,
+  };
+}
+
 export async function renderSharePosterBlob(element: HTMLElement): Promise<Blob> {
   const { toBlob } = await import("html-to-image");
-  const pixelRatio = Math.min(window.devicePixelRatio || 2, 3);
-  const blob = await toBlob(element, {
-    cacheBust: true,
-    pixelRatio,
-    backgroundColor: "#ffffff",
-  });
+  const blob = await toBlob(element, buildSharePosterRenderOptions(element));
 
   if (!blob) {
     throw new Error("Unable to render share poster image.");
