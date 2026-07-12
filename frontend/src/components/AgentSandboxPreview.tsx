@@ -54,9 +54,20 @@ export default function AgentSandboxPreview({
   simulationType,
   language = DEFAULT_LANGUAGE,
 }: AgentSandboxPreviewProps) {
-  const scenario = getAgentSandboxScenario(simulationType, language);
+  const scenario = React.useMemo(
+    () => getAgentSandboxScenario(simulationType, language),
+    [language, simulationType],
+  );
   const accent = ACCENT_STYLES[scenario.accentName];
   const isEnglish = language === "en-US";
+  const activeAgentIds = React.useMemo(
+    () => [
+      scenario.agents[0]?.id,
+      scenario.agents[3]?.id,
+      scenario.agents[5]?.id,
+    ].filter((agentId): agentId is string => Boolean(agentId)),
+    [scenario],
+  );
 
   return (
     <section
@@ -102,11 +113,7 @@ export default function AgentSandboxPreview({
         <AgentSandboxOrb
           scenario={scenario}
           interactionMode="support"
-          activeAgentIds={[
-            scenario.agents[0]?.id,
-            scenario.agents[3]?.id,
-            scenario.agents[5]?.id,
-          ].filter((agentId): agentId is string => Boolean(agentId))}
+          activeAgentIds={activeAgentIds}
           activeStageLabel={isEnglish ? "30-day preview" : "30 天预演"}
           activeStageTitle={scenario.centerLabel}
           progressPercent={32}

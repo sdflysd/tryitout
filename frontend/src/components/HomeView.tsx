@@ -353,45 +353,45 @@ export default function HomeView({
                   );
                 })}
               </div>
+
+              <div id="home-example-tool-strip" className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="text-left sm:col-span-3">
+                  <h2 className="flex items-center gap-2 text-sm font-black text-white md:text-base">
+                    <Sparkles className="h-4 w-4 text-amber-200" aria-hidden="true" />
+                    <span>{isEnglish ? "Load a real example" : "真实案例，直接载入"}</span>
+                  </h2>
+                  <p className="mt-1.5 text-xs leading-relaxed text-white/42">
+                    {isEnglish
+                      ? "Load a real example, review it, then start the simulation."
+                      : "点击加载真实案例，确认后再开始推演。"}
+                  </p>
+                </div>
+
+                {templates[activeTab].map((tpl, idx) => (
+                  <div
+                    id={`template-item-${activeTab}-${idx}`}
+                    key={idx}
+                    onClick={() => handleSelectTemplate(activeTab, idx)}
+                    className="group flex min-h-32 cursor-pointer flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.06] p-3 text-left shadow-xl shadow-black/15 backdrop-blur-xl transition-all duration-200 hover:border-amber-200/45 hover:bg-white/[0.09]"
+                  >
+                    <div>
+                      <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 text-[10px] font-black text-white/58">
+                        {tpl.tag}
+                      </span>
+                      <h3 className="mt-3 line-clamp-2 text-xs font-black leading-snug text-white transition-colors group-hover:text-amber-100">{tpl.title}</h3>
+                      <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-white/42">{tpl.desc}</p>
+                    </div>
+                    <span className="mt-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-200 opacity-0 transition-opacity group-hover:opacity-100">
+                      {isEnglish ? "Load template" : "载入模板"}
+                      <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <AgentSandboxPreview simulationType={activeTab} language={language} />
           </motion.div>
-
-          <div id="home-example-tool-strip" className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.88fr)_repeat(3,minmax(0,1fr))]">
-            <div className="py-2 text-left lg:py-4">
-              <h2 className="flex items-center gap-2 text-base font-black text-white md:text-lg">
-                <Sparkles className="h-5 w-5 text-amber-200" aria-hidden="true" />
-                <span>{isEnglish ? "Load a real example" : "真实案例，直接载入"}</span>
-              </h2>
-              <p className="mt-2 text-xs leading-relaxed text-white/42">
-                {isEnglish
-                  ? "Load a real example, review it, then start the simulation."
-                  : "点击加载真实案例，确认后再开始推演。"}
-              </p>
-            </div>
-
-            {templates[activeTab].map((tpl, idx) => (
-              <div
-                id={`template-item-${activeTab}-${idx}`}
-                key={idx}
-                onClick={() => handleSelectTemplate(activeTab, idx)}
-                className="group flex min-h-28 cursor-pointer flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-left shadow-xl shadow-black/15 backdrop-blur-xl transition-all duration-200 hover:border-amber-200/45 hover:bg-white/[0.09]"
-              >
-                <div>
-                  <span className="rounded-full border border-white/10 bg-white/8 px-2.5 py-1 text-[10px] font-black text-white/58">
-                    {tpl.tag}
-                  </span>
-                  <h3 className="mt-4 text-sm font-black leading-snug text-white transition-colors group-hover:text-amber-100">{tpl.title}</h3>
-                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/42">{tpl.desc}</p>
-                </div>
-                <span className="mt-4 inline-flex items-center gap-1 text-[10px] font-black text-amber-200 opacity-0 transition-opacity group-hover:opacity-100">
-                  {isEnglish ? "Load template" : "载入模板"}
-                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                </span>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 

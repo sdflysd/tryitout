@@ -158,6 +158,15 @@ function buildSphereSignals(scenario: SandboxScenario, activeAgentIds: string[])
   });
 }
 
+export function getOrbSignalSignature(scenario: SandboxScenario, activeAgentIds: string[]): string {
+  const agentSignature = scenario.agents
+    .map((agent) => `${agent.id}:${agent.label}`)
+    .join(",");
+  const activeSignature = Array.from(new Set(activeAgentIds)).sort().join(",");
+
+  return `${scenario.type}|${agentSignature}|${activeSignature}`;
+}
+
 function createGlyphTexture(THREE: ThreeModule, glyph: string, color: string, active: boolean): Texture {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
@@ -213,9 +222,10 @@ export default function AgentSandboxOrb({
 }: AgentSandboxOrbProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<WebGLRenderer | null>(null);
+  const signalSignature = getOrbSignalSignature(scenario, activeAgentIds);
   const signals = useMemo(
     () => buildSphereSignals(scenario, activeAgentIds),
-    [activeAgentIds, scenario],
+    [signalSignature],
   );
   const percent = clampPercent(progressPercent);
   const accent = ACCENT_TONE[scenario.accentName];

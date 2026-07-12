@@ -84,6 +84,25 @@ test("homepage renders the approved immersive toolbench layout", () => {
   assert.doesNotMatch(html, /360° 立体拖拽/);
 });
 
+test("homepage keeps real examples directly under the scenario cards", () => {
+  const html = renderToStaticMarkup(
+    <HomeView
+      historyList={[]}
+      onStart={() => undefined}
+      onSelectHistory={() => undefined}
+      onSelectTemplate={() => undefined}
+    />,
+  );
+
+  const scenarioGridIndex = html.indexOf('id="home-scenario-tool-grid"');
+  const exampleStripIndex = html.indexOf('id="home-example-tool-strip"');
+  const previewIndex = html.indexOf('id="agent-starmap-preview-dashboard"');
+
+  assert.ok(scenarioGridIndex >= 0);
+  assert.ok(exampleStripIndex > scenarioGridIndex);
+  assert.ok(exampleStripIndex < previewIndex);
+});
+
 test("homepage can render English entry workflow copy", () => {
   const html = renderToStaticMarkup(
     <HomeView
