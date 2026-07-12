@@ -14,6 +14,7 @@ import {
   getSimulationType,
   renderSharePosterBlob,
   sharePosterImageWithFallback,
+  shouldPreferNativeFileShare,
   type SharePosterOutcome,
 } from "./share-card-sharing";
 
@@ -25,7 +26,11 @@ interface ShareCardProps {
 type ShareTheme = "space_grey" | "gold" | "cyber_purple";
 type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback" | "text-unavailable";
 
-function getShareStatusLabel(status: ShareStatus): string {
+function getInitialNativeSharePreference(): boolean {
+  return typeof window === "undefined" ? true : shouldPreferNativeFileShare(window.navigator);
+}
+
+function getShareStatusLabel(status: ShareStatus, preferNativeShare: boolean): string {
   switch (status) {
     case "preparing":
       return "正在生成图片...";
@@ -45,13 +50,14 @@ function getShareStatusLabel(status: ShareStatus): string {
       return "复制失败，请手动复制";
     case "idle":
     default:
-      return "一键分享到微信";
+      return preferNativeShare ? "一键分享到微信" : "复制图片发微信";
   }
 }
 
 export default function ShareCard({ simulation, onClose }: ShareCardProps) {
   const [selectedTheme, setSelectedTheme] = useState<ShareTheme>("gold");
   const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
+  const [preferNativeShare, setPreferNativeShare] = useState(getInitialNativeSharePreference);
   const [posterImage, setPosterImage] = useState<Blob | null>(null);
   const [posterImageFailed, setPosterImageFailed] = useState(false);
   const posterRef = useRef<HTMLDivElement>(null);
@@ -63,6 +69,10 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
   const shareText = buildShareCardText(simulation);
   const isPosterPreparing = !posterImage && !posterImageFailed;
   const isShareButtonDisabled = shareStatus === "preparing" || isPosterPreparing;
+
+  useEffect(() => {
+    setPreferNativeShare(shouldPreferNativeFileShare(window.navigator));
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
@@ -141,6 +151,7 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           fileName: `tryitout-share-${simulation.id.slice(0, 8)}.png`,
           title: copy.modalTitle,
           text: shareText,
+          preferNativeShare,
         },
         createBrowserShareEnvironment(),
       );
@@ -340,17 +351,17 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
             {shareStatus === "preparing" ? (
               <>
                 <LoaderCircle className="w-4 h-4 animate-spin" />
-                <span>{getShareStatusLabel(shareStatus)}</span>
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
               </>
             ) : shareStatus === "idle" ? (
               <>
                 <Share2 className="w-4 h-4" />
-                <span>{getShareStatusLabel(shareStatus)}</span>
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
               </>
             ) : (
               <>
                 <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>{getShareStatusLabel(shareStatus)}</span>
+                <span>{getShareStatusLabel(shareStatus, preferNativeShare)}</span>
               </>
             )}
           </button>

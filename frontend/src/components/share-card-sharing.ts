@@ -42,7 +42,25 @@ export type SharePosterInput = {
   fileName: string;
   title: string;
   text: string;
+  preferNativeShare?: boolean;
 };
+
+type ShareSurfaceNavigator = {
+  userAgent?: string;
+  maxTouchPoints?: number;
+  platform?: string;
+};
+
+export function shouldPreferNativeFileShare(navigatorLike: ShareSurfaceNavigator): boolean {
+  const userAgent = navigatorLike.userAgent ?? "";
+  const platform = navigatorLike.platform ?? "";
+
+  if (/Android|iPhone|iPad|iPod|Windows Phone|Mobi|HarmonyOS/i.test(userAgent)) {
+    return true;
+  }
+
+  return platform === "MacIntel" && (navigatorLike.maxTouchPoints ?? 0) > 1;
+}
 
 export async function copyShareTextToClipboard(
   text: string,
@@ -243,6 +261,7 @@ export async function sharePosterImageWithFallback(
     : undefined;
 
   if (
+    input.preferNativeShare !== false &&
     shareData &&
     env.navigator.share &&
     env.navigator.canShare?.(shareData)

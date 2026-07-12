@@ -8,6 +8,7 @@ import {
   buildShareCardText,
   copyShareTextToClipboard,
   sharePosterImageWithFallback,
+  shouldPreferNativeFileShare,
 } from "./share-card-sharing.js";
 import type { Simulation } from "../types.js";
 
@@ -175,6 +176,63 @@ test("share poster uses native file sharing when the browser supports image file
     "canShare:life-card.png",
     "share:life-card.png:分享文字",
   ]);
+});
+
+test("desktop browsers prefer local WeChat handoff instead of native file share", () => {
+  assert.equal(
+    shouldPreferNativeFileShare({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      maxTouchPoints: 0,
+      platform: "Win32",
+    }),
+    false,
+  );
+});
+
+test("desktop share mode skips native share even when the browser reports file sharing support", async () => {
+  const image = new Blob(["png"], { type: "image/png" });
+  let shareCalled = false;
+  let clipboardPayload: Record<string, Blob> | undefined;
+
+  class TestClipboardItem {
+    constructor(items: Record<string, Blob>) {
+      clipboardPayload = items;
+    }
+  }
+
+  const outcome = await sharePosterImageWithFallback(
+    {
+      image,
+      fileName: "life-card.png",
+      title: "试一下",
+      text: "分享文字",
+      preferNativeShare: false,
+    },
+    {
+      ClipboardItem: TestClipboardItem as unknown as typeof ClipboardItem,
+      navigator: {
+        canShare() {
+          return true;
+        },
+        async share() {
+          shareCalled = true;
+        },
+        clipboard: {
+          async write() {
+            return undefined;
+          },
+        },
+      },
+      downloadFile() {
+        assert.fail("desktop image clipboard should not download");
+      },
+    },
+  );
+
+  assert.equal(outcome, "image-clipboard");
+  assert.equal(shareCalled, false);
+  assert.deepEqual(Object.keys(clipboardPayload ?? {}), ["image/png"]);
 });
 
 test("share poster treats native share cancellation as a cancelled action without fallback side effects", async () => {
