@@ -1,10 +1,11 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { CheckCircle, LoaderCircle, Share2, Sparkles, X } from "lucide-react";
 import { Simulation } from "../types";
 import { postValidationEvent } from "../validation-events";
 import {
   buildShareCardText,
+  copyShareTextToClipboard,
   createBrowserShareEnvironment,
   getAgentObjection,
   getDisplayName,
@@ -22,7 +23,7 @@ interface ShareCardProps {
 }
 
 type ShareTheme = "space_grey" | "gold" | "cyber_purple";
-type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback";
+type ShareStatus = "idle" | "preparing" | SharePosterOutcome | "text-fallback" | "text-unavailable";
 
 function getShareStatusLabel(status: ShareStatus): string {
   switch (status) {
@@ -30,6 +31,8 @@ function getShareStatusLabel(status: ShareStatus): string {
       return "正在生成图片...";
     case "native-share":
       return "请选择微信发送";
+    case "native-share-cancelled":
+      return "分享已取消";
     case "image-clipboard":
       return "图片已复制，去微信粘贴";
     case "downloaded-text":
@@ -38,6 +41,8 @@ function getShareStatusLabel(status: ShareStatus): string {
       return "图片已下载，去微信发送";
     case "text-fallback":
       return "已复制文字，去微信粘贴";
+    case "text-unavailable":
+      return "复制失败，请手动复制";
     case "idle":
     default:
       return "一键分享到微信";
@@ -47,15 +52,71 @@ function getShareStatusLabel(status: ShareStatus): string {
 export default function ShareCard({ simulation, onClose }: ShareCardProps) {
   const [selectedTheme, setSelectedTheme] = useState<ShareTheme>("gold");
   const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
+  const [posterImage, setPosterImage] = useState<Blob | null>(null);
+  const [posterImageFailed, setPosterImageFailed] = useState(false);
   const posterRef = useRef<HTMLDivElement>(null);
   const { report } = simulation;
   const copy = getShareCardCopy(getSimulationType(simulation));
   const displayName = getDisplayName(simulation, copy.fallbackName);
   const recommendedRoute = getRecommendedRoute(simulation);
   const agentObjection = getAgentObjection(simulation);
+  const shareText = buildShareCardText(simulation);
+  const isPosterPreparing = !posterImage && !posterImageFailed;
+  const isShareButtonDisabled = shareStatus === "preparing" || isPosterPreparing;
+
+  useEffect(() => {
+    let isCancelled = false;
+    setPosterImage(null);
+    setPosterImageFailed(false);
+
+    const renderPoster = async () => {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      const posterElement = posterRef.current;
+      if (!posterElement) {
+        if (!isCancelled) {
+          setPosterImageFailed(true);
+        }
+        return;
+      }
+
+      try {
+        const image = await renderSharePosterBlob(posterElement);
+        if (!isCancelled) {
+          setPosterImage(image);
+        }
+      } catch {
+        if (!isCancelled) {
+          setPosterImageFailed(true);
+        }
+      }
+    };
+
+    void renderPoster();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedTheme, simulation]);
+
+  const setTemporaryShareStatus = (status: ShareStatus) => {
+    setShareStatus(status);
+
+    if (status !== "text-unavailable") {
+      window.setTimeout(() => setShareStatus("idle"), 3000);
+    }
+  };
+
+  const handleThemeSelect = (theme: ShareTheme) => {
+    setPosterImage(null);
+    setPosterImageFailed(false);
+    setSelectedTheme(theme);
+  };
 
   const handleShareToWechat = async () => {
-    if (shareStatus === "preparing") {
+    if (isShareButtonDisabled) {
       return;
     }
 
@@ -65,35 +126,29 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
       scenarioType: getSimulationType(simulation),
     });
 
-    const text = buildShareCardText(simulation);
     setShareStatus("preparing");
 
     try {
-      if (!posterRef.current) {
-        throw new Error("Share poster card is not available.");
+      if (!posterImage) {
+        const copied = await copyShareTextToClipboard(shareText, createBrowserShareEnvironment());
+        setTemporaryShareStatus(copied ? "text-fallback" : "text-unavailable");
+        return;
       }
 
-      const image = await renderSharePosterBlob(posterRef.current);
       const outcome = await sharePosterImageWithFallback(
         {
-          image,
+          image: posterImage,
           fileName: `tryitout-share-${simulation.id.slice(0, 8)}.png`,
           title: copy.modalTitle,
-          text,
+          text: shareText,
         },
         createBrowserShareEnvironment(),
       );
-      setShareStatus(outcome);
+      setTemporaryShareStatus(outcome);
     } catch {
-      try {
-        await navigator.clipboard?.writeText(text);
-      } catch {
-        // The UI still gives the user a clear fallback state if clipboard is unavailable.
-      }
-      setShareStatus("text-fallback");
+      const copied = await copyShareTextToClipboard(shareText, createBrowserShareEnvironment());
+      setTemporaryShareStatus(copied ? "text-fallback" : "text-unavailable");
     }
-
-    window.setTimeout(() => setShareStatus("idle"), 3000);
   };
 
   const getThemeStyles = (theme: ShareTheme) => {
@@ -168,7 +223,7 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           ].map((theme) => (
             <button
               key={theme.id}
-              onClick={() => setSelectedTheme(theme.id as ShareTheme)}
+              onClick={() => handleThemeSelect(theme.id as ShareTheme)}
               className={`text-2xs px-3 py-1.5 rounded-lg border font-bold transition-all cursor-pointer ${
                 selectedTheme === theme.id
                   ? "bg-amber-500 border-amber-500 text-gray-950 shadow-xs scale-98"
@@ -273,11 +328,11 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
           <button
             id="btn-share-wechat"
             onClick={handleShareToWechat}
-            disabled={shareStatus === "preparing"}
+            disabled={isShareButtonDisabled}
             className={`flex-1 inline-flex items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
               shareStatus !== "idle" && shareStatus !== "preparing"
                 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : shareStatus === "preparing"
+                : isShareButtonDisabled
                   ? "bg-amber-50 border-amber-200 text-amber-700 cursor-wait"
                   : "bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-700"
             }`}
@@ -300,6 +355,16 @@ export default function ShareCard({ simulation, onClose }: ShareCardProps) {
             )}
           </button>
         </div>
+
+        {shareStatus === "text-unavailable" && (
+          <textarea
+            aria-label="分享文字口令"
+            readOnly
+            value={shareText}
+            onFocus={(event) => event.currentTarget.select()}
+            className="w-full min-h-28 rounded-xl border border-gray-200 bg-gray-50 p-3 text-left text-[11px] leading-relaxed text-gray-700"
+          />
+        )}
       </motion.div>
     </div>
   );

@@ -14,7 +14,12 @@ export type ShareCardCopy = {
   fallbackName: string;
 };
 
-export type SharePosterOutcome = "native-share" | "image-clipboard" | "downloaded-text" | "downloaded";
+export type SharePosterOutcome =
+  | "native-share"
+  | "native-share-cancelled"
+  | "image-clipboard"
+  | "downloaded-text"
+  | "downloaded";
 
 type ShareNavigator = {
   canShare?: (data: ShareData) => boolean;
@@ -38,6 +43,22 @@ export type SharePosterInput = {
   title: string;
   text: string;
 };
+
+export async function copyShareTextToClipboard(
+  text: string,
+  env: Pick<SharePosterEnvironment, "navigator">,
+): Promise<boolean> {
+  if (!env.navigator.clipboard?.writeText) {
+    return false;
+  }
+
+  try {
+    await env.navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function renderSharePosterBlob(element: HTMLElement): Promise<Blob> {
   const { toBlob } = await import("html-to-image");
@@ -208,6 +229,10 @@ function createShareFile(input: SharePosterInput, env: SharePosterEnvironment): 
   return undefined;
 }
 
+function isNativeShareCancellation(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export async function sharePosterImageWithFallback(
   input: SharePosterInput,
   env: SharePosterEnvironment,
@@ -225,8 +250,12 @@ export async function sharePosterImageWithFallback(
     try {
       await env.navigator.share(shareData);
       return "native-share";
-    } catch {
-      // Fall through to local sharing options if the share sheet is cancelled or rejected.
+    } catch (error) {
+      if (isNativeShareCancellation(error)) {
+        return "native-share-cancelled";
+      }
+
+      // Fall through to local sharing options for real share errors.
     }
   }
 
@@ -246,13 +275,8 @@ export async function sharePosterImageWithFallback(
 
   env.downloadFile?.(input.image, input.fileName);
 
-  if (env.navigator.clipboard?.writeText) {
-    try {
-      await env.navigator.clipboard.writeText(input.text);
-      return "downloaded-text";
-    } catch {
-      return "downloaded";
-    }
+  if (await copyShareTextToClipboard(input.text, env)) {
+    return "downloaded-text";
   }
 
   return "downloaded";

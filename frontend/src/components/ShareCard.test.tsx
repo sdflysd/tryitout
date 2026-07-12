@@ -4,7 +4,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import ShareCard from "./ShareCard.js";
-import { buildShareCardText, sharePosterImageWithFallback } from "./share-card-sharing.js";
+import {
+  buildShareCardText,
+  copyShareTextToClipboard,
+  sharePosterImageWithFallback,
+} from "./share-card-sharing.js";
 import type { Simulation } from "../types.js";
 
 const baseSimulation: Simulation = {
@@ -128,6 +132,14 @@ test("share card presents a WeChat image share call to action", () => {
   assert.doesNotMatch(html, /一键复制文字口令/);
 });
 
+test("share card disables the WeChat action until a poster image is prepared", () => {
+  const html = renderToStaticMarkup(
+    <ShareCard simulation={baseSimulation} onClose={() => undefined} />,
+  );
+
+  assert.match(html, /id="btn-share-wechat"[^>]*disabled/);
+});
+
 test("share poster uses native file sharing when the browser supports image files", async () => {
   const calls: string[] = [];
   const image = new Blob(["png"], { type: "image/png" });
@@ -163,6 +175,46 @@ test("share poster uses native file sharing when the browser supports image file
     "canShare:life-card.png",
     "share:life-card.png:分享文字",
   ]);
+});
+
+test("share poster treats native share cancellation as a cancelled action without fallback side effects", async () => {
+  const image = new Blob(["png"], { type: "image/png" });
+  let downloaded = false;
+  let copiedText = "";
+
+  const outcome = await sharePosterImageWithFallback(
+    {
+      image,
+      fileName: "life-card.png",
+      title: "试一下",
+      text: "分享文字",
+    },
+    {
+      navigator: {
+        canShare() {
+          return true;
+        },
+        async share() {
+          throw new DOMException("Share cancelled", "AbortError");
+        },
+        clipboard: {
+          async writeText(text) {
+            copiedText = text;
+          },
+        },
+      },
+      fileFactory(_parts, fileName, options) {
+        return { name: fileName, type: options?.type } as File;
+      },
+      downloadFile() {
+        downloaded = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, "native-share-cancelled");
+  assert.equal(downloaded, false);
+  assert.equal(copiedText, "");
 });
 
 test("share poster copies image to clipboard when native file sharing is unavailable", async () => {
@@ -293,4 +345,18 @@ test("buildShareCardText preserves report, route, and action-plan payload", () =
   assert.match(text, /推荐路线：MVP 手动验证（后悔风险 28%）/);
   assert.match(text, /先做手动服务验证/);
   assert.match(text, /Day 1: 降压开场 - 发送一句不索取答案的轻量关心。/);
+});
+
+test("copyShareTextToClipboard reports clipboard write failure", async () => {
+  const copied = await copyShareTextToClipboard("分享文字", {
+    navigator: {
+      clipboard: {
+        async writeText() {
+          throw new Error("clipboard unavailable");
+        },
+      },
+    },
+  });
+
+  assert.equal(copied, false);
 });
