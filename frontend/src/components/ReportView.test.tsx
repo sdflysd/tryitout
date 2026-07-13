@@ -119,6 +119,18 @@ test("report view renders the B+C decision workbench and mobile accordion contra
   assert.match(html, /report-mobile-decision-flow/);
   assert.match(html, /report-mobile-action-preview/);
   assert.match(html, /report-detail-accordion/);
+  const accordionIndex = html.indexOf('id="report-detail-accordion"');
+  const disagreementIndex = html.indexOf("Agent 分歧证据", accordionIndex);
+  const agentGameIndex = html.indexOf("AI 利益多方角色群星博弈", accordionIndex);
+  const timelineIndex = html.indexOf("30 天推演时间线", accordionIndex);
+  const agentCountIndex = html.indexOf("2 位 Agent", agentGameIndex);
+
+  assert.ok(accordionIndex >= 0);
+  assert.ok(disagreementIndex > accordionIndex);
+  assert.ok(agentGameIndex > disagreementIndex);
+  assert.ok(agentGameIndex < timelineIndex);
+  assert.ok(agentCountIndex > agentGameIndex);
+  assert.ok(agentCountIndex < timelineIndex);
   assert.match(html, /先用手动服务验证需求。/);
   assert.match(html, /找样本/);
 });
@@ -260,4 +272,64 @@ test("report view renders agent-backed evidence when present", () => {
   assert.match(html, /Agent 分歧证据/);
   assert.match(html, /先做人工服务验证/);
   assert.match(html, /客户需要真实案例/);
+});
+
+test("report view shows the complete report without an unlock paywall", () => {
+  const fullActionPlan = Array.from({ length: 7 }, (_, index) => ({
+    day: index + 1,
+    title: `第 ${index + 1} 天行动`,
+    action: `完成第 ${index + 1} 天验证。`,
+  }));
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={{
+        ...reportSimulation,
+        stages: [
+          {
+            ...reportSimulation.stages[0],
+            interactions: {
+              activatedAgentIds: ["customer_agent"],
+              actions: [
+                {
+                  id: "action-1",
+                  type: "challenge",
+                  actorAgentId: "customer_agent",
+                  content: "先拿真实样本证明价值。",
+                  reason: "用户需要看见可验证结果。",
+                  impact: "neutral",
+                },
+              ],
+              votes: [
+                {
+                  agentId: "customer_agent",
+                  verdict: "continue",
+                  confidence: 72,
+                  stateDeltaVote: { confidence: 60 },
+                  rationale: "低成本验证仍值得继续。",
+                },
+              ],
+              relationships: [],
+              mergedVoteDelta: { confidence: 60 },
+              finalDelta: { confidence: 60 },
+              arbiterSummary: "Agent 认为可以继续小样本验证。",
+            },
+          },
+        ],
+        report: {
+          ...reportSimulation.report,
+          actionPlan7Days: fullActionPlan,
+        },
+      }}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.doesNotMatch(html, /deep-report-paywall/);
+  assert.doesNotMatch(html, /解锁完整/);
+  assert.doesNotMatch(html, /选择上方内测价格后可临时解锁/);
+  assert.match(html, /Agent 互动复盘/);
+  assert.match(html, /Agent 认为可以继续小样本验证/);
+  assert.match(html, /DAY 7/);
 });

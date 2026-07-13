@@ -130,7 +130,7 @@ const APP_COPY = {
       providerDeleted: "BYOK 模型配置已删除。",
       activeQueued: "任务已进入商业队列，等待 worker 处理。",
       activeStarted: "检测到已有商业任务，正在接管进度。",
-      loginRequired: "请先登录账号或注册后再启动付费推演。",
+      loginRequired: "请先登录账号或注册后再启动推演。",
       insufficientCredits: "当前可用额度不足。请先兑换访问码或联系运营充值后再启动推演。",
     },
     commercialAction: {
@@ -181,7 +181,7 @@ const APP_COPY = {
       providerDeleted: "BYOK model provider deleted.",
       activeQueued: "The commercial task is queued and waiting for a worker.",
       activeStarted: "Found an active commercial task and attached to its progress.",
-      loginRequired: "Sign in or create an account before starting a paid simulation.",
+      loginRequired: "Sign in or create an account before starting a simulation.",
       insufficientCredits: "Insufficient available credits. Redeem an access code or ask support to top up before starting.",
     },
     commercialAction: {

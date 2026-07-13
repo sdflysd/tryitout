@@ -182,7 +182,6 @@ const categoryInfo = {
     subtitle: "把项目放进市场、流量、现金流的虚拟世界里先跑一遍",
     desc: "目标客户、竞品、平台流量、执行教练、现金流、风险审计和裁判会围绕你的想法连续压测 30 天。",
     icon: Flame,
-    tagline: "商业世界线",
     accent: "amber",
     active: "border-amber-300/70 bg-amber-300/14 text-amber-100 shadow-[0_0_28px_rgba(251,191,36,0.18)]",
     button: "bg-amber-300 text-slate-950 hover:bg-amber-200",
@@ -192,7 +191,6 @@ const categoryInfo = {
     subtitle: "把下一句话放进 TA、情绪、边界和现实压力里预演",
     desc: "TA、沟通教练、边界、情绪、现实条件、旁观朋友和裁判会模拟关系升温或降温的路径。",
     icon: Heart,
-    tagline: "关系世界线",
     accent: "rose",
     active: "border-rose-300/70 bg-rose-300/14 text-rose-100 shadow-[0_0_28px_rgba(251,113,133,0.2)]",
     button: "bg-rose-400 text-white hover:bg-rose-300",
@@ -202,7 +200,6 @@ const categoryInfo = {
     subtitle: "把人生分岔口交给未来自己、资源和机会成本共同推演",
     desc: "选项 A、选项 B、未来自己、家人现实、资源盘点、核心恐惧和裁判会把代价摊开。",
     icon: Compass,
-    tagline: "命运世界线",
     accent: "indigo",
     active: "border-cyan-300/70 bg-cyan-300/12 text-cyan-100 shadow-[0_0_28px_rgba(103,232,249,0.18)]",
     button: "bg-cyan-300 text-slate-950 hover:bg-cyan-200",
@@ -215,21 +212,18 @@ const categoryInfoEn = {
     title: "Side Hustle",
     subtitle: "Run the idea through market, traffic, and cash-flow pressure first",
     desc: "Target customers, competitors, platform traffic, execution coaching, cash flow, risk audit, and the arbiter stress-test your idea across 30 days.",
-    tagline: "Business worldline",
   },
   dating: {
     ...categoryInfo.dating,
     title: "Dating Chat",
     subtitle: "Preview the next message against TA, emotions, boundaries, and reality",
     desc: "TA, a communication coach, boundaries, emotions, reality constraints, an outside friend, and the arbiter simulate how the relationship warms up or cools down.",
-    tagline: "Relationship worldline",
   },
   life_choice: {
     ...categoryInfo.life_choice,
     title: "Life Choice",
     subtitle: "Let future self, resources, and opportunity cost debate the fork",
     desc: "Option A, Option B, future self, family reality, resources, core fear, and the arbiter lay out the trade-offs.",
-    tagline: "Decision worldline",
   },
 };
 
@@ -249,7 +243,6 @@ export default function HomeView({
   const privacySafetyCopy = getPrivacySafetyCopy(language);
   const localizedCategoryInfo = isEnglish ? categoryInfoEn : categoryInfo;
   const activeInfo = localizedCategoryInfo[activeTab];
-  const ActiveIcon = activeInfo.icon;
 
   const handleStart = (type: SimulationType) => {
     void postValidationEvent({
@@ -319,10 +312,6 @@ export default function HomeView({
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                   <span>{isEnglish ? "Enter simulation" : "进入星图推演"}</span>
                 </button>
-                <div className="inline-flex min-h-12 items-center gap-2 rounded-2xl border border-white/12 bg-white/7 px-4 text-xs font-bold text-white/70 backdrop-blur-md">
-                  <ActiveIcon className="h-4 w-4" aria-hidden="true" />
-                  <span>{activeInfo.tagline}</span>
-                </div>
               </div>
 
               <div id="home-scenario-tool-grid" className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">

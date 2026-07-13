@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  TrendingUp, AlertTriangle, Lightbulb, Compass, Calendar, 
+  TrendingUp, AlertTriangle, Lightbulb, Calendar, 
   MessageSquare, UserCheck, ShieldAlert, Sparkles, CheckCircle2, 
   RefreshCw, ArrowUpRight, Share2, HelpCircle, ChevronRight, Play, PencilLine
 } from "lucide-react";
@@ -11,17 +11,10 @@ import AgentInteractionReplay from "./AgentInteractionReplay";
 import RouteComparisonPanel from "./RouteComparisonPanel";
 import { createHorizontalDragScrollController } from "./drag-scroll";
 import {
-  buildDeepReportUnlockIntentEvent,
-  buildPaywallClickEvent,
-  buildPaywallLeadEvent,
-  getDeepReportPaywallCopy,
-} from "./paywall-copy";
-import OutcomeFeedbackPanel from "./OutcomeFeedbackPanel";
-import {
   getVisibleActionPlan,
-  hasAgentInteractions,
   shouldShowDeepSection,
 } from "./report-access";
+import OutcomeFeedbackPanel from "./OutcomeFeedbackPanel";
 import { buildFeedbackEvent, buildReportViewedEvent } from "./report-feedback";
 import {
   buildAgentEvidenceRows,
@@ -53,9 +46,6 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
   const [feedbackRating, setFeedbackRating] = useState("");
   const [feedbackPrice, setFeedbackPrice] = useState("");
   const [feedbackText, setFeedbackText] = useState("");
-  const [selectedPaywallPrice, setSelectedPaywallPrice] = useState("");
-  const [paywallContact, setPaywallContact] = useState("");
-  const [deepReportUnlocked, setDeepReportUnlocked] = useState(false);
   const agentRailDrag = useMemo(() => createHorizontalDragScrollController(), []);
 
   useEffect(() => {
@@ -209,9 +199,8 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
   const verdict = getShouldDoDetails(report.shouldDo, simType);
   const selectedAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
-  const deepReportPaywallCopy = getDeepReportPaywallCopy(simType);
-  const deepSectionVisible = shouldShowDeepSection(simulation, deepReportUnlocked);
-  const visibleActionPlan = getVisibleActionPlan(report.actionPlan7Days, deepReportUnlocked);
+  const deepSectionVisible = shouldShowDeepSection(simulation);
+  const visibleActionPlan = getVisibleActionPlan(report.actionPlan7Days);
   const agentEvidence = buildAgentEvidenceRows(simulation);
   const arbiterEvidence = buildArbiterEvidence(simulation);
   const keyVariables = buildKeyVariables(simulation);
@@ -663,6 +652,136 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
         <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
+            <span>AI 利益多方角色群星博弈</span>
+            <span className="text-2xs font-bold text-gray-400">{agents.length} 位 Agent</span>
+          </summary>
+          <div id="report-agents-sandbox" className="mt-4 space-y-5">
+            <p className="text-xs text-gray-500">
+              {agentPanelDescription}
+            </p>
+
+            <div
+              className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-none cursor-grab active:cursor-grabbing select-none touch-pan-x"
+              onPointerDown={agentRailDrag.onPointerDown}
+              onPointerMove={agentRailDrag.onPointerMove}
+              onPointerUp={agentRailDrag.onPointerUp}
+              onPointerCancel={agentRailDrag.onPointerCancel}
+              onClickCapture={(event) => {
+                if (agentRailDrag.consumeClickSuppression()) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
+            >
+              {agents.map((agent) => {
+                const isSelected = agent.id === selectedAgentId;
+                const stanceBadge = agent.stance === "支持"
+                  ? "bg-emerald-500"
+                  : agent.stance === "质疑"
+                    ? "bg-amber-500"
+                    : agent.stance === "拷打"
+                      ? "bg-rose-500"
+                      : "bg-blue-500";
+
+                return (
+                  <button
+                    id={`btn-select-agent-${agent.id}`}
+                    key={agent.id}
+                    type="button"
+                    onClick={() => setSelectedAgentId(agent.id)}
+                    className={`px-4 py-3.5 rounded-2xl border text-xs shrink-0 font-bold transition-all text-left flex items-center gap-2.5 cursor-pointer ${
+                      isSelected
+                        ? "bg-gray-950 border-gray-950 text-white shadow-md scale-98"
+                        : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-700"
+                    }`}
+                  >
+                    <span className="text-base">
+                      {agent.role.includes("客户") || agent.role.includes("伴侣") || agent.role.includes("对方") ? "🛍️"
+                        : agent.role.includes("竞品") || agent.role.includes("诱惑") ? "⚔️"
+                          : agent.role.includes("流量") || agent.role.includes("亲友") || agent.role.includes("闺蜜") ? "📲"
+                            : agent.role.includes("本人") || agent.role.includes("执行者") || agent.role.includes("抉择人") ? "👤"
+                              : agent.role.includes("合伙") || agent.role.includes("朋友") || agent.role.includes("红娘") ? "👥"
+                                : agent.role.includes("教练") || agent.role.includes("导师") || agent.role.includes("算盘") ? "🎯"
+                                  : "📊"}
+                    </span>
+                    <div>
+                      <span className="block">{agent.name}</span>
+                      <span className="block text-[9px] opacity-60 font-normal">{agent.role}</span>
+                    </div>
+                    <span className={`w-2 h-2 rounded-full ${stanceBadge}`} />
+                  </button>
+                );
+              })}
+            </div>
+
+            <AnimatePresence mode="wait">
+              <motion.div
+                id="agent-objection-bubble"
+                key={selectedAgentId}
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                className="bg-gray-50 border border-gray-200 rounded-2xl p-5 text-left relative"
+              >
+                <div className="flex flex-col md:flex-row justify-between md:items-center gap-2 border-b border-gray-200 pb-3 mb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">
+                      {selectedAgent.role.includes("客户") || selectedAgent.role.includes("伴侣") || selectedAgent.role.includes("对方") ? "🛍️"
+                        : selectedAgent.role.includes("竞品") || selectedAgent.role.includes("诱惑") ? "⚔️"
+                          : selectedAgent.role.includes("流量") || selectedAgent.role.includes("亲友") || selectedAgent.role.includes("闺蜜") ? "📲"
+                            : selectedAgent.role.includes("本人") || selectedAgent.role.includes("执行者") || selectedAgent.role.includes("抉择人") ? "👤"
+                              : selectedAgent.role.includes("合伙") || selectedAgent.role.includes("朋友") || selectedAgent.role.includes("红娘") ? "👥"
+                                : selectedAgent.role.includes("教练") || selectedAgent.role.includes("导师") || selectedAgent.role.includes("算盘") ? "🎯"
+                                  : "📊"}
+                    </span>
+                    <div>
+                      <h3 className="font-bold text-gray-950 text-sm">{selectedAgent.name}</h3>
+                      <p className="text-3xs text-gray-400">角色身份: {selectedAgent.role}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-sm text-white ${
+                      selectedAgent.stance === "支持"
+                        ? "bg-emerald-500"
+                        : selectedAgent.stance === "质疑"
+                          ? "bg-amber-500"
+                          : selectedAgent.stance === "拷打"
+                            ? "bg-rose-500"
+                            : "bg-blue-500"
+                    }`}>
+                      立场：{selectedAgent.stance}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div className="relative">
+                    <span className="absolute -top-3 -left-2 text-4xl font-serif text-gray-200 select-none">“</span>
+                    <p className="text-xs md:text-sm text-gray-800 italic font-medium leading-relaxed pl-4 pt-1 relative z-10">
+                      {selectedAgent.keyJudgment}
+                    </p>
+                  </div>
+
+                  {selectedAgent.objection && (
+                    <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl mt-3 space-y-1">
+                      <span className="block text-2xs font-bold text-rose-800 flex items-center gap-1">
+                        <ShieldAlert className="w-3.5 h-3.5" />
+                        <span>致命担忧：</span>
+                      </span>
+                      <p className="text-2xs text-rose-700 font-medium pl-4 leading-relaxed">
+                        {selectedAgent.objection}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </details>
+
+        <details className="group bg-white rounded-3xl border border-gray-200 p-5 shadow-xs text-left">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-gray-950">
             <span>30 天推演时间线</span>
             <span className="text-2xs font-bold text-gray-400">{stages.length} 个阶段</span>
           </summary>
@@ -928,139 +1047,6 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </p>
       </div>
 
-      {/* Multi-Agent Sandbox Objections Dialog (多智能体拷打面板) */}
-      <div id="report-agents-sandbox" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-6 text-left">
-        <div>
-          <h2 className="text-base font-bold text-gray-950 flex items-center gap-2">
-            <Compass className={`w-5 h-5 ${theme.text}`} />
-            <span>AI 利益多方角色群星博弈</span>
-          </h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {agentPanelDescription}
-          </p>
-        </div>
-
-        {/* Horizontal scroll select on mobile */}
-        <div
-          className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-none cursor-grab active:cursor-grabbing select-none touch-pan-x"
-          onPointerDown={agentRailDrag.onPointerDown}
-          onPointerMove={agentRailDrag.onPointerMove}
-          onPointerUp={agentRailDrag.onPointerUp}
-          onPointerCancel={agentRailDrag.onPointerCancel}
-          onClickCapture={(event) => {
-            if (agentRailDrag.consumeClickSuppression()) {
-              event.preventDefault();
-              event.stopPropagation();
-            }
-          }}
-        >
-          {agents.map((agent) => {
-            const isSelected = agent.id === selectedAgentId;
-            const stanceBadge = agent.stance === "支持" 
-              ? "bg-emerald-500" 
-              : agent.stance === "质疑" 
-              ? "bg-amber-500" 
-              : agent.stance === "拷打" 
-              ? "bg-rose-500" 
-              : "bg-blue-500";
-              
-            return (
-              <button
-                id={`btn-select-agent-${agent.id}`}
-                key={agent.id}
-                type="button"
-                onClick={() => setSelectedAgentId(agent.id)}
-                className={`px-4 py-3.5 rounded-2xl border text-xs shrink-0 font-bold transition-all text-left flex items-center gap-2.5 cursor-pointer ${
-                  isSelected
-                    ? "bg-gray-950 border-gray-950 text-white shadow-md scale-98"
-                    : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-700"
-                }`}
-              >
-                <span className="text-base">
-                  {agent.role.includes("客户") || agent.role.includes("伴侣") || agent.role.includes("对方") ? "🛍️" 
-                    : agent.role.includes("竞品") || agent.role.includes("诱惑") ? "⚔️" 
-                    : agent.role.includes("流量") || agent.role.includes("亲友") || agent.role.includes("闺蜜") ? "📲" 
-                    : agent.role.includes("本人") || agent.role.includes("执行者") || agent.role.includes("抉择人") ? "👤" 
-                    : agent.role.includes("合伙") || agent.role.includes("朋友") || agent.role.includes("红娘") ? "👥" 
-                    : agent.role.includes("教练") || agent.role.includes("导师") || agent.role.includes("算盘") ? "🎯" 
-                    : "📊"}
-                </span>
-                <div>
-                  <span className="block">{agent.name}</span>
-                  <span className="block text-[9px] opacity-60 font-normal">{agent.role}</span>
-                </div>
-                <span className={`w-2 h-2 rounded-full ${stanceBadge}`} />
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Selected Agent Quote bubble */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            id="agent-objection-bubble"
-            key={selectedAgentId}
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -5 }}
-            className="bg-gray-50 border border-gray-200 rounded-2xl p-5 text-left relative"
-          >
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-2 border-b border-gray-200 pb-3 mb-4">
-              <div className="flex items-center gap-2.5">
-                <span className="text-lg">
-                  {selectedAgent.role.includes("客户") || selectedAgent.role.includes("伴侣") || selectedAgent.role.includes("对方") ? "🛍️" 
-                    : selectedAgent.role.includes("竞品") || selectedAgent.role.includes("诱惑") ? "⚔️" 
-                    : selectedAgent.role.includes("流量") || selectedAgent.role.includes("亲友") || selectedAgent.role.includes("闺蜜") ? "📲" 
-                    : selectedAgent.role.includes("本人") || selectedAgent.role.includes("执行者") || selectedAgent.role.includes("抉择人") ? "👤" 
-                    : selectedAgent.role.includes("合伙") || selectedAgent.role.includes("朋友") || selectedAgent.role.includes("红娘") ? "👥" 
-                    : selectedAgent.role.includes("教练") || selectedAgent.role.includes("导师") || selectedAgent.role.includes("算盘") ? "🎯" 
-                    : "📊"}
-                </span>
-                <div>
-                  <h3 className="font-bold text-gray-950 text-sm">{selectedAgent.name}</h3>
-                  <p className="text-3xs text-gray-400">角色身份: {selectedAgent.role}</p>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-sm text-white ${
-                  selectedAgent.stance === "支持" 
-                    ? "bg-emerald-500" 
-                    : selectedAgent.stance === "质疑" 
-                    ? "bg-amber-500" 
-                    : selectedAgent.stance === "拷打" 
-                    ? "bg-rose-500" 
-                    : "bg-blue-500"
-                }`}>
-                  立场：{selectedAgent.stance}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-3.5">
-              <div className="relative">
-                <span className="absolute -top-3 -left-2 text-4xl font-serif text-gray-200 select-none">“</span>
-                <p className="text-xs md:text-sm text-gray-800 italic font-medium leading-relaxed pl-4 pt-1 relative z-10">
-                  {selectedAgent.keyJudgment}
-                </p>
-              </div>
-
-              {selectedAgent.objection && (
-                <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl mt-3 space-y-1">
-                  <span className="block text-2xs font-bold text-rose-800 flex items-center gap-1">
-                    <ShieldAlert className="w-3.5 h-3.5" />
-                    <span>致命担忧：</span>
-                  </span>
-                  <p className="text-2xs text-rose-700 font-medium pl-4 leading-relaxed">
-                    {selectedAgent.objection}
-                  </p>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
       {/* 30-Day Timeline (30天推演时间线) */}
       <div id="report-timeline" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs space-y-6 text-left">
         <div>
@@ -1111,10 +1097,6 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
           {deepSectionVisible ? (
             <AgentInteractionReplay stage={stages[expandedStageIndex]} simulationType={simType} />
-          ) : hasAgentInteractions(simulation) ? (
-            <div className="bg-white border border-amber-100 rounded-2xl p-4 text-xs text-amber-800">
-              Agent 博弈回放属于深度报告内容。选择上方内测价格后可临时解锁。
-            </div>
           ) : null}
 
           {/* Events array */}
@@ -1311,60 +1293,6 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
             );
           })}
         </div>
-      </div>
-
-      <div id="deep-report-paywall" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
-        <h2 className="text-base font-bold text-gray-950">{deepReportPaywallCopy.title}</h2>
-        <p className="text-xs text-gray-500 mt-1">{deepReportPaywallCopy.description}</p>
-        <div className="grid grid-cols-3 gap-2 mt-4">
-          {["3.9", "9.9", "19.9"].map((price) => (
-            <button
-              key={price}
-              type="button"
-              onClick={() => {
-                setSelectedPaywallPrice(price);
-                void postValidationEvent(buildPaywallClickEvent(simulation, price));
-              }}
-              className={`font-bold text-xs py-3 rounded-xl transition-colors cursor-pointer ${
-                selectedPaywallPrice === price
-                  ? "bg-amber-500 text-gray-950"
-                  : "bg-gray-950 hover:bg-gray-800 text-white"
-              }`}
-            >
-              {price} 元
-            </button>
-          ))}
-        </div>
-        {selectedPaywallPrice && (
-          <div className="mt-4 space-y-3">
-            <input
-              value={paywallContact}
-              onChange={(event) => setPaywallContact(event.target.value)}
-              placeholder={deepReportPaywallCopy.contactPlaceholder}
-              className="w-full text-xs p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-300"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                void postValidationEvent(
-                  buildPaywallLeadEvent(simulation, selectedPaywallPrice, paywallContact),
-                );
-                void postValidationEvent(
-                  buildDeepReportUnlockIntentEvent(simulation, selectedPaywallPrice),
-                );
-                setDeepReportUnlocked(true);
-              }}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-gray-950 font-black text-xs py-3 rounded-xl cursor-pointer"
-            >
-              {deepReportPaywallCopy.cta}
-            </button>
-            {deepReportUnlocked && (
-              <p className="text-2xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl p-3">
-                已临时解锁深度内容。我们会用你的价格选择验证深度报告价值，不会在这里发起真实扣费。
-              </p>
-            )}
-          </div>
-        )}
       </div>
 
       <OutcomeFeedbackPanel simulation={simulation} />

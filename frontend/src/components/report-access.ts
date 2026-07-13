@@ -6,14 +6,14 @@ export function hasAgentInteractions(simulation: Simulation): boolean {
 
 export function shouldShowDeepSection(
   simulation: Simulation,
-  deepReportUnlocked: boolean,
+  _deepReportUnlocked?: boolean,
 ): boolean {
-  return deepReportUnlocked && hasAgentInteractions(simulation);
+  return hasAgentInteractions(simulation);
 }
 
 export function getVisibleActionPlan(
   plan: Report["actionPlan7Days"],
-  deepReportUnlocked: boolean,
+  _deepReportUnlocked?: boolean,
 ): Report["actionPlan7Days"] {
-  return deepReportUnlocked ? plan : plan.slice(0, 3);
+  return plan;
 }

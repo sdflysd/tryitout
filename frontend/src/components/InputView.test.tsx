@@ -247,7 +247,7 @@ test("commercial mode can show a login modal with localized links", () => {
       commercialActionNotice={{
         tone: "login",
         title: "Sign in required",
-        message: "Sign in or create an account before starting a paid simulation.",
+        message: "Sign in or create an account before starting a simulation.",
         primaryHref: "/login",
         primaryLabel: "Sign in",
         secondaryHref: "/register",
@@ -351,7 +351,7 @@ test("commercial mode localizes the credit modal in Chinese", () => {
     />,
   );
 
-  assert.match(html, /商业额度/);
+  assert.doesNotMatch(html, /商业额度/);
   assert.match(html, /额度不足/);
   assert.match(html, /当前可用额度不足/);
   assert.match(html, /去账号页兑换/);
@@ -388,7 +388,7 @@ test("commercial mode localizes the credit modal in English", () => {
     />,
   );
 
-  assert.match(html, /Commercial credits/);
+  assert.doesNotMatch(html, /Commercial credits/);
   assert.match(html, /Insufficient credits/);
   assert.match(html, /Insufficient available credits/);
   assert.match(html, /Open account settings/);

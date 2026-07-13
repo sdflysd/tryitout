@@ -25,6 +25,7 @@ test("homepage hero uses concise decision-sandbox advertising copy", () => {
   assert.match(html, /先模拟试一次 30 天后的风险、机会和下一步/);
   assert.match(html, /home-starmap-shell/);
   assert.match(html, /text-white/);
+  assert.doesNotMatch(html, /商业世界线/);
   assert.match(html, /block whitespace-nowrap">试一下：多智能体协作沙盘/);
   assert.match(heroTitleClass, /text-xl/);
   assert.match(heroTitleClass, /font-extrabold/);

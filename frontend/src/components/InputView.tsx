@@ -270,9 +270,6 @@ const INPUT_FORM_COPY = {
   "zh-CN": {
     currentLength: (count: number, minimum?: number) =>
       minimum ? `目前字数: ${count} (需 ≥${minimum})` : `目前字数: ${count}`,
-    commercial: {
-      credits: "商业额度",
-    },
     sideHustle: {
       projectSection: "你的项目构想",
       projectQuestion: "你想做什么副业想法？",
@@ -342,9 +339,6 @@ const INPUT_FORM_COPY = {
   "en-US": {
     currentLength: (count: number, minimum?: number) =>
       minimum ? `Current length: ${count} (min ${minimum})` : `Current length: ${count}`,
-    commercial: {
-      credits: "Commercial credits",
-    },
     sideHustle: {
       projectSection: "Your project idea",
       projectQuestion: "What side-hustle idea do you want to test?",
@@ -985,9 +979,6 @@ export default function InputView({
           <div className="w-full max-w-md rounded-2xl border border-white/12 bg-white p-5 text-left text-slate-950 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-600">
-                  {formCopy.commercial.credits}
-                </p>
                 <h2 id="commercial-action-modal-title" className="text-base font-black text-slate-950">
                   {commercialActionNotice.title}
                 </h2>

@@ -604,11 +604,27 @@ test("commercial start action notices guide signed-out and low-credit users", as
   }), {
     tone: "login",
     title: "Sign in required",
-    message: "Sign in or create an account before starting a paid simulation.",
+    message: "Sign in or create an account before starting a simulation.",
     primaryHref: "/login",
     primaryLabel: "Sign in",
     secondaryHref: "/register",
     secondaryLabel: "Create account",
+  });
+  assert.deepEqual(appModule.resolveCommercialStartActionNotice?.({
+    commercialMode: true,
+    startAttempted: true,
+    hasUser: false,
+    availableCredits: 0,
+    requiredCredits: 3,
+    language: "zh-CN",
+  }), {
+    tone: "login",
+    title: "需要登录",
+    message: "请先登录账号或注册后再启动推演。",
+    primaryHref: "/login",
+    primaryLabel: "去登录",
+    secondaryHref: "/register",
+    secondaryLabel: "注册账号",
   });
   assert.deepEqual(appModule.resolveCommercialStartActionNotice?.({
     commercialMode: true,
