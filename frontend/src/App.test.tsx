@@ -565,10 +565,16 @@ test("commercial task watcher tokens reject stale completions after attach or ca
       currentToken: WatcherToken | undefined,
       token: WatcherToken,
     ) => boolean;
+    resolveCommercialTaskWatcherAfterUserChange?: (
+      currentToken: WatcherToken | undefined,
+      previousUserId: string | undefined,
+      nextUserId: string | undefined,
+    ) => WatcherToken | undefined;
   };
 
   assert.equal(typeof appModule.createCommercialTaskWatcherToken, "function");
   assert.equal(typeof appModule.isCommercialTaskWatcherCurrent, "function");
+  assert.equal(typeof appModule.resolveCommercialTaskWatcherAfterUserChange, "function");
 
   const first = appModule.createCommercialTaskWatcherToken(0, "task_1");
   const second = appModule.createCommercialTaskWatcherToken(first.sequence, "task_2");
@@ -582,6 +588,18 @@ test("commercial task watcher tokens reject stale completions after attach or ca
       first,
     ),
     false,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskWatcherAfterUserChange(first, "user_1", "user_1"),
+    first,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskWatcherAfterUserChange(first, "user_1", undefined),
+    undefined,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskWatcherAfterUserChange(first, "user_1", "user_2"),
+    undefined,
   );
 });
 
@@ -609,6 +627,22 @@ test("commercial task refresh tokens reject stale results after user changes", a
   assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, userRequest, undefined), false);
   assert.equal(appModule.isCommercialTaskRefreshCurrent(userRequest, userRequest, "user_2"), false);
   assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, logoutRequest, undefined), true);
+});
+
+test("active commercial task attach is ignored after the commercial user changes", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldAttachActiveCommercialTaskForUser?: (
+      requestedUserId: string | undefined,
+      currentUserId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.shouldAttachActiveCommercialTaskForUser, "function");
+
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", "user_1"), true);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", undefined), false);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", "user_2"), false);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForUser(undefined, "user_1"), false);
 });
 
 test("model configuration path only shows admin-enabled platform models", async () => {

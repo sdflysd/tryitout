@@ -507,6 +507,14 @@ export function isCommercialTaskWatcherCurrent(
     currentToken.simulationId === token.simulationId;
 }
 
+export function resolveCommercialTaskWatcherAfterUserChange(
+  currentToken: CommercialTaskWatcherToken | undefined,
+  previousUserId: string | undefined,
+  nextUserId: string | undefined,
+): CommercialTaskWatcherToken | undefined {
+  return previousUserId === nextUserId ? currentToken : undefined;
+}
+
 type CommercialTaskRefreshToken = {
   sequence: number;
   userId?: string;
@@ -530,6 +538,13 @@ export function isCommercialTaskRefreshCurrent(
   return currentToken?.sequence === token.sequence &&
     currentToken.userId === token.userId &&
     token.userId === currentUserId;
+}
+
+export function shouldAttachActiveCommercialTaskForUser(
+  requestedUserId: string | undefined,
+  currentUserId: string | undefined,
+): boolean {
+  return Boolean(requestedUserId && requestedUserId === currentUserId);
 }
 
 export function buildCommercialTaskReportSimulation(
@@ -650,7 +665,14 @@ export default function App({
   }, [commercialUser?.id]);
 
   const setCommercialUserState = (user: CommercialUserDto | undefined) => {
-    commercialUserIdRef.current = user?.id;
+    const previousUserId = commercialUserIdRef.current;
+    const nextUserId = user?.id;
+    activeCommercialTaskWatcherRef.current = resolveCommercialTaskWatcherAfterUserChange(
+      activeCommercialTaskWatcherRef.current,
+      previousUserId,
+      nextUserId,
+    );
+    commercialUserIdRef.current = nextUserId;
     setCommercialUser(user);
   };
 
@@ -941,7 +963,14 @@ export default function App({
   };
 
   async function attachActiveCommercialTask() {
+    const requestedUserId = commercialUserIdRef.current;
+    if (!requestedUserId) {
+      return;
+    }
     const activeTask = await fetchActiveSimulationTask().catch(() => undefined);
+    if (!shouldAttachActiveCommercialTaskForUser(requestedUserId, commercialUserIdRef.current)) {
+      return;
+    }
     if (activeTask === undefined) {
       return;
     }
@@ -1509,6 +1538,7 @@ export default function App({
   const handleCommercialLogout = async () => {
     setCommercialBusy(true);
     setCommercialError("");
+    invalidateCommercialTaskWatcher();
     try {
       await logoutCommercialUser();
       setCommercialUserState(undefined);
