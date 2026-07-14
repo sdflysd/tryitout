@@ -629,20 +629,101 @@ test("commercial task refresh tokens reject stale results after user changes", a
   assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, logoutRequest, undefined), true);
 });
 
+test("commercial task report tokens reject stale report fetch completions", async () => {
+  type ReportToken = { sequence: number; userId?: string; simulationId: string };
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    createCommercialTaskReportToken?: (
+      previousSequence: number,
+      userId: string | undefined,
+      simulationId: string,
+    ) => ReportToken;
+    isCommercialTaskReportCurrent?: (
+      currentToken: ReportToken | undefined,
+      token: ReportToken,
+      currentUserId: string | undefined,
+    ) => boolean;
+    resolveCommercialTaskReportAfterUserChange?: (
+      currentToken: ReportToken | undefined,
+      previousUserId: string | undefined,
+      nextUserId: string | undefined,
+    ) => ReportToken | undefined;
+  };
+
+  assert.equal(typeof appModule.createCommercialTaskReportToken, "function");
+  assert.equal(typeof appModule.isCommercialTaskReportCurrent, "function");
+  assert.equal(typeof appModule.resolveCommercialTaskReportAfterUserChange, "function");
+
+  const first = appModule.createCommercialTaskReportToken(0, "user_1", "task_1");
+  const second = appModule.createCommercialTaskReportToken(first.sequence, "user_1", "task_2");
+
+  assert.equal(appModule.isCommercialTaskReportCurrent(first, first, "user_1"), true);
+  assert.equal(appModule.isCommercialTaskReportCurrent(second, first, "user_1"), false);
+  assert.equal(appModule.isCommercialTaskReportCurrent(first, first, "user_2"), false);
+  assert.equal(appModule.isCommercialTaskReportCurrent(undefined, first, "user_1"), false);
+  assert.equal(
+    appModule.resolveCommercialTaskReportAfterUserChange(first, "user_1", "user_1"),
+    first,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskReportAfterUserChange(first, "user_1", undefined),
+    undefined,
+  );
+});
+
+test("cancelled task state only clears when the cancelled task is still attached", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldClearCancelledCommercialTaskState?: (
+      cancelledTaskId: string,
+      currentAttachedTaskId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.shouldClearCancelledCommercialTaskState, "function");
+
+  assert.equal(appModule.shouldClearCancelledCommercialTaskState("task_1", "task_1"), true);
+  assert.equal(appModule.shouldClearCancelledCommercialTaskState("task_1", "task_2"), false);
+  assert.equal(appModule.shouldClearCancelledCommercialTaskState("task_1", undefined), false);
+});
+
 test("active commercial task attach is ignored after the commercial user changes", async () => {
   const appModule = await import("./App.js") as typeof import("./App.js") & {
     shouldAttachActiveCommercialTaskForUser?: (
       requestedUserId: string | undefined,
       currentUserId: string | undefined,
     ) => boolean;
+    shouldAttachActiveCommercialTaskForContext?: (input: {
+      requestedUserId: string | undefined;
+      currentUserId: string | undefined;
+      requestedWatcherSequence: number;
+      currentWatcherSequence: number;
+    }) => boolean;
   };
 
   assert.equal(typeof appModule.shouldAttachActiveCommercialTaskForUser, "function");
+  assert.equal(typeof appModule.shouldAttachActiveCommercialTaskForContext, "function");
 
   assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", "user_1"), true);
   assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", undefined), false);
   assert.equal(appModule.shouldAttachActiveCommercialTaskForUser("user_1", "user_2"), false);
   assert.equal(appModule.shouldAttachActiveCommercialTaskForUser(undefined, "user_1"), false);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
+    requestedUserId: "user_1",
+    currentUserId: "user_1",
+    requestedWatcherSequence: 3,
+    currentWatcherSequence: 3,
+  }), true);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
+    requestedUserId: "user_1",
+    currentUserId: "user_1",
+    requestedWatcherSequence: 3,
+    currentWatcherSequence: 4,
+  }), false);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
+    requestedUserId: "user_1",
+    currentUserId: "user_2",
+    requestedWatcherSequence: 3,
+    currentWatcherSequence: 3,
+  }), false);
 });
 
 test("model configuration path only shows admin-enabled platform models", async () => {

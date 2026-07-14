@@ -540,11 +540,71 @@ export function isCommercialTaskRefreshCurrent(
     token.userId === currentUserId;
 }
 
+type CommercialTaskReportToken = {
+  sequence: number;
+  userId?: string;
+  simulationId: string;
+};
+
+export function createCommercialTaskReportToken(
+  previousSequence: number,
+  userId: string | undefined,
+  simulationId: string,
+): CommercialTaskReportToken {
+  return {
+    sequence: previousSequence + 1,
+    simulationId,
+    ...(userId ? { userId } : {}),
+  };
+}
+
+export function isCommercialTaskReportCurrent(
+  currentToken: CommercialTaskReportToken | undefined,
+  token: CommercialTaskReportToken,
+  currentUserId: string | undefined,
+): boolean {
+  return Boolean(token.userId) &&
+    currentToken?.sequence === token.sequence &&
+    currentToken.userId === token.userId &&
+    currentToken.simulationId === token.simulationId &&
+    token.userId === currentUserId;
+}
+
+export function resolveCommercialTaskReportAfterUserChange(
+  currentToken: CommercialTaskReportToken | undefined,
+  previousUserId: string | undefined,
+  nextUserId: string | undefined,
+): CommercialTaskReportToken | undefined {
+  return previousUserId === nextUserId ? currentToken : undefined;
+}
+
 export function shouldAttachActiveCommercialTaskForUser(
   requestedUserId: string | undefined,
   currentUserId: string | undefined,
 ): boolean {
   return Boolean(requestedUserId && requestedUserId === currentUserId);
+}
+
+export function shouldAttachActiveCommercialTaskForContext({
+  requestedUserId,
+  currentUserId,
+  requestedWatcherSequence,
+  currentWatcherSequence,
+}: {
+  requestedUserId: string | undefined;
+  currentUserId: string | undefined;
+  requestedWatcherSequence: number;
+  currentWatcherSequence: number;
+}): boolean {
+  return shouldAttachActiveCommercialTaskForUser(requestedUserId, currentUserId) &&
+    requestedWatcherSequence === currentWatcherSequence;
+}
+
+export function shouldClearCancelledCommercialTaskState(
+  cancelledTaskId: string,
+  currentAttachedTaskId: string | undefined,
+): boolean {
+  return cancelledTaskId === currentAttachedTaskId;
 }
 
 export function buildCommercialTaskReportSimulation(
@@ -658,17 +718,44 @@ export default function App({
   const activeCommercialTaskWatcherRef = useRef<CommercialTaskWatcherToken | undefined>(undefined);
   const commercialTaskRefreshSequenceRef = useRef(0);
   const activeCommercialTaskRefreshRef = useRef<CommercialTaskRefreshToken | undefined>(undefined);
+  const commercialTaskReportSequenceRef = useRef(0);
+  const activeCommercialTaskReportRef = useRef<CommercialTaskReportToken | undefined>(undefined);
   const commercialUserIdRef = useRef(commercialUser?.id);
+  const attachedCommercialTaskIdRef = useRef(attachedCommercialTaskId);
+  const viewRef = useRef(view);
 
   useEffect(() => {
     commercialUserIdRef.current = commercialUser?.id;
   }, [commercialUser?.id]);
+
+  useEffect(() => {
+    attachedCommercialTaskIdRef.current = attachedCommercialTaskId;
+  }, [attachedCommercialTaskId]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  const setViewState = (nextView: ViewState) => {
+    viewRef.current = nextView;
+    setView(nextView);
+  };
+
+  const setAttachedCommercialTaskIdState = (simulationId: string | undefined) => {
+    attachedCommercialTaskIdRef.current = simulationId;
+    setAttachedCommercialTaskId(simulationId);
+  };
 
   const setCommercialUserState = (user: CommercialUserDto | undefined) => {
     const previousUserId = commercialUserIdRef.current;
     const nextUserId = user?.id;
     activeCommercialTaskWatcherRef.current = resolveCommercialTaskWatcherAfterUserChange(
       activeCommercialTaskWatcherRef.current,
+      previousUserId,
+      nextUserId,
+    );
+    activeCommercialTaskReportRef.current = resolveCommercialTaskReportAfterUserChange(
+      activeCommercialTaskReportRef.current,
       previousUserId,
       nextUserId,
     );
@@ -697,6 +784,33 @@ export default function App({
 
   const isActiveCommercialTaskWatcher = (token: CommercialTaskWatcherToken): boolean =>
     isCommercialTaskWatcherCurrent(activeCommercialTaskWatcherRef.current, token);
+
+  const beginCommercialTaskReport = (simulationId: string): CommercialTaskReportToken => {
+    const token = createCommercialTaskReportToken(
+      commercialTaskReportSequenceRef.current,
+      commercialUserIdRef.current,
+      simulationId,
+    );
+    commercialTaskReportSequenceRef.current = token.sequence;
+    activeCommercialTaskReportRef.current = token;
+    return token;
+  };
+
+  const invalidateCommercialTaskReport = (simulationId?: string) => {
+    if (
+      simulationId === undefined ||
+      activeCommercialTaskReportRef.current?.simulationId === simulationId
+    ) {
+      activeCommercialTaskReportRef.current = undefined;
+    }
+  };
+
+  const isActiveCommercialTaskReport = (token: CommercialTaskReportToken): boolean =>
+    isCommercialTaskReportCurrent(
+      activeCommercialTaskReportRef.current,
+      token,
+      commercialUserIdRef.current,
+    );
 
   useEffect(() => {
     if (!isGenerating || progressElapsedStartMs === undefined) {
@@ -811,7 +925,7 @@ export default function App({
   const refreshCommercialTasks = async ({
     clearError = true,
   }: { clearError?: boolean } = {}) => {
-    const userId = commercialUser?.id;
+    const userId = commercialUserIdRef.current;
     const token = createCommercialTaskRefreshToken(
       commercialTaskRefreshSequenceRef.current,
       userId,
@@ -866,7 +980,7 @@ export default function App({
 
   const handleTaskProgressEvent = (event: SimulationProgressEvent) => {
     setProgressEvent(event);
-    setAttachedCommercialTaskId(event.simulationId);
+    setAttachedCommercialTaskIdState(event.simulationId);
     setRecoverableSimulationId(event.status === "queued" ? event.simulationId : undefined);
     const elapsedStartMs = parseIsoTimestampMs(event.createdAt);
     if (elapsedStartMs !== undefined) {
@@ -886,7 +1000,7 @@ export default function App({
         ? appCopy.commercialStatus.activeQueued
         : appCopy.commercialStatus.activeStarted);
 
-    setAttachedCommercialTaskId(task.simulationId);
+    setAttachedCommercialTaskIdState(task.simulationId);
     setSelectedType(task.scenarioType);
     setErrorMsg("");
     setRecoverableSimulationId(
@@ -909,7 +1023,7 @@ export default function App({
       createdAt: getCommercialTaskElapsedTimestamp(task),
     });
     setIsGenerating(true);
-    setView("generating");
+    setViewState("generating");
     if (scrollOnView) {
       scrollToTopForViewChange();
     }
@@ -941,7 +1055,7 @@ export default function App({
           return;
         }
         invalidateCommercialTaskWatcher(task.simulationId);
-        setAttachedCommercialTaskId(undefined);
+        setAttachedCommercialTaskIdState(undefined);
         handleSimulationCompleted(data, { type: task.scenarioType }, {
           startedAt: elapsedStartMs,
           deepModeRequested: task.mode === "enabled",
@@ -957,24 +1071,30 @@ export default function App({
           deepModeRequested: task.mode === "enabled",
         });
         if (!isRecoverableSimulationTaskError(error)) {
-          setAttachedCommercialTaskId(undefined);
+          setAttachedCommercialTaskIdState(undefined);
         }
       });
   };
 
   async function attachActiveCommercialTask() {
     const requestedUserId = commercialUserIdRef.current;
+    const requestedWatcherSequence = commercialTaskWatcherSequenceRef.current;
     if (!requestedUserId) {
       return;
     }
     const activeTask = await fetchActiveSimulationTask().catch(() => undefined);
-    if (!shouldAttachActiveCommercialTaskForUser(requestedUserId, commercialUserIdRef.current)) {
+    if (!shouldAttachActiveCommercialTaskForContext({
+      requestedUserId,
+      currentUserId: commercialUserIdRef.current,
+      requestedWatcherSequence,
+      currentWatcherSequence: commercialTaskWatcherSequenceRef.current,
+    })) {
       return;
     }
     if (activeTask === undefined) {
       return;
     }
-    if (attachedCommercialTaskId === activeTask.simulationId) {
+    if (attachedCommercialTaskIdRef.current === activeTask.simulationId) {
       return;
     }
 
@@ -1009,14 +1129,14 @@ export default function App({
           setCommercialModelProvider(undefined);
           setProviderMode("platform");
           setSelectedCredentialId(undefined);
-          setAttachedCommercialTaskId(undefined);
+          setAttachedCommercialTaskIdState(undefined);
           return;
         }
         setCommercialAvailable(false);
         setCommercialModelProvider(undefined);
         setProviderMode("platform");
         setSelectedCredentialId(undefined);
-        setAttachedCommercialTaskId(undefined);
+        setAttachedCommercialTaskIdState(undefined);
       });
 
     return () => {
@@ -1093,7 +1213,7 @@ export default function App({
     setProgressEvent(null);
     setRecoverableSimulationId(undefined);
     setIsGenerating(true);
-    setView("generating");
+    setViewState("generating");
     scrollToTopForViewChange();
     const startedAt = Date.now();
     const deepModeRequested = deepAgentMode;
@@ -1112,14 +1232,14 @@ export default function App({
     if (commercialAvailable && commercialUser === undefined) {
       setErrorMsg(appCopy.commercialStatus.loginRequired);
       setIsGenerating(false);
-      setView("input");
+      setViewState("input");
       scrollToTopForViewChange();
       return;
     }
     if (commercialAvailable && (commercialAccount?.balance ?? 0) < requiredCredits) {
       setErrorMsg(appCopy.commercialStatus.insufficientCredits);
       setIsGenerating(false);
-      setView("input");
+      setViewState("input");
       scrollToTopForViewChange();
       return;
     }
@@ -1155,7 +1275,7 @@ export default function App({
         {
           onCreated: (created) => {
             watcherToken = beginCommercialTaskWatcher(created.simulationId);
-            setAttachedCommercialTaskId(created.simulationId);
+            setAttachedCommercialTaskIdState(created.simulationId);
             void refreshCommercialTasks();
           },
           onProgress: (event) => {
@@ -1204,7 +1324,7 @@ export default function App({
   ) => {
     setErrorMsg("");
     setIsGenerating(true);
-    setView("generating");
+    setViewState("generating");
     scrollToTopForViewChange();
     const resumedAt = Date.now();
     setProgressElapsedStartMs(request.startedAt);
@@ -1240,7 +1360,7 @@ export default function App({
 
   const handleResumeSimulation = async () => {
     if (!recoverableSimulationId || !activeSimulationRequest) {
-      setView("input");
+      setViewState("input");
       setErrorMsg("");
       setProgressEvent(null);
       return;
@@ -1250,33 +1370,49 @@ export default function App({
   };
 
   const handleCancelProgress = async () => {
-    if (attachedCommercialTaskId) {
-      const taskId = attachedCommercialTaskId;
-      invalidateCommercialTaskWatcher(taskId);
-      const cancelError = await cancelSimulationTask(taskId)
-        .then(() => undefined)
-        .catch((error) => getCommercialErrorMessage(error));
-      if (cancelError) {
-        setErrorMsg(cancelError);
-        setIsGenerating(false);
-        return;
-      }
-      setAttachedCommercialTaskId(undefined);
-      setRecoverableSimulationId(undefined);
+    const taskId = attachedCommercialTaskIdRef.current;
+    if (!taskId) {
+      setViewState("input");
+      setErrorMsg("");
       setProgressEvent(null);
       setProgressElapsedStartMs(undefined);
-      if (commercialUser) {
-        void fetchCommercialCredits()
-          .then(({ account }) => setCommercialAccount(account))
-          .catch(() => undefined);
-      }
-      void refreshCommercialTasks();
+      setIsGenerating(false);
+      return;
     }
-    setView("input");
+
+    invalidateCommercialTaskWatcher(taskId);
+    const cancelError = await cancelSimulationTask(taskId)
+      .then(() => undefined)
+      .catch((error) => getCommercialErrorMessage(error));
+    const canClearCancelledTask = shouldClearCancelledCommercialTaskState(
+      taskId,
+      attachedCommercialTaskIdRef.current,
+    );
+    if (cancelError) {
+      if (canClearCancelledTask) {
+        setErrorMsg(cancelError);
+        setIsGenerating(false);
+      }
+      return;
+    }
+    if (commercialUserIdRef.current) {
+      void fetchCommercialCredits()
+        .then(({ account }) => setCommercialAccount(account))
+        .catch(() => undefined);
+    }
+    void refreshCommercialTasks();
+    if (!canClearCancelledTask) {
+      return;
+    }
+    setAttachedCommercialTaskIdState(undefined);
+    setRecoverableSimulationId(undefined);
     setErrorMsg("");
     setProgressEvent(null);
     setProgressElapsedStartMs(undefined);
     setIsGenerating(false);
+    if (viewRef.current === "generating") {
+      setViewState("input");
+    }
   };
 
   const handleSimulationCompleted = (
@@ -1323,7 +1459,7 @@ export default function App({
     setIsGenerating(false);
     setProgressEvent(null);
     setProgressElapsedStartMs(undefined);
-    setView("report");
+    setViewState("report");
     void refreshCommercialTasks();
     scrollToTopForViewChange();
   };
@@ -1343,10 +1479,10 @@ export default function App({
     setDeepModeNotice("");
     if (isRecoverableSimulationTaskError(err)) {
       setRecoverableSimulationId(err.simulationId);
-      setAttachedCommercialTaskId(err.simulationId);
+      setAttachedCommercialTaskIdState(err.simulationId);
     } else {
       setRecoverableSimulationId(undefined);
-      setAttachedCommercialTaskId(undefined);
+      setAttachedCommercialTaskIdState(undefined);
     }
     void postValidationEvent(
       buildSimulationFailedEvent({
@@ -1369,7 +1505,7 @@ export default function App({
     setCommercialStartAttempted(false);
     setCurrentSimulation(simulation);
     setProgressElapsedStartMs(undefined);
-    setView("report");
+    setViewState("report");
     scrollToTopForViewChange();
   };
 
@@ -1386,7 +1522,7 @@ export default function App({
 
     if (currentSimulation?.id === simulationId) {
       setCurrentSimulation(null);
-      setView("home");
+      setViewState("home");
       scrollToTopForViewChange();
     }
   };
@@ -1397,7 +1533,7 @@ export default function App({
     setTemplateIdea("");
     setTemplateInput(input);
     setProgressElapsedStartMs(undefined);
-    setView("input");
+    setViewState("input");
     scrollToTopForViewChange();
   };
 
@@ -1408,7 +1544,7 @@ export default function App({
     setTemplateInput(input);
     setShowShareCard(false);
     setProgressElapsedStartMs(undefined);
-    setView("input");
+    setViewState("input");
     scrollToTopForViewChange();
   };
 
@@ -1443,21 +1579,22 @@ export default function App({
 
   const handleCancelTaskFromList = async (task: SimulationTaskStatusResponse) => {
     let cancelError = "";
+    const taskId = task.simulationId;
     invalidateCommercialTaskWatcher(task.simulationId);
     try {
-      await cancelSimulationTask(task.simulationId);
-      if (attachedCommercialTaskId === task.simulationId) {
-        setAttachedCommercialTaskId(undefined);
+      await cancelSimulationTask(taskId);
+      if (shouldClearCancelledCommercialTaskState(taskId, attachedCommercialTaskIdRef.current)) {
+        setAttachedCommercialTaskIdState(undefined);
         setRecoverableSimulationId(undefined);
         setProgressEvent(null);
         setProgressElapsedStartMs(undefined);
         setErrorMsg("");
         setIsGenerating(false);
-        if (view === "generating") {
-          setView("input");
+        if (viewRef.current === "generating") {
+          setViewState("input");
         }
       }
-      if (commercialUser) {
+      if (commercialUserIdRef.current) {
         void fetchCommercialCredits()
           .then(({ account }) => setCommercialAccount(account))
           .catch(() => undefined);
@@ -1475,8 +1612,12 @@ export default function App({
   const handleViewTaskReport = async (task: SimulationTaskStatusResponse) => {
     setCommercialStartAttempted(false);
     setCommercialTasksError("");
+    const reportToken = beginCommercialTaskReport(task.simulationId);
     try {
       const response = await getSimulationTaskReport(task.simulationId);
+      if (!isActiveCommercialTaskReport(reportToken)) {
+        return;
+      }
       if (!response.report) {
         throw new Error(response.error || "simulation report not ready");
       }
@@ -1487,15 +1628,20 @@ export default function App({
       setShowShareCard(false);
       setDeepModeNotice("");
       setRecoverableSimulationId(undefined);
-      setAttachedCommercialTaskId(undefined);
+      setAttachedCommercialTaskIdState(undefined);
       setProgressEvent(null);
       setProgressElapsedStartMs(undefined);
       setIsGenerating(false);
-      setView("report");
+      setViewState("report");
       scrollToTopForViewChange();
     } catch (error) {
-      setCommercialTasksError(getCommercialErrorMessage(error));
+      if (isActiveCommercialTaskReport(reportToken)) {
+        setCommercialTasksError(getCommercialErrorMessage(error));
+      }
     } finally {
+      if (isActiveCommercialTaskReport(reportToken)) {
+        invalidateCommercialTaskReport(task.simulationId);
+      }
       void refreshCommercialTasks({ clearError: false });
     }
   };
@@ -1539,6 +1685,7 @@ export default function App({
     setCommercialBusy(true);
     setCommercialError("");
     invalidateCommercialTaskWatcher();
+    invalidateCommercialTaskReport();
     try {
       await logoutCommercialUser();
       setCommercialUserState(undefined);
@@ -1546,7 +1693,7 @@ export default function App({
       setCommercialModelProvider(undefined);
       setProviderMode("platform");
       setSelectedCredentialId(undefined);
-      setAttachedCommercialTaskId(undefined);
+      setAttachedCommercialTaskIdState(undefined);
       setCommercialStatus(appCopy.commercialStatus.signedOut);
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));
@@ -1632,7 +1779,7 @@ export default function App({
     setTemplateIdea("");
     setTemplateInput(undefined);
     setProgressElapsedStartMs(undefined);
-    setView("home");
+    setViewState("home");
     scrollToTopForViewChange();
   };
 
@@ -1810,7 +1957,7 @@ export default function App({
                   setSelectedType(type);
                   setTemplateIdea("");
                   setTemplateInput(undefined);
-                  setView("input");
+                  setViewState("input");
                   scrollToTopForViewChange();
                 }}
                 onSelectHistory={handleSelectHistory}
@@ -1898,7 +2045,7 @@ export default function App({
                   if (recoverableSimulationId) {
                     void handleResumeSimulation();
                   } else {
-                    setView("input");
+                    setViewState("input");
                     setErrorMsg("");
                     setProgressEvent(null);
                     setProgressElapsedStartMs(undefined);
