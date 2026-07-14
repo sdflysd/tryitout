@@ -700,6 +700,15 @@ export function shouldClearCancelledCommercialTaskState(
   return cancelledTaskId === currentAttachedTaskId;
 }
 
+export function shouldApplyActiveProgressCancelError(
+  canClearCancelledTask: boolean,
+  requestedUserId: string | undefined,
+  currentUserId: string | undefined,
+): boolean {
+  return canClearCancelledTask &&
+    shouldApplyCommercialUserSideEffect(requestedUserId, currentUserId);
+}
+
 export function shouldInvalidateCommercialTaskWatcherAfterCancel(
   cancelSucceeded: boolean,
   cancelledTaskId: string,
@@ -1567,7 +1576,11 @@ export default function App({
       attachedCommercialTaskIdRef.current,
     );
     if (cancelError) {
-      if (canClearCancelledTask) {
+      if (shouldApplyActiveProgressCancelError(
+        canClearCancelledTask,
+        requestedUserId,
+        commercialUserIdRef.current,
+      )) {
         setErrorMsg(cancelError);
         setIsGenerating(false);
       }

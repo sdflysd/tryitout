@@ -829,6 +829,23 @@ test("cancelled task state only clears when the cancelled task is still attached
   assert.equal(appModule.shouldClearCancelledCommercialTaskState("task_1", undefined), false);
 });
 
+test("active-progress cancel errors only apply while the cancelled task and user are current", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldApplyActiveProgressCancelError?: (
+      canClearCancelledTask: boolean,
+      requestedUserId: string | undefined,
+      currentUserId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.shouldApplyActiveProgressCancelError, "function");
+
+  assert.equal(appModule.shouldApplyActiveProgressCancelError(true, "user_1", "user_1"), true);
+  assert.equal(appModule.shouldApplyActiveProgressCancelError(false, "user_1", "user_1"), false);
+  assert.equal(appModule.shouldApplyActiveProgressCancelError(true, "user_1", "user_2"), false);
+  assert.equal(appModule.shouldApplyActiveProgressCancelError(true, "user_1", undefined), false);
+});
+
 test("commercial task watcher invalidates only after successful cancel for the attached task", async () => {
   const appModule = await import("./App.js") as typeof import("./App.js") & {
     shouldInvalidateCommercialTaskWatcherAfterCancel?: (
