@@ -530,7 +530,7 @@ export function resolveCommercialTaskWatcherAfterUserChange(
   if (previousUserId === nextUserId) {
     return currentToken;
   }
-  if (previousUserId === undefined && nextUserId && currentToken?.userId === undefined) {
+  if (previousUserId === undefined && nextUserId && currentToken !== undefined && currentToken.userId === undefined) {
     return { ...currentToken, userId: nextUserId };
   }
   return undefined;
@@ -601,7 +601,7 @@ export function resolveCommercialTaskStartAfterUserChange(
   if (previousUserId === nextUserId) {
     return currentToken;
   }
-  if (previousUserId === undefined && nextUserId && currentToken?.userId === undefined) {
+  if (previousUserId === undefined && nextUserId && currentToken !== undefined && currentToken.userId === undefined) {
     return { ...currentToken, userId: nextUserId };
   }
   return undefined;

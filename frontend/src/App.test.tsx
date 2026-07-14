@@ -578,6 +578,11 @@ test("commercial task watcher tokens reject stale completions after attach, canc
   assert.equal(typeof appModule.isCommercialTaskWatcherCurrent, "function");
   assert.equal(typeof appModule.resolveCommercialTaskWatcherAfterUserChange, "function");
 
+  assert.equal(
+    appModule.resolveCommercialTaskWatcherAfterUserChange(undefined, undefined, "user_1"),
+    undefined,
+  );
+
   const first = appModule.createCommercialTaskWatcherToken(0, "task_1", "user_1");
   const second = appModule.createCommercialTaskWatcherToken(first.sequence, "task_2", "user_1");
 
@@ -704,6 +709,11 @@ test("commercial task start tokens reject stale creation callbacks after user ch
   assert.equal(typeof appModule.createCommercialTaskStartToken, "function");
   assert.equal(typeof appModule.isCommercialTaskStartCurrent, "function");
   assert.equal(typeof appModule.resolveCommercialTaskStartAfterUserChange, "function");
+
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(undefined, undefined, "user_1"),
+    undefined,
+  );
 
   const first = appModule.createCommercialTaskStartToken(0, "user_1");
   const second = appModule.createCommercialTaskStartToken(first.sequence, "user_1");
