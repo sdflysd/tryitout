@@ -38,6 +38,11 @@ type TaskCenterCopy = {
   retry: string;
   cancel: string;
   report: string;
+  progressActionLabel: (taskId: string) => string;
+  retryActionLabel: (taskId: string) => string;
+  cancelActionLabel: (taskId: string) => string;
+  reportActionLabel: (taskId: string) => string;
+  progressbarLabel: (taskId: string) => string;
   mode: Record<SimulationTaskStatusResponse["mode"], string>;
   scenario: Record<SimulationTaskStatusResponse["scenarioType"], string>;
   status: Record<SimulationTaskStatus, string>;
@@ -55,6 +60,11 @@ const TASK_CENTER_COPY = {
     retry: "重试",
     cancel: "取消",
     report: "报告",
+    progressActionLabel: (taskId: string) => `查看任务进度 ${taskId}`,
+    retryActionLabel: (taskId: string) => `重试任务 ${taskId}`,
+    cancelActionLabel: (taskId: string) => `取消任务 ${taskId}`,
+    reportActionLabel: (taskId: string) => `查看报告 ${taskId}`,
+    progressbarLabel: (taskId: string) => `任务进度 ${taskId}`,
     mode: {
       enabled: "智能体",
       legacy: "基础",
@@ -85,6 +95,11 @@ const TASK_CENTER_COPY = {
     retry: "Retry",
     cancel: "Cancel",
     report: "Report",
+    progressActionLabel: (taskId: string) => `View progress ${taskId}`,
+    retryActionLabel: (taskId: string) => `Retry task ${taskId}`,
+    cancelActionLabel: (taskId: string) => `Cancel task ${taskId}`,
+    reportActionLabel: (taskId: string) => `View report ${taskId}`,
+    progressbarLabel: (taskId: string) => `Task progress ${taskId}`,
     mode: {
       enabled: "Agent",
       legacy: "Basic",
@@ -168,7 +183,7 @@ export default function TaskCenter({
       {error && (
         <div className="mt-3 flex items-start gap-2 rounded-2xl border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-100">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>{copy.errorPrefix}: {error}</span>
+          <span className="min-w-0 break-words">{copy.errorPrefix}: {error}</span>
         </div>
       )}
 
@@ -204,7 +219,7 @@ function renderTaskRow({
   onViewReport: (task: SimulationTaskStatusResponse) => void;
 }) {
   const canViewProgress = task.status !== "completed";
-  const canRetry = task.status === "queued" || task.recoverable || task.status === "recoverable_failed";
+  const canRetry = task.status === "queued" || task.recoverable;
   const canCancel = task.status === "running" || task.status === "paused";
   const canViewReport = task.status === "completed";
   const progressPercent = clampProgress(task.progressPercent);
@@ -243,6 +258,7 @@ function renderTaskRow({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progressPercent}
+            aria-label={copy.progressbarLabel(task.simulationId)}
             className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/10"
           >
             <div
@@ -261,6 +277,7 @@ function renderTaskRow({
           <TaskActionButton
             id={`btn-task-progress-${task.simulationId}`}
             label={copy.progress}
+            accessibleLabel={copy.progressActionLabel(task.simulationId)}
             tone="neutral"
             onClick={() => onViewProgress(task)}
             icon={<Activity className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -270,6 +287,7 @@ function renderTaskRow({
           <TaskActionButton
             id={`btn-task-retry-${task.simulationId}`}
             label={copy.retry}
+            accessibleLabel={copy.retryActionLabel(task.simulationId)}
             tone="amber"
             onClick={() => onRetry(task)}
             icon={<RefreshCcw className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -279,6 +297,7 @@ function renderTaskRow({
           <TaskActionButton
             id={`btn-task-cancel-${task.simulationId}`}
             label={copy.cancel}
+            accessibleLabel={copy.cancelActionLabel(task.simulationId)}
             tone="rose"
             onClick={() => onCancel(task)}
             icon={<XCircle className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -288,6 +307,7 @@ function renderTaskRow({
           <TaskActionButton
             id={`btn-task-report-${task.simulationId}`}
             label={copy.report}
+            accessibleLabel={copy.reportActionLabel(task.simulationId)}
             tone="emerald"
             onClick={() => onViewReport(task)}
             icon={<FileText className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -304,12 +324,14 @@ function renderTaskRow({
 function TaskActionButton({
   id,
   label,
+  accessibleLabel,
   tone,
   icon,
   onClick,
 }: {
   id: string;
   label: string;
+  accessibleLabel: string;
   tone: "neutral" | "amber" | "rose" | "emerald";
   icon: React.ReactNode;
   onClick: () => void;
@@ -326,8 +348,8 @@ function TaskActionButton({
       id={id}
       type="button"
       onClick={onClick}
-      aria-label={label}
-      title={label}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
       className={`inline-flex h-9 min-w-9 items-center justify-center gap-1.5 rounded-xl border px-2.5 text-[11px] font-black transition-colors ${toneClass}`}
     >
       {icon}
