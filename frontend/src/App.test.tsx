@@ -554,16 +554,18 @@ test("commercial task reports can be converted into history simulations", async 
   assert.equal(simulation.report.projectName, "测试报告 sim_report");
 });
 
-test("commercial task watcher tokens reject stale completions after attach or cancel", async () => {
-  type WatcherToken = { sequence: number; simulationId: string };
+test("commercial task watcher tokens reject stale completions after attach, cancel, or user changes", async () => {
+  type WatcherToken = { sequence: number; simulationId: string; userId?: string };
   const appModule = await import("./App.js") as typeof import("./App.js") & {
     createCommercialTaskWatcherToken?: (
       previousSequence: number,
       simulationId: string,
+      userId?: string,
     ) => WatcherToken;
     isCommercialTaskWatcherCurrent?: (
       currentToken: WatcherToken | undefined,
       token: WatcherToken,
+      currentUserId: string | undefined,
     ) => boolean;
     resolveCommercialTaskWatcherAfterUserChange?: (
       currentToken: WatcherToken | undefined,
@@ -576,17 +578,35 @@ test("commercial task watcher tokens reject stale completions after attach or ca
   assert.equal(typeof appModule.isCommercialTaskWatcherCurrent, "function");
   assert.equal(typeof appModule.resolveCommercialTaskWatcherAfterUserChange, "function");
 
-  const first = appModule.createCommercialTaskWatcherToken(0, "task_1");
-  const second = appModule.createCommercialTaskWatcherToken(first.sequence, "task_2");
+  const first = appModule.createCommercialTaskWatcherToken(0, "task_1", "user_1");
+  const second = appModule.createCommercialTaskWatcherToken(first.sequence, "task_2", "user_1");
 
-  assert.equal(appModule.isCommercialTaskWatcherCurrent(first, first), true);
-  assert.equal(appModule.isCommercialTaskWatcherCurrent(second, first), false);
-  assert.equal(appModule.isCommercialTaskWatcherCurrent(undefined, first), false);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(first, first, "user_1"), true);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(second, first, "user_1"), false);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(first, first, "user_2"), false);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(undefined, first, "user_1"), false);
   assert.equal(
     appModule.isCommercialTaskWatcherCurrent(
-      { sequence: first.sequence, simulationId: "task_2" },
+      { sequence: first.sequence, simulationId: "task_2", userId: "user_1" },
       first,
+      "user_1",
     ),
+    false,
+  );
+  const bootstrap = appModule.createCommercialTaskWatcherToken(0, "task_bootstrap");
+  const resolvedBootstrap = appModule.resolveCommercialTaskWatcherAfterUserChange(
+    bootstrap,
+    undefined,
+    "user_1",
+  );
+
+  assert.equal(resolvedBootstrap?.userId, "user_1");
+  assert.equal(
+    appModule.isCommercialTaskWatcherCurrent(resolvedBootstrap, bootstrap, "user_1"),
+    true,
+  );
+  assert.equal(
+    appModule.isCommercialTaskWatcherCurrent(resolvedBootstrap, bootstrap, "user_2"),
     false,
   );
   assert.equal(

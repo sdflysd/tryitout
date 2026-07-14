@@ -487,24 +487,39 @@ export function buildCommercialSimulationTaskRequest(
 type CommercialTaskWatcherToken = {
   sequence: number;
   simulationId: string;
+  userId?: string;
 };
 
 export function createCommercialTaskWatcherToken(
   previousSequence: number,
   simulationId: string,
+  userId?: string,
 ): CommercialTaskWatcherToken {
   return {
     sequence: previousSequence + 1,
     simulationId,
+    ...(userId ? { userId } : {}),
   };
 }
 
 export function isCommercialTaskWatcherCurrent(
   currentToken: CommercialTaskWatcherToken | undefined,
   token: CommercialTaskWatcherToken,
+  currentUserId: string | undefined,
 ): boolean {
-  return currentToken?.sequence === token.sequence &&
-    currentToken.simulationId === token.simulationId;
+  if (
+    currentToken?.sequence !== token.sequence ||
+    currentToken.simulationId !== token.simulationId
+  ) {
+    return false;
+  }
+  if (token.userId) {
+    return currentToken.userId === token.userId && token.userId === currentUserId;
+  }
+  if (currentToken.userId) {
+    return currentToken.userId === currentUserId;
+  }
+  return currentUserId === undefined;
 }
 
 export function resolveCommercialTaskWatcherAfterUserChange(
@@ -512,7 +527,13 @@ export function resolveCommercialTaskWatcherAfterUserChange(
   previousUserId: string | undefined,
   nextUserId: string | undefined,
 ): CommercialTaskWatcherToken | undefined {
-  return previousUserId === nextUserId ? currentToken : undefined;
+  if (previousUserId === nextUserId) {
+    return currentToken;
+  }
+  if (previousUserId === undefined && nextUserId && currentToken?.userId === undefined) {
+    return { ...currentToken, userId: nextUserId };
+  }
+  return undefined;
 }
 
 type CommercialTaskRefreshToken = {
@@ -888,6 +909,7 @@ export default function App({
     const token = createCommercialTaskWatcherToken(
       commercialTaskWatcherSequenceRef.current,
       simulationId,
+      commercialUserIdRef.current,
     );
     commercialTaskWatcherSequenceRef.current = token.sequence;
     activeCommercialTaskWatcherRef.current = token;
@@ -904,7 +926,11 @@ export default function App({
   };
 
   const isActiveCommercialTaskWatcher = (token: CommercialTaskWatcherToken): boolean =>
-    isCommercialTaskWatcherCurrent(activeCommercialTaskWatcherRef.current, token);
+    isCommercialTaskWatcherCurrent(
+      activeCommercialTaskWatcherRef.current,
+      token,
+      commercialUserIdRef.current,
+    );
 
   const beginCommercialTaskReport = (simulationId: string): CommercialTaskReportToken => {
     const token = createCommercialTaskReportToken(
