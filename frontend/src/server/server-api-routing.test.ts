@@ -30,6 +30,13 @@ test("server returns JSON 404 for unmatched API routes before frontend routing",
   assert.match(source.slice(fallbackIndex, frontendRoutingIndex), /API route not found/);
 });
 
+test("server registers simulation task collection routes", () => {
+  const serverSource = readServerSource();
+
+  assert.match(serverSource, /app\.get\("\/api\/simulation-tasks"/);
+  assert.match(serverSource, /app\.post\("\/api\/simulation-tasks"/);
+});
+
 test("server gates admin page routes before frontend routing", () => {
   const source = readServerSource();
   const guardIndex = source.indexOf('app.get(["/admin", "/admin/*"]');

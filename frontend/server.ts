@@ -34,6 +34,7 @@ import {
   handleGetMeRequest,
   handleGetModelProviderRequest,
   handleGetPlatformModelsRequest,
+  handleListCommercialTasksRequest,
   handleLoginRequest,
   handleLogoutRequest,
   handleRedeemAccessCodeRequest,
@@ -382,6 +383,26 @@ app.post("/api/life-choice/structure", async (req, res) => {
     getGateway: getAiGateway,
   });
   res.status(result.status).json(result.body);
+});
+
+app.get("/api/simulation-tasks", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) !== "commercial_task") {
+    return res.status(404).json({
+      error: "Commercial task listing is unavailable",
+      code: "commercial_task_listing_unavailable",
+    });
+  }
+  if (!commercialServices.enabled) {
+    return res.status(503).json({
+      error: "Commercial services are unavailable",
+      code: "commercial_services_unavailable",
+    });
+  }
+  const result = await handleListCommercialTasksRequest(
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  sendCommercialApiResult(res, result);
 });
 
 app.post("/api/simulation-tasks", async (req, res) => {
