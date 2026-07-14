@@ -5,6 +5,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import HomeView from "./HomeView.js";
 import type { Simulation, SimulationType, UserInput } from "../types.js";
+import type { SimulationTaskStatusResponse } from "../contracts/simulation-task.js";
+
+function makeTask(
+  overrides: Partial<SimulationTaskStatusResponse> = {},
+): SimulationTaskStatusResponse {
+  return {
+    simulationId: "task_1",
+    scenarioType: "side_hustle",
+    mode: "enabled",
+    status: "queued",
+    progressPercent: 0,
+    recoverable: false,
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 test("homepage hero uses concise decision-sandbox advertising copy", () => {
   const html = renderToStaticMarkup(
@@ -83,6 +99,24 @@ test("homepage renders the approved immersive toolbench layout", () => {
   assert.match(html, /data-draggable="true"/);
   assert.match(html, /真实 3D/);
   assert.doesNotMatch(html, /360° 立体拖拽/);
+});
+
+test("homepage renders the commercial task center before local history", () => {
+  const html = renderToStaticMarkup(
+    <HomeView
+      onStart={() => undefined}
+      onSelectHistory={() => undefined}
+      historyList={[]}
+      onSelectTemplate={() => undefined}
+      commercialTasks={[makeTask({ simulationId: "task_1", status: "queued" })]}
+      onTaskViewProgress={() => undefined}
+      onTaskRetry={() => undefined}
+      onTaskCancel={() => undefined}
+      onTaskViewReport={() => undefined}
+    />,
+  );
+
+  assert.match(html, /task-center-row-task_1/);
 });
 
 test("homepage keeps real examples directly under the scenario cards", () => {

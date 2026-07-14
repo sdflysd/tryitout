@@ -3,8 +3,9 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { ModelSelection, Simulation, UserInput } from "./types.js";
+import type { ModelSelection, Simulation, SimulationApiResponse, UserInput } from "./types.js";
 import type { PublicModelProviderDto } from "./commercial-client.js";
+import type { SimulationTaskStatusResponse } from "./contracts/simulation-task.js";
 
 test("simulation request body defaults interaction mode to legacy", async () => {
   const { buildSimulationRequestBody } = await import("./simulation-request.js");
@@ -531,6 +532,28 @@ test("commercial active task elapsed time uses persisted queue and start timesta
   }, now), 7 * 60 * 1000);
 });
 
+test("commercial task reports can be converted into history simulations", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    buildCommercialTaskReportSimulation?: (
+      task: SimulationTaskStatusResponse,
+      report: SimulationApiResponse,
+    ) => Simulation;
+  };
+
+  assert.equal(typeof appModule.buildCommercialTaskReportSimulation, "function");
+
+  const simulation = appModule.buildCommercialTaskReportSimulation(
+    makeTask({ simulationId: "task_report", scenarioType: "dating", mode: "enabled" }),
+    makeApiResponse("sim_report"),
+  );
+
+  assert.equal(simulation.id, "sim_report");
+  assert.equal(simulation.type, "dating");
+  assert.deepEqual(simulation.userInput, { type: "dating" });
+  assert.equal(simulation.interactionModeUsed, "enabled");
+  assert.equal(simulation.report.projectName, "测试报告 sim_report");
+});
+
 test("model configuration path only shows admin-enabled platform models", async () => {
   const { default: App } = await import("./App.js");
   const originalLocation = globalThis.location;
@@ -682,6 +705,53 @@ function makeSimulation(id: string, createdAt = "2026-07-04T00:00:00.000Z"): Sim
       actionPlan7Days: [],
       shouldDo: "test_small",
     },
+  };
+}
+
+function makeApiResponse(id: string): SimulationApiResponse {
+  return {
+    id,
+    status: "completed",
+    agents: [],
+    stages: [],
+    createdAt: "2026-07-04T00:00:00.000Z",
+    interactionModeUsed: "enabled",
+    report: {
+      projectName: `测试报告 ${id}`,
+      successProbability: 50,
+      expectedRevenue: "0 元",
+      riskLevel: "medium",
+      finalRecommendation: "先小范围测试",
+      scores: {
+        demandStrength: 50,
+        willingnessToPay: 50,
+        acquisitionDifficulty: 50,
+        competitionPressure: 50,
+        executionFit: 50,
+        monetizationClarity: 50,
+      },
+      finalOutcome: "可继续观察",
+      opportunities: [],
+      risks: [],
+      pivotSuggestions: [],
+      actionPlan7Days: [],
+      shouldDo: "test_small",
+    },
+  };
+}
+
+function makeTask(
+  overrides: Partial<SimulationTaskStatusResponse> = {},
+): SimulationTaskStatusResponse {
+  return {
+    simulationId: "task_1",
+    scenarioType: "side_hustle",
+    mode: "enabled",
+    status: "queued",
+    progressPercent: 0,
+    recoverable: false,
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    ...overrides,
   };
 }
 

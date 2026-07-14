@@ -55,6 +55,8 @@ import {
 import {
   cancelSimulationTask,
   fetchActiveSimulationTask,
+  fetchSimulationTasks,
+  getSimulationTaskReport,
   isRecoverableSimulationTaskError,
   resumeSimulationTaskUntilComplete,
   runSimulationTaskUntilComplete,
@@ -66,6 +68,7 @@ import {
   Simulation,
   UserInput,
   SimulationType,
+  SimulationApiResponse,
   SimulationProgressEvent,
 } from "./types";
 import { postValidationEvent } from "./validation-events";
@@ -481,6 +484,24 @@ export function buildCommercialSimulationTaskRequest(
   };
 }
 
+export function buildCommercialTaskReportSimulation(
+  task: Pick<SimulationTaskStatusResponse, "scenarioType" | "mode">,
+  report: SimulationApiResponse,
+): Simulation {
+  return {
+    id: report.id,
+    type: task.scenarioType,
+    userInput: { type: task.scenarioType },
+    agents: report.agents,
+    stages: report.stages,
+    report: report.report,
+    createdAt: report.createdAt,
+    interactionModeUsed: report.interactionModeUsed ?? task.mode,
+    runtimeDiagnostics: report.runtimeDiagnostics,
+    routeComparison: report.routeComparison,
+  };
+}
+
 export function getCommercialPostAuthPath(): string {
   return "/";
 }
@@ -547,6 +568,9 @@ export default function App({
   const [commercialStatus, setCommercialStatus] = useState("");
   const [commercialError, setCommercialError] = useState("");
   const [commercialStartAttempted, setCommercialStartAttempted] = useState(false);
+  const [commercialTasks, setCommercialTasks] = useState<SimulationTaskStatusResponse[]>([]);
+  const [commercialTasksLoading, setCommercialTasksLoading] = useState(false);
+  const [commercialTasksError, setCommercialTasksError] = useState("");
   const [recoverableSimulationId, setRecoverableSimulationId] = useState<string | undefined>(undefined);
   const [attachedCommercialTaskId, setAttachedCommercialTaskId] = useState<string | undefined>(undefined);
   const [progressElapsedStartMs, setProgressElapsedStartMs] = useState<number | undefined>(undefined);
@@ -678,6 +702,28 @@ export default function App({
     setCommercialModelProvider(modelProvider.provider);
   };
 
+  const refreshCommercialTasks = async () => {
+    if (!commercialUser) {
+      setCommercialTasks([]);
+      setCommercialTasksLoading(false);
+      setCommercialTasksError("");
+      return;
+    }
+    setCommercialTasksLoading(true);
+    setCommercialTasksError("");
+    try {
+      setCommercialTasks(await fetchSimulationTasks());
+    } catch (error) {
+      setCommercialTasksError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCommercialTasksLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshCommercialTasks();
+  }, [commercialUser?.id]);
+
   const handleTaskProgressEvent = (event: SimulationProgressEvent) => {
     setProgressEvent(event);
     setAttachedCommercialTaskId(event.simulationId);
@@ -686,6 +732,78 @@ export default function App({
     if (elapsedStartMs !== undefined) {
       setProgressElapsedStartMs(elapsedStartMs);
     }
+  };
+
+  const attachCommercialTaskProgress = (
+    task: SimulationTaskStatusResponse,
+    { scrollOnView = false }: { scrollOnView?: boolean } = {},
+  ): number => {
+    const elapsedStartMs = getCommercialTaskElapsedStartMs(task) ?? Date.now();
+    const progressMessage =
+      task.progressMessage ||
+      (task.status === "queued"
+        ? appCopy.commercialStatus.activeQueued
+        : appCopy.commercialStatus.activeStarted);
+
+    setAttachedCommercialTaskId(task.simulationId);
+    setSelectedType(task.scenarioType);
+    setErrorMsg("");
+    setRecoverableSimulationId(
+      task.status === "queued" || task.status === "recoverable_failed"
+        ? task.simulationId
+        : undefined,
+    );
+    setProgressElapsedStartMs(elapsedStartMs);
+    setActiveSimulationRequest({
+      userInput: { type: task.scenarioType },
+      deepModeRequested: task.mode === "enabled",
+      startedAt: elapsedStartMs,
+    });
+    setProgressEvent({
+      simulationId: task.simulationId,
+      step: "generate_agents",
+      status: task.status === "queued" ? "queued" : "started",
+      percent: task.progressPercent,
+      message: progressMessage,
+      createdAt: getCommercialTaskElapsedTimestamp(task),
+    });
+    setIsGenerating(true);
+    setView("generating");
+    if (scrollOnView) {
+      scrollToTopForViewChange();
+    }
+
+    return elapsedStartMs;
+  };
+
+  const watchCommercialTaskFromStatus = (
+    task: SimulationTaskStatusResponse,
+    { scrollOnView = false }: { scrollOnView?: boolean } = {},
+  ) => {
+    const elapsedStartMs = attachCommercialTaskProgress(task, { scrollOnView });
+    if (task.status === "recoverable_failed") {
+      setErrorMsg(task.errorCode || "simulation task can be resumed");
+      setIsGenerating(false);
+      return;
+    }
+
+    void watchSimulationTaskUntilComplete(task.simulationId, {
+      onProgress: handleTaskProgressEvent,
+    })
+      .then((data) => {
+        handleSimulationCompleted(data, { type: task.scenarioType }, {
+          startedAt: elapsedStartMs,
+          deepModeRequested: task.mode === "enabled",
+        });
+        setAttachedCommercialTaskId(undefined);
+      })
+      .catch((error) => {
+        handleSimulationFailed(error, { type: task.scenarioType }, {
+          startedAt: elapsedStartMs,
+          deepModeRequested: task.mode === "enabled",
+        });
+        setAttachedCommercialTaskId(undefined);
+      });
   };
 
   async function attachActiveCommercialTask() {
@@ -697,55 +815,7 @@ export default function App({
       return;
     }
 
-    setAttachedCommercialTaskId(activeTask.simulationId);
-    setSelectedType(activeTask.scenarioType);
-    setErrorMsg("");
-    setRecoverableSimulationId(
-      activeTask.status === "queued" || activeTask.status === "recoverable_failed"
-        ? activeTask.simulationId
-        : undefined,
-    );
-    const elapsedStartMs = getCommercialTaskElapsedStartMs(activeTask) ?? Date.now();
-    setProgressElapsedStartMs(elapsedStartMs);
-    setActiveSimulationRequest({
-      userInput: { type: activeTask.scenarioType },
-      deepModeRequested: activeTask.mode === "enabled",
-      startedAt: elapsedStartMs,
-    });
-    setProgressEvent({
-      simulationId: activeTask.simulationId,
-      step: "generate_agents",
-      status: activeTask.status === "queued" ? "queued" : "started",
-      percent: activeTask.progressPercent,
-      message: activeTask.status === "queued"
-        ? appCopy.commercialStatus.activeQueued
-        : appCopy.commercialStatus.activeStarted,
-      createdAt: getCommercialTaskElapsedTimestamp(activeTask),
-    });
-    setIsGenerating(true);
-    setView("generating");
-    if (activeTask.status === "recoverable_failed") {
-      setErrorMsg(activeTask.errorCode || "simulation task can be resumed");
-      setIsGenerating(false);
-      return;
-    }
-    void watchSimulationTaskUntilComplete(activeTask.simulationId, {
-      onProgress: handleTaskProgressEvent,
-    })
-      .then((data) => {
-        handleSimulationCompleted(data, { type: activeTask.scenarioType }, {
-          startedAt: elapsedStartMs,
-          deepModeRequested: activeTask.mode === "enabled",
-        });
-        setAttachedCommercialTaskId(undefined);
-      })
-      .catch((error) => {
-        handleSimulationFailed(error, { type: activeTask.scenarioType }, {
-          startedAt: elapsedStartMs,
-          deepModeRequested: activeTask.mode === "enabled",
-        });
-        setAttachedCommercialTaskId(undefined);
-      });
+    watchCommercialTaskFromStatus(activeTask);
   }
 
   useEffect(() => {
@@ -919,7 +989,10 @@ export default function App({
           createIdempotencyKey: buildCommercialTaskIdempotencyKey,
         }),
         {
-          onCreated: (created) => setAttachedCommercialTaskId(created.simulationId),
+          onCreated: (created) => {
+            setAttachedCommercialTaskId(created.simulationId);
+            void refreshCommercialTasks();
+          },
           onProgress: handleTaskProgressEvent,
         },
       );
@@ -940,6 +1013,37 @@ export default function App({
     }
   };
 
+  const resumeCommercialSimulationTask = async (
+    simulationId: string,
+    request: {
+      userInput: UserInput;
+      deepModeRequested: boolean;
+      startedAt: number;
+    },
+  ) => {
+    setErrorMsg("");
+    setIsGenerating(true);
+    setView("generating");
+    scrollToTopForViewChange();
+    const resumedAt = Date.now();
+    setProgressElapsedStartMs(request.startedAt);
+
+    try {
+      const data = await resumeSimulationTaskUntilComplete(simulationId, {
+        onProgress: handleTaskProgressEvent,
+      });
+      handleSimulationCompleted(data, request.userInput, {
+        startedAt: request.startedAt,
+        deepModeRequested: request.deepModeRequested,
+      });
+    } catch (err: any) {
+      handleSimulationFailed(err, request.userInput, {
+        startedAt: resumedAt,
+        deepModeRequested: request.deepModeRequested,
+      });
+    }
+  };
+
   const handleResumeSimulation = async () => {
     if (!recoverableSimulationId || !activeSimulationRequest) {
       setView("input");
@@ -948,27 +1052,7 @@ export default function App({
       return;
     }
 
-    setErrorMsg("");
-    setIsGenerating(true);
-    setView("generating");
-    scrollToTopForViewChange();
-    const resumedAt = Date.now();
-    setProgressElapsedStartMs(activeSimulationRequest.startedAt);
-
-    try {
-      const data = await resumeSimulationTaskUntilComplete(recoverableSimulationId, {
-        onProgress: handleTaskProgressEvent,
-      });
-      handleSimulationCompleted(data, activeSimulationRequest.userInput, {
-        startedAt: activeSimulationRequest.startedAt,
-        deepModeRequested: activeSimulationRequest.deepModeRequested,
-      });
-    } catch (err: any) {
-      handleSimulationFailed(err, activeSimulationRequest.userInput, {
-        startedAt: resumedAt,
-        deepModeRequested: activeSimulationRequest.deepModeRequested,
-      });
-    }
+    await resumeCommercialSimulationTask(recoverableSimulationId, activeSimulationRequest);
   };
 
   const handleCancelProgress = async () => {
@@ -990,6 +1074,7 @@ export default function App({
           .then(({ account }) => setCommercialAccount(account))
           .catch(() => undefined);
       }
+      void refreshCommercialTasks();
     }
     setView("input");
     setErrorMsg("");
@@ -1043,6 +1128,7 @@ export default function App({
     setProgressEvent(null);
     setProgressElapsedStartMs(undefined);
     setView("report");
+    void refreshCommercialTasks();
     scrollToTopForViewChange();
   };
 
@@ -1080,6 +1166,7 @@ export default function App({
     setErrorMsg(message);
     setIsGenerating(false);
     setProgressElapsedStartMs(undefined);
+    void refreshCommercialTasks();
   };
 
   const handleSelectHistory = (simulation: Simulation) => {
@@ -1133,6 +1220,87 @@ export default function App({
     setSelectedType(input.type);
     setTemplateInput(input);
     void handleStartSimulation(input);
+  };
+
+  const handleViewTaskProgress = (task: SimulationTaskStatusResponse) => {
+    setCommercialStartAttempted(false);
+    watchCommercialTaskFromStatus(task, { scrollOnView: true });
+  };
+
+  const handleRetryTask = async (task: SimulationTaskStatusResponse) => {
+    setCommercialStartAttempted(false);
+    const startedAt = attachCommercialTaskProgress(task, { scrollOnView: true });
+    const request = {
+      userInput: { type: task.scenarioType } as UserInput,
+      deepModeRequested: task.mode === "enabled",
+      startedAt,
+    };
+    setRecoverableSimulationId(task.simulationId);
+    setActiveSimulationRequest(request);
+
+    try {
+      await resumeCommercialSimulationTask(task.simulationId, request);
+    } finally {
+      await refreshCommercialTasks();
+    }
+  };
+
+  const handleCancelTaskFromList = async (task: SimulationTaskStatusResponse) => {
+    let cancelError = "";
+    try {
+      await cancelSimulationTask(task.simulationId);
+      if (attachedCommercialTaskId === task.simulationId) {
+        setAttachedCommercialTaskId(undefined);
+        setRecoverableSimulationId(undefined);
+        setProgressEvent(null);
+        setProgressElapsedStartMs(undefined);
+        setErrorMsg("");
+        setIsGenerating(false);
+        if (view === "generating") {
+          setView("input");
+        }
+      }
+      if (commercialUser) {
+        void fetchCommercialCredits()
+          .then(({ account }) => setCommercialAccount(account))
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      cancelError = getCommercialErrorMessage(error);
+    } finally {
+      await refreshCommercialTasks();
+      if (cancelError) {
+        setCommercialTasksError(cancelError);
+      }
+    }
+  };
+
+  const handleViewTaskReport = async (task: SimulationTaskStatusResponse) => {
+    setCommercialStartAttempted(false);
+    setCommercialTasksError("");
+    try {
+      const response = await getSimulationTaskReport(task.simulationId);
+      if (!response.report) {
+        throw new Error(response.error || "simulation report not ready");
+      }
+
+      const simulation = buildCommercialTaskReportSimulation(task, response.report);
+      setCurrentSimulation(simulation);
+      saveToHistory(simulation);
+      setShowShareCard(false);
+      setDeepModeNotice("");
+      setRecoverableSimulationId(undefined);
+      setAttachedCommercialTaskId(undefined);
+      setProgressEvent(null);
+      setProgressElapsedStartMs(undefined);
+      setIsGenerating(false);
+      setView("report");
+      scrollToTopForViewChange();
+    } catch (error) {
+      setCommercialTasksError(getCommercialErrorMessage(error));
+    } finally {
+      void refreshCommercialTasks();
+    }
   };
 
   const handleCommercialLogin = async (input: CommercialCredentialsDto) => {
@@ -1454,6 +1622,22 @@ export default function App({
                 onContinueDraft={handleEditInput}
                 onDeleteHistory={handleDeleteHistory}
                 language={language}
+                commercialTasks={commercialTasks}
+                commercialTasksLoading={commercialTasksLoading}
+                commercialTasksError={commercialTasksError}
+                onRefreshCommercialTasks={() => {
+                  void refreshCommercialTasks();
+                }}
+                onTaskViewProgress={handleViewTaskProgress}
+                onTaskRetry={(task) => {
+                  void handleRetryTask(task);
+                }}
+                onTaskCancel={(task) => {
+                  void handleCancelTaskFromList(task);
+                }}
+                onTaskViewReport={(task) => {
+                  void handleViewTaskReport(task);
+                }}
               />
             </motion.div>
           )}

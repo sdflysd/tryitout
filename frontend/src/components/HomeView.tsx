@@ -2,9 +2,11 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { AlertCircle, ArrowRight, Compass, Flame, Heart, History, PencilLine, Play, Sparkles, Trash2 } from "lucide-react";
 import { Simulation, SimulationType, UserInput } from "../types";
+import type { SimulationTaskStatusResponse } from "../contracts/simulation-task";
 import { DEFAULT_LANGUAGE, Language } from "../language";
 import { postValidationEvent } from "../validation-events";
 import AgentSandboxPreview from "./AgentSandboxPreview";
+import TaskCenter from "./TaskCenter";
 import { getHomeHeroCopy } from "./home-copy";
 import { getPrivacySafetyCopy } from "./privacy-copy";
 
@@ -17,6 +19,14 @@ interface HomeViewProps {
   onContinueDraft?: (input: UserInput) => void;
   onDeleteHistory?: (simulationId: string) => void;
   language?: Language;
+  commercialTasks?: SimulationTaskStatusResponse[];
+  commercialTasksLoading?: boolean;
+  commercialTasksError?: string;
+  onRefreshCommercialTasks?: () => void;
+  onTaskViewProgress?: (task: SimulationTaskStatusResponse) => void;
+  onTaskRetry?: (task: SimulationTaskStatusResponse) => void;
+  onTaskCancel?: (task: SimulationTaskStatusResponse) => void;
+  onTaskViewReport?: (task: SimulationTaskStatusResponse) => void;
 }
 
 type TemplateItem = {
@@ -236,6 +246,14 @@ export default function HomeView({
   onContinueDraft,
   onDeleteHistory,
   language = DEFAULT_LANGUAGE,
+  commercialTasks = [],
+  commercialTasksLoading = false,
+  commercialTasksError = "",
+  onRefreshCommercialTasks,
+  onTaskViewProgress = () => undefined,
+  onTaskRetry = () => undefined,
+  onTaskCancel = () => undefined,
+  onTaskViewReport = () => undefined,
 }: HomeViewProps) {
   const [activeTab, setActiveTab] = useState<SimulationType>("side_hustle");
   const isEnglish = language === "en-US";
@@ -413,6 +431,18 @@ export default function HomeView({
               </div>
             </div>
           )}
+
+          <TaskCenter
+            tasks={commercialTasks}
+            language={language}
+            isLoading={commercialTasksLoading}
+            error={commercialTasksError}
+            onRefresh={onRefreshCommercialTasks}
+            onViewProgress={onTaskViewProgress}
+            onRetry={onTaskRetry}
+            onCancel={onTaskCancel}
+            onViewReport={onTaskViewReport}
+          />
 
           {historyList.length > 0 && (
             <div id="history-section" className="mt-10 rounded-3xl border border-white/10 bg-white/[0.055] p-6 text-left shadow-xl shadow-black/15 backdrop-blur-xl">
