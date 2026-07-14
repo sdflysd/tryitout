@@ -22,6 +22,7 @@ import {
   handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
   handleGetCommercialTaskStatusRequest,
+  handleListCommercialTasksRequest,
   handleResumeCommercialTaskRequest,
   handleGetCreditsRequest,
   handleGetMeRequest,
@@ -476,6 +477,85 @@ test("commercial task status keeps progress percent monotonic across step update
   assert.equal(status.body.task.currentStageIndex, 5);
   assert.equal(status.body.task.progressPercent, 73);
   assert.equal(status.body.task.progressMessage, "第 5 阶段 Agent 行动生成开始。");
+});
+
+test("commercial task list endpoint returns only the current user's tasks", async () => {
+  const deps = makeDeps();
+  const userOne = await createSignedInUser(deps, "one@example.com");
+  const userTwo = await createSignedInUser(deps, "two@example.com");
+
+  await deps.repository.saveCommercialTask(makeCommercialTask({
+    id: "task_user_1",
+    userId: userOne.user.id,
+    status: "queued",
+    createdAt: "2026-07-14T08:00:00.000Z",
+    updatedAt: "2026-07-14T08:00:00.000Z",
+  }));
+  await deps.repository.saveCommercialTask(makeCommercialTask({
+    id: "task_user_2",
+    userId: userTwo.user.id,
+    status: "queued",
+  }));
+
+  const result = await handleListCommercialTasksRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: userOne.cookie } }),
+    deps,
+  );
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    "tasks" in result.body ? result.body.tasks.map((task) => task.id) : [],
+    ["task_user_1"],
+  );
+});
+
+test("commercial task list endpoint decorates progress and sorts newest first", async () => {
+  const deps = makeDeps();
+  const user = await createSignedInUser(deps, "current@example.com");
+  const olderTask = makeCommercialTask({
+    id: "task_older",
+    userId: user.user.id,
+    status: "queued",
+    createdAt: "2026-07-14T07:00:00.000Z",
+    updatedAt: "2026-07-14T07:10:00.000Z",
+  });
+  const newerTask = makeCommercialTask({
+    id: "task_newer",
+    userId: user.user.id,
+    status: "running",
+    createdAt: "2026-07-14T06:00:00.000Z",
+    updatedAt: "2026-07-14T08:00:00.000Z",
+  });
+  await deps.repository.saveCommercialTask(olderTask);
+  await deps.repository.saveCommercialTask(newerTask);
+  await deps.repository.appendSimulationStepRunCost({
+    id: "simulation_step_run_list_latest",
+    taskId: newerTask.id,
+    stepName: "generate_report",
+    status: "started",
+    startedAt: "2026-07-14T08:01:00.000Z",
+    metadata: {
+      progressPercent: 86,
+      progressMessage: "Report generation started.",
+    },
+  });
+
+  const result = await handleListCommercialTasksRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: user.cookie } }),
+    deps,
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal("tasks" in result.body, true);
+  if (!("tasks" in result.body)) return;
+  assert.deepEqual(result.body.tasks.map((task) => task.id), [
+    "task_newer",
+    "task_older",
+  ]);
+  assert.equal(result.body.tasks[0]?.currentStepName, "generate_report");
+  assert.equal(result.body.tasks[0]?.progressPercent, 86);
+  assert.equal(result.body.tasks[0]?.progressMessage, "Report generation started.");
+  assert.equal(result.body.tasks[1]?.progressPercent, 5);
 });
 
 test("active commercial task endpoint returns the current user's queued task", async () => {
@@ -1668,6 +1748,27 @@ async function loginUser(deps: ReturnType<typeof makeDeps>): Promise<string> {
   return login.cookies[0].value;
 }
 
+async function createSignedInUser(
+  deps: ReturnType<typeof makeDeps>,
+  email: string,
+): Promise<{ user: Awaited<ReturnType<typeof deps.authService.register>>["user"]; cookie: string }> {
+  await registerUser(deps, email);
+  const login = await handleLoginRequest(
+    { email, password: "commercial-secret" },
+    deps,
+  );
+  assert.equal(login.status, 200);
+  assert.ok(login.cookies?.[0]);
+  assert.equal("user" in login.body, true);
+  if (!("user" in login.body)) {
+    throw new Error("login failed");
+  }
+  return {
+    user: login.body.user,
+    cookie: login.cookies[0].value,
+  };
+}
+
 async function loginAdmin(deps: ReturnType<typeof makeDeps>): Promise<string> {
   await registerUser(deps, "admin@example.test");
   const admin = await deps.repository.findUserByEmail("admin@example.test");
@@ -1802,6 +1903,24 @@ function makeUserInput(): UserInput {
     decisionContext: "Should I quit my job?",
     optionA: "Stay",
     optionB: "Quit",
+  };
+}
+
+function makeCommercialTask(
+  overrides: Partial<CommercialSimulationTaskRecord> = {},
+): CommercialSimulationTaskRecord {
+  return {
+    id: "task_test",
+    userId: "user_1",
+    scenarioType: "life_choice",
+    interactionMode: "enabled",
+    providerMode: "platform",
+    status: "queued",
+    creditCost: 3,
+    queuedAt: "2026-07-14T07:00:00.000Z",
+    createdAt: "2026-07-14T07:00:00.000Z",
+    updatedAt: "2026-07-14T07:00:00.000Z",
+    ...overrides,
   };
 }
 

@@ -1465,6 +1465,31 @@ export async function handleGetCommercialTaskStatusRequest(
   }
 }
 
+export async function handleListCommercialTasksRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ tasks: CommercialSimulationTaskStatusDto[] } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const tasks = await deps.repository.listCommercialTasks(auth.user.id);
+    const sorted = [...tasks].sort(compareCommercialTasksForUserList);
+    return {
+      status: 200,
+      body: {
+        tasks: await Promise.all(
+          sorted.map((task) => decorateTaskProgress(task, deps.repository)),
+        ),
+      },
+    };
+  } catch (error) {
+    return mapTaskError(error);
+  }
+}
+
 export async function handleGetActiveCommercialTaskRequest(
   request: CommercialApiRequest,
   deps: CommercialApiDeps,
@@ -2426,6 +2451,18 @@ function mapTaskError(
     return mapCreditError(error);
   }
   throw error;
+}
+
+function compareCommercialTasksForUserList(
+  left: CommercialSimulationTaskRecord,
+  right: CommercialSimulationTaskRecord,
+): number {
+  const leftTime = left.updatedAt || left.createdAt;
+  const rightTime = right.updatedAt || right.createdAt;
+  if (leftTime !== rightTime) {
+    return rightTime.localeCompare(leftTime);
+  }
+  return right.id.localeCompare(left.id);
 }
 
 async function decorateTaskProgress(

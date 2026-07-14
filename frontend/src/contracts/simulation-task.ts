@@ -54,6 +54,10 @@ export interface SimulationTaskStatusResponse {
   updatedAt: string;
 }
 
+export interface SimulationTaskListResponse {
+  tasks: SimulationTaskStatusResponse[];
+}
+
 export interface SimulationTaskEvent {
   type:
     | "task_started"
