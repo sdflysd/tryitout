@@ -629,6 +629,67 @@ test("commercial task refresh tokens reject stale results after user changes", a
   assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, logoutRequest, undefined), true);
 });
 
+test("commercial task start tokens reject stale creation callbacks after user changes", async () => {
+  type StartToken = { sequence: number; userId?: string };
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    createCommercialTaskStartToken?: (
+      previousSequence: number,
+      userId: string | undefined,
+    ) => StartToken;
+    isCommercialTaskStartCurrent?: (
+      currentToken: StartToken | undefined,
+      token: StartToken,
+      currentUserId: string | undefined,
+    ) => boolean;
+    resolveCommercialTaskStartAfterUserChange?: (
+      currentToken: StartToken | undefined,
+      previousUserId: string | undefined,
+      nextUserId: string | undefined,
+    ) => StartToken | undefined;
+  };
+
+  assert.equal(typeof appModule.createCommercialTaskStartToken, "function");
+  assert.equal(typeof appModule.isCommercialTaskStartCurrent, "function");
+  assert.equal(typeof appModule.resolveCommercialTaskStartAfterUserChange, "function");
+
+  const first = appModule.createCommercialTaskStartToken(0, "user_1");
+  const second = appModule.createCommercialTaskStartToken(first.sequence, "user_1");
+
+  assert.equal(appModule.isCommercialTaskStartCurrent(first, first, "user_1"), true);
+  assert.equal(appModule.isCommercialTaskStartCurrent(second, first, "user_1"), false);
+  assert.equal(appModule.isCommercialTaskStartCurrent(first, first, "user_2"), false);
+  assert.equal(appModule.isCommercialTaskStartCurrent(first, first, undefined), false);
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(first, "user_1", "user_1"),
+    first,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(first, "user_1", "user_2"),
+    undefined,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(first, "user_1", undefined),
+    undefined,
+  );
+});
+
+test("commercial user side effects only apply to the captured current user", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldApplyCommercialUserSideEffect?: (
+      requestedUserId: string | undefined,
+      currentUserId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.shouldApplyCommercialUserSideEffect, "function");
+
+  assert.equal(appModule.shouldApplyCommercialUserSideEffect("user_1", "user_1"), true);
+  assert.equal(appModule.shouldApplyCommercialUserSideEffect("user_1", "user_2"), false);
+  assert.equal(appModule.shouldApplyCommercialUserSideEffect("user_1", undefined), false);
+  assert.equal(appModule.shouldApplyCommercialUserSideEffect(undefined, "user_1"), false);
+  assert.equal(appModule.shouldApplyCommercialUserSideEffect(undefined, undefined), false);
+});
+
 test("commercial task report tokens reject stale report fetch completions", async () => {
   type ReportToken = { sequence: number; userId?: string; simulationId: string };
   const appModule = await import("./App.js") as typeof import("./App.js") & {

@@ -540,6 +540,46 @@ export function isCommercialTaskRefreshCurrent(
     token.userId === currentUserId;
 }
 
+type CommercialTaskStartToken = {
+  sequence: number;
+  userId?: string;
+};
+
+export function createCommercialTaskStartToken(
+  previousSequence: number,
+  userId: string | undefined,
+): CommercialTaskStartToken {
+  return {
+    sequence: previousSequence + 1,
+    ...(userId ? { userId } : {}),
+  };
+}
+
+export function isCommercialTaskStartCurrent(
+  currentToken: CommercialTaskStartToken | undefined,
+  token: CommercialTaskStartToken,
+  currentUserId: string | undefined,
+): boolean {
+  return currentToken?.sequence === token.sequence &&
+    currentToken.userId === token.userId &&
+    token.userId === currentUserId;
+}
+
+export function resolveCommercialTaskStartAfterUserChange(
+  currentToken: CommercialTaskStartToken | undefined,
+  previousUserId: string | undefined,
+  nextUserId: string | undefined,
+): CommercialTaskStartToken | undefined {
+  return previousUserId === nextUserId ? currentToken : undefined;
+}
+
+export function shouldApplyCommercialUserSideEffect(
+  requestedUserId: string | undefined,
+  currentUserId: string | undefined,
+): boolean {
+  return Boolean(requestedUserId && requestedUserId === currentUserId);
+}
+
 type CommercialTaskReportToken = {
   sequence: number;
   userId?: string;
@@ -714,6 +754,8 @@ export default function App({
     }
   });
   const appCopy = APP_COPY[language];
+  const commercialTaskStartSequenceRef = useRef(0);
+  const activeCommercialTaskStartRef = useRef<CommercialTaskStartToken | undefined>(undefined);
   const commercialTaskWatcherSequenceRef = useRef(0);
   const activeCommercialTaskWatcherRef = useRef<CommercialTaskWatcherToken | undefined>(undefined);
   const commercialTaskRefreshSequenceRef = useRef(0);
@@ -749,6 +791,11 @@ export default function App({
   const setCommercialUserState = (user: CommercialUserDto | undefined) => {
     const previousUserId = commercialUserIdRef.current;
     const nextUserId = user?.id;
+    activeCommercialTaskStartRef.current = resolveCommercialTaskStartAfterUserChange(
+      activeCommercialTaskStartRef.current,
+      previousUserId,
+      nextUserId,
+    );
     activeCommercialTaskWatcherRef.current = resolveCommercialTaskWatcherAfterUserChange(
       activeCommercialTaskWatcherRef.current,
       previousUserId,
@@ -762,6 +809,35 @@ export default function App({
     commercialUserIdRef.current = nextUserId;
     setCommercialUser(user);
   };
+
+  const beginCommercialTaskStart = (): CommercialTaskStartToken => {
+    const token = createCommercialTaskStartToken(
+      commercialTaskStartSequenceRef.current,
+      commercialUserIdRef.current,
+    );
+    commercialTaskStartSequenceRef.current = token.sequence;
+    activeCommercialTaskStartRef.current = token;
+    return token;
+  };
+
+  const invalidateCommercialTaskStart = (token?: CommercialTaskStartToken) => {
+    if (
+      token === undefined ||
+      (
+        activeCommercialTaskStartRef.current?.sequence === token.sequence &&
+        activeCommercialTaskStartRef.current.userId === token.userId
+      )
+    ) {
+      activeCommercialTaskStartRef.current = undefined;
+    }
+  };
+
+  const isActiveCommercialTaskStart = (token: CommercialTaskStartToken): boolean =>
+    isCommercialTaskStartCurrent(
+      activeCommercialTaskStartRef.current,
+      token,
+      commercialUserIdRef.current,
+    );
 
   const beginCommercialTaskWatcher = (simulationId: string): CommercialTaskWatcherToken => {
     const token = createCommercialTaskWatcherToken(
@@ -920,6 +996,19 @@ export default function App({
     setCommercialUserState(me.user);
     setCommercialAccount(credits.account);
     setCommercialModelProvider(modelProvider.provider);
+  };
+
+  const refreshCommercialCreditsForUser = (requestedUserId: string | undefined) => {
+    if (!shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)) {
+      return;
+    }
+    void fetchCommercialCredits()
+      .then(({ account }) => {
+        if (shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)) {
+          setCommercialAccount(account);
+        }
+      })
+      .catch(() => undefined);
   };
 
   const refreshCommercialTasks = async ({
@@ -1262,6 +1351,7 @@ export default function App({
       });
     }
 
+    const startToken = beginCommercialTaskStart();
     let watcherToken: CommercialTaskWatcherToken | undefined;
     try {
       const data = await runSimulationTaskUntilComplete(
@@ -1274,36 +1364,48 @@ export default function App({
         }),
         {
           onCreated: (created) => {
+            if (!isActiveCommercialTaskStart(startToken)) {
+              return;
+            }
             watcherToken = beginCommercialTaskWatcher(created.simulationId);
             setAttachedCommercialTaskIdState(created.simulationId);
             void refreshCommercialTasks();
           },
           onProgress: (event) => {
+            if (!isActiveCommercialTaskStart(startToken)) {
+              return;
+            }
             if (!watcherToken || isActiveCommercialTaskWatcher(watcherToken)) {
               handleTaskProgressEvent(event);
             }
           },
         },
       );
-      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+      if (!isActiveCommercialTaskStart(startToken)) {
         return;
       }
+      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+        invalidateCommercialTaskStart(startToken);
+        return;
+      }
+      invalidateCommercialTaskStart(startToken);
       if (watcherToken) {
         invalidateCommercialTaskWatcher(watcherToken.simulationId);
       }
-      if (commercialUser) {
-        void fetchCommercialCredits()
-          .then(({ account }) => setCommercialAccount(account))
-          .catch(() => undefined);
-      }
+      refreshCommercialCreditsForUser(startToken.userId);
       handleSimulationCompleted(data, userInput, {
         startedAt,
         deepModeRequested,
       });
     } catch (err: any) {
-      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+      if (!isActiveCommercialTaskStart(startToken)) {
         return;
       }
+      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+        invalidateCommercialTaskStart(startToken);
+        return;
+      }
+      invalidateCommercialTaskStart(startToken);
       if (watcherToken) {
         invalidateCommercialTaskWatcher(watcherToken.simulationId);
       }
@@ -1380,6 +1482,7 @@ export default function App({
       return;
     }
 
+    const requestedUserId = commercialUserIdRef.current;
     invalidateCommercialTaskWatcher(taskId);
     const cancelError = await cancelSimulationTask(taskId)
       .then(() => undefined)
@@ -1395,11 +1498,7 @@ export default function App({
       }
       return;
     }
-    if (commercialUserIdRef.current) {
-      void fetchCommercialCredits()
-        .then(({ account }) => setCommercialAccount(account))
-        .catch(() => undefined);
-    }
+    refreshCommercialCreditsForUser(requestedUserId);
     void refreshCommercialTasks();
     if (!canClearCancelledTask) {
       return;
@@ -1580,6 +1679,7 @@ export default function App({
   const handleCancelTaskFromList = async (task: SimulationTaskStatusResponse) => {
     let cancelError = "";
     const taskId = task.simulationId;
+    const requestedUserId = commercialUserIdRef.current;
     invalidateCommercialTaskWatcher(task.simulationId);
     try {
       await cancelSimulationTask(taskId);
@@ -1594,16 +1694,17 @@ export default function App({
           setViewState("input");
         }
       }
-      if (commercialUserIdRef.current) {
-        void fetchCommercialCredits()
-          .then(({ account }) => setCommercialAccount(account))
-          .catch(() => undefined);
-      }
+      refreshCommercialCreditsForUser(requestedUserId);
     } catch (error) {
       cancelError = getCommercialErrorMessage(error);
     } finally {
-      await refreshCommercialTasks();
-      if (cancelError) {
+      if (shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)) {
+        await refreshCommercialTasks();
+      }
+      if (
+        cancelError &&
+        shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)
+      ) {
         setCommercialTasksError(cancelError);
       }
     }
