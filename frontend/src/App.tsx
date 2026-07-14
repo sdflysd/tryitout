@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { CreditCard, Flame, LogIn, ShieldCheck, Sparkles, UserRound, UserPlus } from "lucide-react";
 import AdminApp from "./admin/AdminApp";
@@ -484,12 +484,60 @@ export function buildCommercialSimulationTaskRequest(
   };
 }
 
+type CommercialTaskWatcherToken = {
+  sequence: number;
+  simulationId: string;
+};
+
+export function createCommercialTaskWatcherToken(
+  previousSequence: number,
+  simulationId: string,
+): CommercialTaskWatcherToken {
+  return {
+    sequence: previousSequence + 1,
+    simulationId,
+  };
+}
+
+export function isCommercialTaskWatcherCurrent(
+  currentToken: CommercialTaskWatcherToken | undefined,
+  token: CommercialTaskWatcherToken,
+): boolean {
+  return currentToken?.sequence === token.sequence &&
+    currentToken.simulationId === token.simulationId;
+}
+
+type CommercialTaskRefreshToken = {
+  sequence: number;
+  userId?: string;
+};
+
+export function createCommercialTaskRefreshToken(
+  previousSequence: number,
+  userId: string | undefined,
+): CommercialTaskRefreshToken {
+  return {
+    sequence: previousSequence + 1,
+    ...(userId ? { userId } : {}),
+  };
+}
+
+export function isCommercialTaskRefreshCurrent(
+  currentToken: CommercialTaskRefreshToken | undefined,
+  token: CommercialTaskRefreshToken,
+  currentUserId: string | undefined,
+): boolean {
+  return currentToken?.sequence === token.sequence &&
+    currentToken.userId === token.userId &&
+    token.userId === currentUserId;
+}
+
 export function buildCommercialTaskReportSimulation(
-  task: Pick<SimulationTaskStatusResponse, "scenarioType" | "mode">,
+  task: Pick<SimulationTaskStatusResponse, "simulationId" | "scenarioType" | "mode">,
   report: SimulationApiResponse,
 ): Simulation {
   return {
-    id: report.id,
+    id: task.simulationId,
     type: task.scenarioType,
     userInput: { type: task.scenarioType },
     agents: report.agents,
@@ -591,6 +639,42 @@ export default function App({
     }
   });
   const appCopy = APP_COPY[language];
+  const commercialTaskWatcherSequenceRef = useRef(0);
+  const activeCommercialTaskWatcherRef = useRef<CommercialTaskWatcherToken | undefined>(undefined);
+  const commercialTaskRefreshSequenceRef = useRef(0);
+  const activeCommercialTaskRefreshRef = useRef<CommercialTaskRefreshToken | undefined>(undefined);
+  const commercialUserIdRef = useRef(commercialUser?.id);
+
+  useEffect(() => {
+    commercialUserIdRef.current = commercialUser?.id;
+  }, [commercialUser?.id]);
+
+  const setCommercialUserState = (user: CommercialUserDto | undefined) => {
+    commercialUserIdRef.current = user?.id;
+    setCommercialUser(user);
+  };
+
+  const beginCommercialTaskWatcher = (simulationId: string): CommercialTaskWatcherToken => {
+    const token = createCommercialTaskWatcherToken(
+      commercialTaskWatcherSequenceRef.current,
+      simulationId,
+    );
+    commercialTaskWatcherSequenceRef.current = token.sequence;
+    activeCommercialTaskWatcherRef.current = token;
+    return token;
+  };
+
+  const invalidateCommercialTaskWatcher = (simulationId?: string) => {
+    if (
+      simulationId === undefined ||
+      activeCommercialTaskWatcherRef.current?.simulationId === simulationId
+    ) {
+      activeCommercialTaskWatcherRef.current = undefined;
+    }
+  };
+
+  const isActiveCommercialTaskWatcher = (token: CommercialTaskWatcherToken): boolean =>
+    isCommercialTaskWatcherCurrent(activeCommercialTaskWatcherRef.current, token);
 
   useEffect(() => {
     if (!isGenerating || progressElapsedStartMs === undefined) {
@@ -697,26 +781,60 @@ export default function App({
     const credits = await fetchCommercialCredits();
     const modelProvider = await fetchModelProvider();
     setCommercialAvailable(true);
-    setCommercialUser(me.user);
+    setCommercialUserState(me.user);
     setCommercialAccount(credits.account);
     setCommercialModelProvider(modelProvider.provider);
   };
 
-  const refreshCommercialTasks = async () => {
-    if (!commercialUser) {
+  const refreshCommercialTasks = async ({
+    clearError = true,
+  }: { clearError?: boolean } = {}) => {
+    const userId = commercialUser?.id;
+    const token = createCommercialTaskRefreshToken(
+      commercialTaskRefreshSequenceRef.current,
+      userId,
+    );
+    commercialTaskRefreshSequenceRef.current = token.sequence;
+    activeCommercialTaskRefreshRef.current = token;
+
+    if (!userId) {
       setCommercialTasks([]);
       setCommercialTasksLoading(false);
-      setCommercialTasksError("");
+      if (clearError) {
+        setCommercialTasksError("");
+      }
       return;
     }
     setCommercialTasksLoading(true);
-    setCommercialTasksError("");
+    if (clearError) {
+      setCommercialTasksError("");
+    }
     try {
-      setCommercialTasks(await fetchSimulationTasks());
+      const tasks = await fetchSimulationTasks();
+      if (!isCommercialTaskRefreshCurrent(
+        activeCommercialTaskRefreshRef.current,
+        token,
+        commercialUserIdRef.current,
+      )) {
+        return;
+      }
+      setCommercialTasks(tasks);
     } catch (error) {
-      setCommercialTasksError(error instanceof Error ? error.message : String(error));
+      if (isCommercialTaskRefreshCurrent(
+        activeCommercialTaskRefreshRef.current,
+        token,
+        commercialUserIdRef.current,
+      )) {
+        setCommercialTasksError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setCommercialTasksLoading(false);
+      if (isCommercialTaskRefreshCurrent(
+        activeCommercialTaskRefreshRef.current,
+        token,
+        commercialUserIdRef.current,
+      )) {
+        setCommercialTasksLoading(false);
+      }
     }
   };
 
@@ -738,6 +856,7 @@ export default function App({
     task: SimulationTaskStatusResponse,
     { scrollOnView = false }: { scrollOnView?: boolean } = {},
   ): number => {
+    invalidateCommercialTaskWatcher();
     const elapsedStartMs = getCommercialTaskElapsedStartMs(task) ?? Date.now();
     const progressMessage =
       task.progressMessage ||
@@ -787,22 +906,37 @@ export default function App({
       return;
     }
 
+    const watcherToken = beginCommercialTaskWatcher(task.simulationId);
     void watchSimulationTaskUntilComplete(task.simulationId, {
-      onProgress: handleTaskProgressEvent,
+      onProgress: (event) => {
+        if (isActiveCommercialTaskWatcher(watcherToken)) {
+          handleTaskProgressEvent(event);
+        }
+      },
     })
       .then((data) => {
+        if (!isActiveCommercialTaskWatcher(watcherToken)) {
+          return;
+        }
+        invalidateCommercialTaskWatcher(task.simulationId);
+        setAttachedCommercialTaskId(undefined);
         handleSimulationCompleted(data, { type: task.scenarioType }, {
           startedAt: elapsedStartMs,
           deepModeRequested: task.mode === "enabled",
         });
-        setAttachedCommercialTaskId(undefined);
       })
       .catch((error) => {
+        if (!isActiveCommercialTaskWatcher(watcherToken)) {
+          return;
+        }
+        invalidateCommercialTaskWatcher(task.simulationId);
         handleSimulationFailed(error, { type: task.scenarioType }, {
           startedAt: elapsedStartMs,
           deepModeRequested: task.mode === "enabled",
         });
-        setAttachedCommercialTaskId(undefined);
+        if (!isRecoverableSimulationTaskError(error)) {
+          setAttachedCommercialTaskId(undefined);
+        }
       });
   };
 
@@ -824,7 +958,7 @@ export default function App({
       .then(async (me) => {
         if (cancelled) return;
         setCommercialAvailable(true);
-        setCommercialUser(me.user);
+        setCommercialUserState(me.user);
         const credits = await fetchCommercialCredits();
         if (cancelled) return;
         setCommercialAccount(credits.account);
@@ -841,7 +975,7 @@ export default function App({
         }
         if (error instanceof CommercialClientError && error.status === 401) {
           setCommercialAvailable(true);
-          setCommercialUser(undefined);
+          setCommercialUserState(undefined);
           setCommercialAccount(undefined);
           setCommercialModelProvider(undefined);
           setProviderMode("platform");
@@ -979,6 +1113,7 @@ export default function App({
       });
     }
 
+    let watcherToken: CommercialTaskWatcherToken | undefined;
     try {
       const data = await runSimulationTaskUntilComplete(
         buildCommercialSimulationTaskRequest(userInput, {
@@ -990,12 +1125,23 @@ export default function App({
         }),
         {
           onCreated: (created) => {
+            watcherToken = beginCommercialTaskWatcher(created.simulationId);
             setAttachedCommercialTaskId(created.simulationId);
             void refreshCommercialTasks();
           },
-          onProgress: handleTaskProgressEvent,
+          onProgress: (event) => {
+            if (!watcherToken || isActiveCommercialTaskWatcher(watcherToken)) {
+              handleTaskProgressEvent(event);
+            }
+          },
         },
       );
+      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+        return;
+      }
+      if (watcherToken) {
+        invalidateCommercialTaskWatcher(watcherToken.simulationId);
+      }
       if (commercialUser) {
         void fetchCommercialCredits()
           .then(({ account }) => setCommercialAccount(account))
@@ -1006,6 +1152,12 @@ export default function App({
         deepModeRequested,
       });
     } catch (err: any) {
+      if (watcherToken && !isActiveCommercialTaskWatcher(watcherToken)) {
+        return;
+      }
+      if (watcherToken) {
+        invalidateCommercialTaskWatcher(watcherToken.simulationId);
+      }
       handleSimulationFailed(err, userInput, {
         startedAt,
         deepModeRequested,
@@ -1027,16 +1179,29 @@ export default function App({
     scrollToTopForViewChange();
     const resumedAt = Date.now();
     setProgressElapsedStartMs(request.startedAt);
+    const watcherToken = beginCommercialTaskWatcher(simulationId);
 
     try {
       const data = await resumeSimulationTaskUntilComplete(simulationId, {
-        onProgress: handleTaskProgressEvent,
+        onProgress: (event) => {
+          if (isActiveCommercialTaskWatcher(watcherToken)) {
+            handleTaskProgressEvent(event);
+          }
+        },
       });
+      if (!isActiveCommercialTaskWatcher(watcherToken)) {
+        return;
+      }
+      invalidateCommercialTaskWatcher(simulationId);
       handleSimulationCompleted(data, request.userInput, {
         startedAt: request.startedAt,
         deepModeRequested: request.deepModeRequested,
       });
     } catch (err: any) {
+      if (!isActiveCommercialTaskWatcher(watcherToken)) {
+        return;
+      }
+      invalidateCommercialTaskWatcher(simulationId);
       handleSimulationFailed(err, request.userInput, {
         startedAt: resumedAt,
         deepModeRequested: request.deepModeRequested,
@@ -1057,7 +1222,9 @@ export default function App({
 
   const handleCancelProgress = async () => {
     if (attachedCommercialTaskId) {
-      const cancelError = await cancelSimulationTask(attachedCommercialTaskId)
+      const taskId = attachedCommercialTaskId;
+      invalidateCommercialTaskWatcher(taskId);
+      const cancelError = await cancelSimulationTask(taskId)
         .then(() => undefined)
         .catch((error) => getCommercialErrorMessage(error));
       if (cancelError) {
@@ -1247,6 +1414,7 @@ export default function App({
 
   const handleCancelTaskFromList = async (task: SimulationTaskStatusResponse) => {
     let cancelError = "";
+    invalidateCommercialTaskWatcher(task.simulationId);
     try {
       await cancelSimulationTask(task.simulationId);
       if (attachedCommercialTaskId === task.simulationId) {
@@ -1299,7 +1467,7 @@ export default function App({
     } catch (error) {
       setCommercialTasksError(getCommercialErrorMessage(error));
     } finally {
-      void refreshCommercialTasks();
+      void refreshCommercialTasks({ clearError: false });
     }
   };
 
@@ -1343,7 +1511,7 @@ export default function App({
     setCommercialError("");
     try {
       await logoutCommercialUser();
-      setCommercialUser(undefined);
+      setCommercialUserState(undefined);
       setCommercialAccount(undefined);
       setCommercialModelProvider(undefined);
       setProviderMode("platform");
@@ -1364,7 +1532,7 @@ export default function App({
     try {
       const result = await redeemAccessCode(input);
       setCommercialAccount(result.account);
-      setCommercialUser(result.user);
+      setCommercialUserState(result.user);
       setCommercialStatus(appCopy.commercialStatus.redeemed(result.redemption.credits));
     } catch (error) {
       setCommercialError(getCommercialErrorMessage(error));

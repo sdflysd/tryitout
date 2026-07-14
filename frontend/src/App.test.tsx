@@ -547,11 +547,68 @@ test("commercial task reports can be converted into history simulations", async 
     makeApiResponse("sim_report"),
   );
 
-  assert.equal(simulation.id, "sim_report");
+  assert.equal(simulation.id, "task_report");
   assert.equal(simulation.type, "dating");
   assert.deepEqual(simulation.userInput, { type: "dating" });
   assert.equal(simulation.interactionModeUsed, "enabled");
   assert.equal(simulation.report.projectName, "测试报告 sim_report");
+});
+
+test("commercial task watcher tokens reject stale completions after attach or cancel", async () => {
+  type WatcherToken = { sequence: number; simulationId: string };
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    createCommercialTaskWatcherToken?: (
+      previousSequence: number,
+      simulationId: string,
+    ) => WatcherToken;
+    isCommercialTaskWatcherCurrent?: (
+      currentToken: WatcherToken | undefined,
+      token: WatcherToken,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.createCommercialTaskWatcherToken, "function");
+  assert.equal(typeof appModule.isCommercialTaskWatcherCurrent, "function");
+
+  const first = appModule.createCommercialTaskWatcherToken(0, "task_1");
+  const second = appModule.createCommercialTaskWatcherToken(first.sequence, "task_2");
+
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(first, first), true);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(second, first), false);
+  assert.equal(appModule.isCommercialTaskWatcherCurrent(undefined, first), false);
+  assert.equal(
+    appModule.isCommercialTaskWatcherCurrent(
+      { sequence: first.sequence, simulationId: "task_2" },
+      first,
+    ),
+    false,
+  );
+});
+
+test("commercial task refresh tokens reject stale results after user changes", async () => {
+  type RefreshToken = { sequence: number; userId?: string };
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    createCommercialTaskRefreshToken?: (
+      previousSequence: number,
+      userId: string | undefined,
+    ) => RefreshToken;
+    isCommercialTaskRefreshCurrent?: (
+      currentToken: RefreshToken | undefined,
+      token: RefreshToken,
+      currentUserId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.createCommercialTaskRefreshToken, "function");
+  assert.equal(typeof appModule.isCommercialTaskRefreshCurrent, "function");
+
+  const userRequest = appModule.createCommercialTaskRefreshToken(0, "user_1");
+  const logoutRequest = appModule.createCommercialTaskRefreshToken(userRequest.sequence, undefined);
+
+  assert.equal(appModule.isCommercialTaskRefreshCurrent(userRequest, userRequest, "user_1"), true);
+  assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, userRequest, undefined), false);
+  assert.equal(appModule.isCommercialTaskRefreshCurrent(userRequest, userRequest, "user_2"), false);
+  assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, logoutRequest, undefined), true);
 });
 
 test("model configuration path only shows admin-enabled platform models", async () => {
