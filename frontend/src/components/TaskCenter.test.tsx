@@ -90,6 +90,27 @@ test("TaskCenter does not expose retry for non-recoverable failed task rows", ()
   assert.doesNotMatch(html, /btn-task-cancel-failed_1/);
 });
 
+test("TaskCenter does not expose terminal actions for paused task rows", () => {
+  const html = renderToStaticMarkup(
+    <TaskCenter
+      tasks={[
+        makeTask({ simulationId: "paused_1", status: "paused", recoverable: false }),
+      ]}
+      language="zh-CN"
+      onViewProgress={() => undefined}
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+      onViewReport={() => undefined}
+    />,
+  );
+
+  assert.match(html, /task-center-row-paused_1/);
+  assert.match(html, /btn-task-progress-paused_1/);
+  assert.doesNotMatch(html, /btn-task-cancel-paused_1/);
+  assert.doesNotMatch(html, /btn-task-report-paused_1/);
+  assert.doesNotMatch(html, /btn-task-retry-paused_1/);
+});
+
 test("TaskCenter uses task-specific accessible labels for actions and progress", () => {
   const html = renderToStaticMarkup(
     <TaskCenter

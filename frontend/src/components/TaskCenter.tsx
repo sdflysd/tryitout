@@ -220,7 +220,7 @@ function renderTaskRow({
 }) {
   const canViewProgress = task.status !== "completed";
   const canRetry = task.status === "queued" || task.recoverable;
-  const canCancel = task.status === "running" || task.status === "paused";
+  const canCancel = task.status === "running";
   const canViewReport = task.status === "completed";
   const progressPercent = clampProgress(task.progressPercent);
 
