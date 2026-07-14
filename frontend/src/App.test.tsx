@@ -629,6 +629,39 @@ test("commercial task refresh tokens reject stale results after user changes", a
   assert.equal(appModule.isCommercialTaskRefreshCurrent(logoutRequest, logoutRequest, undefined), true);
 });
 
+test("commercial task rows are cleared and scoped when the commercial user changes", async () => {
+  const tasks = [{
+    simulationId: "task_1",
+    scenarioType: "side_hustle",
+    mode: "enabled",
+    status: "queued",
+    progressPercent: 0,
+    recoverable: false,
+    updatedAt: "2026-07-15T00:00:00.000Z",
+  }] satisfies SimulationTaskStatusResponse[];
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldClearCommercialTasksForUserChange?: (
+      previousUserId: string | undefined,
+      nextUserId: string | undefined,
+    ) => boolean;
+    getCommercialTasksForHomeView?: (
+      userId: string | undefined,
+      tasks: SimulationTaskStatusResponse[],
+    ) => SimulationTaskStatusResponse[];
+  };
+
+  assert.equal(typeof appModule.shouldClearCommercialTasksForUserChange, "function");
+  assert.equal(typeof appModule.getCommercialTasksForHomeView, "function");
+
+  assert.equal(appModule.shouldClearCommercialTasksForUserChange("user_1", "user_2"), true);
+  assert.equal(appModule.shouldClearCommercialTasksForUserChange("user_1", undefined), true);
+  assert.equal(appModule.shouldClearCommercialTasksForUserChange(undefined, "user_1"), true);
+  assert.equal(appModule.shouldClearCommercialTasksForUserChange("user_1", "user_1"), false);
+  assert.equal(appModule.shouldClearCommercialTasksForUserChange(undefined, undefined), false);
+  assert.deepEqual(appModule.getCommercialTasksForHomeView(undefined, tasks), []);
+  assert.equal(appModule.getCommercialTasksForHomeView("user_1", tasks), tasks);
+});
+
 test("commercial task start tokens reject stale creation callbacks after user changes", async () => {
   type StartToken = { sequence: number; userId?: string };
   const appModule = await import("./App.js") as typeof import("./App.js") & {
@@ -659,6 +692,26 @@ test("commercial task start tokens reject stale creation callbacks after user ch
   assert.equal(appModule.isCommercialTaskStartCurrent(second, first, "user_1"), false);
   assert.equal(appModule.isCommercialTaskStartCurrent(first, first, "user_2"), false);
   assert.equal(appModule.isCommercialTaskStartCurrent(first, first, undefined), false);
+  const bootstrap = appModule.createCommercialTaskStartToken(0, undefined);
+  const resolvedBootstrap = appModule.resolveCommercialTaskStartAfterUserChange(
+    bootstrap,
+    undefined,
+    "user_1",
+  );
+
+  assert.equal(resolvedBootstrap?.userId, "user_1");
+  assert.equal(
+    appModule.isCommercialTaskStartCurrent(resolvedBootstrap, bootstrap, "user_1"),
+    true,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(resolvedBootstrap, "user_1", "user_2"),
+    undefined,
+  );
+  assert.equal(
+    appModule.resolveCommercialTaskStartAfterUserChange(resolvedBootstrap, "user_1", undefined),
+    undefined,
+  );
   assert.equal(
     appModule.resolveCommercialTaskStartAfterUserChange(first, "user_1", "user_1"),
     first,
@@ -746,6 +799,35 @@ test("cancelled task state only clears when the cancelled task is still attached
   assert.equal(appModule.shouldClearCancelledCommercialTaskState("task_1", undefined), false);
 });
 
+test("commercial task watcher invalidates only after successful cancel for the attached task", async () => {
+  const appModule = await import("./App.js") as typeof import("./App.js") & {
+    shouldInvalidateCommercialTaskWatcherAfterCancel?: (
+      cancelSucceeded: boolean,
+      cancelledTaskId: string,
+      currentAttachedTaskId: string | undefined,
+    ) => boolean;
+  };
+
+  assert.equal(typeof appModule.shouldInvalidateCommercialTaskWatcherAfterCancel, "function");
+
+  assert.equal(
+    appModule.shouldInvalidateCommercialTaskWatcherAfterCancel(true, "task_1", "task_1"),
+    true,
+  );
+  assert.equal(
+    appModule.shouldInvalidateCommercialTaskWatcherAfterCancel(false, "task_1", "task_1"),
+    false,
+  );
+  assert.equal(
+    appModule.shouldInvalidateCommercialTaskWatcherAfterCancel(true, "task_1", "task_2"),
+    false,
+  );
+  assert.equal(
+    appModule.shouldInvalidateCommercialTaskWatcherAfterCancel(true, "task_1", undefined),
+    false,
+  );
+});
+
 test("active commercial task attach is ignored after the commercial user changes", async () => {
   const appModule = await import("./App.js") as typeof import("./App.js") & {
     shouldAttachActiveCommercialTaskForUser?: (
@@ -757,6 +839,8 @@ test("active commercial task attach is ignored after the commercial user changes
       currentUserId: string | undefined;
       requestedWatcherSequence: number;
       currentWatcherSequence: number;
+      requestedStartSequence: number;
+      currentStartSequence: number;
     }) => boolean;
   };
 
@@ -772,18 +856,32 @@ test("active commercial task attach is ignored after the commercial user changes
     currentUserId: "user_1",
     requestedWatcherSequence: 3,
     currentWatcherSequence: 3,
+    requestedStartSequence: 7,
+    currentStartSequence: 7,
   }), true);
   assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
     requestedUserId: "user_1",
     currentUserId: "user_1",
     requestedWatcherSequence: 3,
     currentWatcherSequence: 4,
+    requestedStartSequence: 7,
+    currentStartSequence: 7,
+  }), false);
+  assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
+    requestedUserId: "user_1",
+    currentUserId: "user_1",
+    requestedWatcherSequence: 3,
+    currentWatcherSequence: 3,
+    requestedStartSequence: 7,
+    currentStartSequence: 8,
   }), false);
   assert.equal(appModule.shouldAttachActiveCommercialTaskForContext({
     requestedUserId: "user_1",
     currentUserId: "user_2",
     requestedWatcherSequence: 3,
     currentWatcherSequence: 3,
+    requestedStartSequence: 7,
+    currentStartSequence: 7,
   }), false);
 });
 

@@ -560,9 +560,16 @@ export function isCommercialTaskStartCurrent(
   token: CommercialTaskStartToken,
   currentUserId: string | undefined,
 ): boolean {
-  return currentToken?.sequence === token.sequence &&
-    currentToken.userId === token.userId &&
-    token.userId === currentUserId;
+  if (currentToken?.sequence !== token.sequence) {
+    return false;
+  }
+  if (token.userId) {
+    return currentToken.userId === token.userId && token.userId === currentUserId;
+  }
+  if (currentToken.userId) {
+    return currentToken.userId === currentUserId;
+  }
+  return currentUserId === undefined;
 }
 
 export function resolveCommercialTaskStartAfterUserChange(
@@ -570,7 +577,13 @@ export function resolveCommercialTaskStartAfterUserChange(
   previousUserId: string | undefined,
   nextUserId: string | undefined,
 ): CommercialTaskStartToken | undefined {
-  return previousUserId === nextUserId ? currentToken : undefined;
+  if (previousUserId === nextUserId) {
+    return currentToken;
+  }
+  if (previousUserId === undefined && nextUserId && currentToken?.userId === undefined) {
+    return { ...currentToken, userId: nextUserId };
+  }
+  return undefined;
 }
 
 export function shouldApplyCommercialUserSideEffect(
@@ -578,6 +591,20 @@ export function shouldApplyCommercialUserSideEffect(
   currentUserId: string | undefined,
 ): boolean {
   return Boolean(requestedUserId && requestedUserId === currentUserId);
+}
+
+export function shouldClearCommercialTasksForUserChange(
+  previousUserId: string | undefined,
+  nextUserId: string | undefined,
+): boolean {
+  return previousUserId !== nextUserId;
+}
+
+export function getCommercialTasksForHomeView(
+  userId: string | undefined,
+  tasks: SimulationTaskStatusResponse[],
+): SimulationTaskStatusResponse[] {
+  return userId ? tasks : [];
 }
 
 type CommercialTaskReportToken = {
@@ -630,14 +657,19 @@ export function shouldAttachActiveCommercialTaskForContext({
   currentUserId,
   requestedWatcherSequence,
   currentWatcherSequence,
+  requestedStartSequence,
+  currentStartSequence,
 }: {
   requestedUserId: string | undefined;
   currentUserId: string | undefined;
   requestedWatcherSequence: number;
   currentWatcherSequence: number;
+  requestedStartSequence: number;
+  currentStartSequence: number;
 }): boolean {
   return shouldAttachActiveCommercialTaskForUser(requestedUserId, currentUserId) &&
-    requestedWatcherSequence === currentWatcherSequence;
+    requestedWatcherSequence === currentWatcherSequence &&
+    requestedStartSequence === currentStartSequence;
 }
 
 export function shouldClearCancelledCommercialTaskState(
@@ -645,6 +677,14 @@ export function shouldClearCancelledCommercialTaskState(
   currentAttachedTaskId: string | undefined,
 ): boolean {
   return cancelledTaskId === currentAttachedTaskId;
+}
+
+export function shouldInvalidateCommercialTaskWatcherAfterCancel(
+  cancelSucceeded: boolean,
+  cancelledTaskId: string,
+  currentAttachedTaskId: string | undefined,
+): boolean {
+  return cancelSucceeded && cancelledTaskId === currentAttachedTaskId;
 }
 
 export function buildCommercialTaskReportSimulation(
@@ -791,6 +831,11 @@ export default function App({
   const setCommercialUserState = (user: CommercialUserDto | undefined) => {
     const previousUserId = commercialUserIdRef.current;
     const nextUserId = user?.id;
+    if (shouldClearCommercialTasksForUserChange(previousUserId, nextUserId)) {
+      setCommercialTasks([]);
+      setCommercialTasksLoading(false);
+      setCommercialTasksError("");
+    }
     activeCommercialTaskStartRef.current = resolveCommercialTaskStartAfterUserChange(
       activeCommercialTaskStartRef.current,
       previousUserId,
@@ -825,7 +870,7 @@ export default function App({
       token === undefined ||
       (
         activeCommercialTaskStartRef.current?.sequence === token.sequence &&
-        activeCommercialTaskStartRef.current.userId === token.userId
+        (token.userId === undefined || activeCommercialTaskStartRef.current.userId === token.userId)
       )
     ) {
       activeCommercialTaskStartRef.current = undefined;
@@ -1031,6 +1076,7 @@ export default function App({
       return;
     }
     setCommercialTasksLoading(true);
+    setCommercialTasks([]);
     if (clearError) {
       setCommercialTasksError("");
     }
@@ -1168,6 +1214,7 @@ export default function App({
   async function attachActiveCommercialTask() {
     const requestedUserId = commercialUserIdRef.current;
     const requestedWatcherSequence = commercialTaskWatcherSequenceRef.current;
+    const requestedStartSequence = commercialTaskStartSequenceRef.current;
     if (!requestedUserId) {
       return;
     }
@@ -1177,6 +1224,8 @@ export default function App({
       currentUserId: commercialUserIdRef.current,
       requestedWatcherSequence,
       currentWatcherSequence: commercialTaskWatcherSequenceRef.current,
+      requestedStartSequence,
+      currentStartSequence: commercialTaskStartSequenceRef.current,
     })) {
       return;
     }
@@ -1388,11 +1437,12 @@ export default function App({
         invalidateCommercialTaskStart(startToken);
         return;
       }
+      const completedUserId = activeCommercialTaskStartRef.current?.userId ?? startToken.userId;
       invalidateCommercialTaskStart(startToken);
       if (watcherToken) {
         invalidateCommercialTaskWatcher(watcherToken.simulationId);
       }
-      refreshCommercialCreditsForUser(startToken.userId);
+      refreshCommercialCreditsForUser(completedUserId);
       handleSimulationCompleted(data, userInput, {
         startedAt,
         deepModeRequested,
@@ -1483,7 +1533,6 @@ export default function App({
     }
 
     const requestedUserId = commercialUserIdRef.current;
-    invalidateCommercialTaskWatcher(taskId);
     const cancelError = await cancelSimulationTask(taskId)
       .then(() => undefined)
       .catch((error) => getCommercialErrorMessage(error));
@@ -1497,6 +1546,9 @@ export default function App({
         setIsGenerating(false);
       }
       return;
+    }
+    if (shouldInvalidateCommercialTaskWatcherAfterCancel(true, taskId, attachedCommercialTaskIdRef.current)) {
+      invalidateCommercialTaskWatcher(taskId);
     }
     refreshCommercialCreditsForUser(requestedUserId);
     void refreshCommercialTasks();
@@ -1680,10 +1732,12 @@ export default function App({
     let cancelError = "";
     const taskId = task.simulationId;
     const requestedUserId = commercialUserIdRef.current;
-    invalidateCommercialTaskWatcher(task.simulationId);
     try {
       await cancelSimulationTask(taskId);
       if (shouldClearCancelledCommercialTaskState(taskId, attachedCommercialTaskIdRef.current)) {
+        if (shouldInvalidateCommercialTaskWatcherAfterCancel(true, taskId, attachedCommercialTaskIdRef.current)) {
+          invalidateCommercialTaskWatcher(taskId);
+        }
         setAttachedCommercialTaskIdState(undefined);
         setRecoverableSimulationId(undefined);
         setProgressEvent(null);
@@ -2068,7 +2122,7 @@ export default function App({
                 onContinueDraft={handleEditInput}
                 onDeleteHistory={handleDeleteHistory}
                 language={language}
-                commercialTasks={commercialTasks}
+                commercialTasks={getCommercialTasksForHomeView(commercialUser?.id, commercialTasks)}
                 commercialTasksLoading={commercialTasksLoading}
                 commercialTasksError={commercialTasksError}
                 onRefreshCommercialTasks={() => {
