@@ -515,7 +515,28 @@ test("resumeTask requeues the same recoverable task with original input and no n
   assert.equal(account?.balance, 7);
   assert.equal(account?.frozenCredits, 3);
   assert.equal(claim?.job.taskId, created.task.id);
+  assert.match(claim?.job.idempotencyKey ?? "", /^task-key-1:resume:/);
   assert.deepEqual(claim?.job.userInput, makeUserInput());
+});
+
+test("resumeTask can requeue an already queued task without a new hold", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  const created = await service.createTask(makeCreateInput());
+  const lostClaim = await queue.claimNext();
+  assert.ok(lostClaim);
+  await queue.release(lostClaim.claimId);
+
+  const resumed = await service.resumeTask({ taskId: created.task.id });
+
+  const account = await repo.getCreditAccount("user_1");
+  const claim = await queue.claimNext();
+  assert.equal(resumed.task.id, created.task.id);
+  assert.equal(resumed.task.status, "queued");
+  assert.equal(resumed.task.errorCode, undefined);
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
+  assert.equal(claim?.job.taskId, created.task.id);
+  assert.equal(claim?.job.idempotencyKey, "task-key-1");
 });
 
 test("cancelling recoverable failed task releases its held credits", async () => {

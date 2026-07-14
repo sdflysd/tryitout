@@ -120,6 +120,30 @@ test("SimulationProgress exposes a cancel action while a task is active", () => 
   assert.match(html, /取消任务/);
 });
 
+test("SimulationProgress exposes a retry action while a queued task is waiting", () => {
+  const html = renderToStaticMarkup(
+    <SimulationProgress
+      isGenerating
+      simulationType="side_hustle"
+      canResume
+      canCancelTask
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+      progressEvent={{
+        simulationId: "commercial_task_waiting",
+        step: "generate_agents",
+        status: "queued",
+        percent: 5,
+        message: "任务已进入商业队列，等待 worker 处理。",
+      }}
+    />,
+  );
+
+  assert.match(html, /btn-retry-active-task/);
+  assert.match(html, /重新尝试/);
+  assert.match(html, /取消任务/);
+});
+
 test("SimulationProgress labels the recoverable error secondary action as task cancellation", () => {
   const html = renderToStaticMarkup(
     <SimulationProgress

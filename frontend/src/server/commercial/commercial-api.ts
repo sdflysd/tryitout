@@ -32,6 +32,7 @@ import type {
   PublicModelProviderDto,
 } from "./model-provider-service.js";
 import { ModelProviderServiceError } from "./model-provider-service.js";
+import type { WorkerMonitoringService } from "./worker-monitoring.js";
 import type { CommercialRepository } from "./repository.js";
 import type {
   AdminAuditLogRecord,
@@ -109,6 +110,7 @@ export interface CommercialApiDeps {
   modelProviderService?: ModelProviderService;
   repository: CommercialRepository;
   taskService: CommercialTaskService;
+  workerMonitoringService?: WorkerMonitoringService;
 }
 
 export interface CommercialApiRuntimeOptions {
@@ -1401,6 +1403,19 @@ export async function handleCreateCommercialTaskRequest(
   }
 
   try {
+    if (
+      deps.workerMonitoringService !== undefined &&
+      !(await deps.workerMonitoringService.hasFreshWorkerHeartbeat())
+    ) {
+      return {
+        status: 503,
+        body: {
+          error: "Simulation workers are unavailable. Please retry shortly.",
+          code: "worker_unavailable",
+        },
+      };
+    }
+
     const result = await deps.taskService.createTask({
       userId: auth.user.id,
       userInput: parsed.value.userInput,

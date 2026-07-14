@@ -54,6 +54,18 @@ export class WorkerMonitoringService {
     return heartbeat;
   }
 
+  async hasFreshWorkerHeartbeat(input: {
+    staleAfterMs?: number;
+  } = {}): Promise<boolean> {
+    const staleAfterMs = input.staleAfterMs ?? 30_000;
+    const cutoff = new Date(toIso(this.now())).getTime() - staleAfterMs;
+    const workers = await this.repository.listWorkerHeartbeats();
+    return workers.some((worker) => {
+      const heartbeatAt = Date.parse(worker.lastHeartbeatAt);
+      return Number.isFinite(heartbeatAt) && heartbeatAt >= cutoff;
+    });
+  }
+
   async detectStuckTasks(input: {
     thresholdMs?: number;
   } = {}): Promise<CommercialSimulationTaskRecord[]> {

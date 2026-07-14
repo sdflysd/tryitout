@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, Bot, ShieldAlert, Sparkles, Terminal } from "lucide-react";
+import { AlertCircle, Bot, RefreshCcw, ShieldAlert, Sparkles, Terminal } from "lucide-react";
 import AgentSandboxLive from "./AgentSandboxLive";
 import type { SimulationProgressEvent, SimulationType } from "../types";
 import { DEFAULT_LANGUAGE, Language } from "../language";
@@ -918,17 +918,30 @@ export default function SimulationProgress({
               aria-live="polite"
             >
               <span>{elapsedLabel} {formattedElapsed}</span>
-              {onCancel && canCancelTask && (
-                <button
-                  id="btn-cancel-simulation"
-                  type="button"
-                  onClick={onCancel}
-                  className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-rose-300/35 bg-rose-500/10 px-3 text-xs font-bold text-rose-100 transition-colors hover:border-rose-200/60 hover:bg-rose-500/18"
-                >
-                  <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{isEnglish ? "Cancel task" : "取消任务"}</span>
-                </button>
-              )}
+              <span className="inline-flex flex-wrap items-center gap-2">
+                {onRetry && canResume && (
+                  <button
+                    id="btn-retry-active-task"
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-amber-200/35 bg-amber-300/10 px-3 text-xs font-bold text-amber-100 transition-colors hover:border-amber-100/60 hover:bg-amber-300/18"
+                  >
+                    <RefreshCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{isEnglish ? "Retry task" : "重新尝试"}</span>
+                  </button>
+                )}
+                {onCancel && canCancelTask && (
+                  <button
+                    id="btn-cancel-simulation"
+                    type="button"
+                    onClick={onCancel}
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-rose-300/35 bg-rose-500/10 px-3 text-xs font-bold text-rose-100 transition-colors hover:border-rose-200/60 hover:bg-rose-500/18"
+                  >
+                    <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{isEnglish ? "Cancel task" : "取消任务"}</span>
+                  </button>
+                )}
+              </span>
             </div>
           </div>
         </div>

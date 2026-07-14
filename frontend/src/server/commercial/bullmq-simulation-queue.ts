@@ -46,7 +46,7 @@ export class BullMqSimulationQueue implements SimulationQueue {
 
   async enqueue(job: SimulationQueueJob): Promise<void> {
     await this.queue.add(BULLMQ_SIMULATION_JOB_NAME, { ...job }, {
-      jobId: job.taskId,
+      jobId: job.idempotencyKey,
       attempts: 1,
       priority: job.priority,
       removeOnComplete: 1_000,

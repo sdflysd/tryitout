@@ -31,6 +31,31 @@ test("worker monitoring records heartbeat with active weight and current task", 
   ]);
 });
 
+test("worker monitoring reports whether a fresh worker heartbeat exists", async () => {
+  const repo = new InMemoryCommercialRepository();
+  const service = new WorkerMonitoringService({
+    repository: repo,
+    maxActiveWeight: 6,
+    now: () => "2026-07-07T00:01:00.000Z",
+  });
+
+  assert.equal(await service.hasFreshWorkerHeartbeat({ staleAfterMs: 30_000 }), false);
+
+  await repo.saveWorkerHeartbeat({
+    workerId: "stale_worker",
+    activeWeight: 0,
+    lastHeartbeatAt: "2026-07-07T00:00:00.000Z",
+  });
+  assert.equal(await service.hasFreshWorkerHeartbeat({ staleAfterMs: 30_000 }), false);
+
+  await repo.saveWorkerHeartbeat({
+    workerId: "fresh_worker",
+    activeWeight: 0,
+    lastHeartbeatAt: "2026-07-07T00:00:45.000Z",
+  });
+  assert.equal(await service.hasFreshWorkerHeartbeat({ staleAfterMs: 30_000 }), true);
+});
+
 test("worker monitoring detects stuck running tasks and summarizes queue state", async () => {
   const repo = new InMemoryCommercialRepository();
   await repo.saveCommercialTask(makeTask({

@@ -681,6 +681,7 @@ export default function App({
   const handleTaskProgressEvent = (event: SimulationProgressEvent) => {
     setProgressEvent(event);
     setAttachedCommercialTaskId(event.simulationId);
+    setRecoverableSimulationId(event.status === "queued" ? event.simulationId : undefined);
     const elapsedStartMs = parseIsoTimestampMs(event.createdAt);
     if (elapsedStartMs !== undefined) {
       setProgressElapsedStartMs(elapsedStartMs);
@@ -699,7 +700,11 @@ export default function App({
     setAttachedCommercialTaskId(activeTask.simulationId);
     setSelectedType(activeTask.scenarioType);
     setErrorMsg("");
-    setRecoverableSimulationId(undefined);
+    setRecoverableSimulationId(
+      activeTask.status === "queued" || activeTask.status === "recoverable_failed"
+        ? activeTask.simulationId
+        : undefined,
+    );
     const elapsedStartMs = getCommercialTaskElapsedStartMs(activeTask) ?? Date.now();
     setProgressElapsedStartMs(elapsedStartMs);
     setActiveSimulationRequest({
@@ -719,6 +724,11 @@ export default function App({
     });
     setIsGenerating(true);
     setView("generating");
+    if (activeTask.status === "recoverable_failed") {
+      setErrorMsg(activeTask.errorCode || "simulation task can be resumed");
+      setIsGenerating(false);
+      return;
+    }
     void watchSimulationTaskUntilComplete(activeTask.simulationId, {
       onProgress: handleTaskProgressEvent,
     })

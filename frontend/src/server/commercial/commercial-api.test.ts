@@ -59,6 +59,7 @@ import {
 import { CommercialTaskService } from "./commercial-task-service.js";
 import { CreditService } from "./credit-service.js";
 import { ModelProviderService } from "./model-provider-service.js";
+import { WorkerMonitoringService } from "./worker-monitoring.js";
 import { InMemoryCommercialRepository } from "./repository.js";
 import { InMemorySimulationQueue } from "./simulation-queue.js";
 import type { CommercialRepository } from "./repository.js";
@@ -339,6 +340,33 @@ test("commercial task creation holds credits and returns task status", async () 
   if (!("task" in status.body)) return;
   assert.equal(status.body.task.id, created.body.task.id);
   assert.equal(status.body.task.userId, "user_1");
+});
+
+test("commercial task creation rejects when no fresh worker is available", async () => {
+  const deps = makeDeps({ includeWorkerMonitoring: true });
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  await seedPlatformModelsEnabled(deps);
+
+  const result = await handleCreateCommercialTaskRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken },
+      body: {
+        userInput: makeUserInput(),
+        interactionMode: "enabled",
+        idempotencyKey: "task-key-1",
+      },
+    }),
+    deps,
+  );
+
+  assert.equal(result.status, 503);
+  assert.deepEqual(result.body, {
+    error: "Simulation workers are unavailable. Please retry shortly.",
+    code: "worker_unavailable",
+  });
+  assert.equal((await deps.repository.getCreditAccount("user_1"))?.balance, 9);
+  assert.equal((await deps.repository.getCreditAccount("user_1"))?.frozenCredits, 0);
 });
 
 test("commercial task creation preserves selected platform model in queue job", async () => {
@@ -1526,6 +1554,7 @@ function makeDeps(options: {
   discoverPlatformProviderModels?: ConstructorParameters<typeof CommercialAdminService>[0]["discoverPlatformProviderModels"];
   testPlatformModelConnection?: ConstructorParameters<typeof CommercialAdminService>[0]["testPlatformModelConnection"];
   clockValues?: string[];
+  includeWorkerMonitoring?: boolean;
 } = {}) {
   const repository = new InMemoryCommercialRepository();
   const ids = new TestIds();
@@ -1597,6 +1626,13 @@ function makeDeps(options: {
     resolveHostname: async () => ["172.64.154.211"],
     testProviderConnection: async () => ({ ok: true }),
   });
+  const workerMonitoringService = options.includeWorkerMonitoring
+    ? new WorkerMonitoringService({
+        repository,
+        maxActiveWeight: 6,
+        now,
+      })
+    : undefined;
 
   return {
     adminService,
@@ -1606,6 +1642,7 @@ function makeDeps(options: {
     queue,
     repository,
     taskService,
+    ...(workerMonitoringService !== undefined ? { workerMonitoringService } : {}),
   };
 }
 

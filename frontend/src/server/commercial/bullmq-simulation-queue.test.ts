@@ -20,13 +20,13 @@ test("BullMQ simulation queue name is accepted by BullMQ v5", () => {
   assert.equal(BULLMQ_SIMULATION_QUEUE_NAME.includes(":"), false);
 });
 
-test("BullMQ job id equals task id", async () => {
+test("BullMQ job id equals queue idempotency key", async () => {
   const fakeQueue = new FakeBullQueue();
   const queue = new BullMqSimulationQueue({ queue: fakeQueue });
 
-  await queue.enqueue(job({ taskId: "task_1" }));
+  await queue.enqueue(job({ taskId: "task_1", idempotencyKey: "task-key-1" }));
 
-  assert.equal(fakeQueue.addCalls[0]?.options.jobId, "task_1");
+  assert.equal(fakeQueue.addCalls[0]?.options.jobId, "task-key-1");
 });
 
 test("BullMQ job data includes weight and idempotency key", async () => {
@@ -59,7 +59,7 @@ test("BullMQ does not auto-retry simulation jobs because task resume owns retrie
   await queue.enqueue(job({ taskId: "task_1" }));
 
   assert.deepEqual(fakeQueue.addCalls[0]?.options, {
-    jobId: "task_1",
+    jobId: "idem_1",
     attempts: 1,
     priority: 7,
     removeOnComplete: 1_000,

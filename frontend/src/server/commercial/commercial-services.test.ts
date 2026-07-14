@@ -72,7 +72,7 @@ test("commercial mode creates platform services with Postgres and BullMQ adapter
   });
 
   assert.match(queryClient.queries[0]?.sql ?? "", /insert into analytics_events/i);
-  assert.equal(bullQueue.addCalls[0]?.options.jobId, "task_1");
+  assert.equal(bullQueue.addCalls[0]?.options.jobId, "task-key-1");
 });
 
 test("missing commercial config throws before server starts", () => {

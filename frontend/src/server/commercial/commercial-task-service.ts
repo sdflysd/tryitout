@@ -419,10 +419,21 @@ export class CommercialTaskService {
   async resumeTask(input: { taskId: string }): Promise<ResumeCommercialTaskResult> {
     validateRequired(input.taskId, "Task id");
     const task = await this.requireTask(input.taskId);
+    if (task.status === "queued") {
+      const userInput = task.userInput;
+      if (userInput === undefined) {
+        throw new CommercialTaskServiceError(
+          "invalid_task_input",
+          "Queued task is missing original user input",
+        );
+      }
+      await this.queue.enqueue(toSimulationQueueJob(task, { userInput }));
+      return { task };
+    }
     if (task.status !== "recoverable_failed") {
       throw new CommercialTaskServiceError(
         "invalid_task_transition",
-        "Only recoverable failed tasks can be resumed",
+        "Only queued or recoverable failed tasks can be resumed",
       );
     }
     const userInput = task.userInput;

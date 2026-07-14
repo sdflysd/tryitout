@@ -16,6 +16,7 @@ import {
   type EnabledCommercialServices,
 } from "./src/server/commercial/commercial-services.js";
 import { runSimulationQueueJob } from "./src/server/commercial/simulation-worker.js";
+import { getSimulationJobWeight } from "./src/server/commercial/simulation-queue.js";
 
 config();
 
@@ -34,6 +35,10 @@ const workerId = process.env.SIMULATION_WORKER_ID?.trim() || `worker_${process.p
 const workerConcurrency = resolveWorkerConcurrency(
   process.env.SIMULATION_WORKER_CONCURRENCY,
 );
+const workerHeartbeatIntervalMs = resolveWorkerHeartbeatIntervalMs(
+  process.env.SIMULATION_WORKER_HEARTBEAT_INTERVAL_MS,
+);
+const activeClaims = new Map<string, { taskId: string; weight: number }>();
 let platformGateway: AiGateway | undefined;
 const agentDebugTraceWriter = isAgentDebugLoggingEnabled()
   ? createAgentDebugTraceWriter()
@@ -65,21 +70,31 @@ async function main(): Promise<void> {
     workerId,
     concurrency: workerConcurrency,
     runClaim: async (claim) => {
-      await runSimulationQueueJob({
-        claim,
-        queue: {
-          release: async () => true,
-        },
-        repository: enabledCommercialServices.repository,
-        taskService: enabledCommercialServices.taskService,
-        workerId,
-        runSimulation: createCommercialWorkerRunSimulation({
-          job: claim.job,
-          services: enabledCommercialServices,
-          getPlatformGateway,
-          platformSecretEncryptionKey: enabledCommercialServices.platformSecretEncryptionKey,
-        }),
+      activeClaims.set(claim.claimId, {
+        taskId: claim.job.taskId,
+        weight: getSimulationJobWeight(claim.job),
       });
+      await recordWorkerHeartbeat();
+      try {
+        await runSimulationQueueJob({
+          claim,
+          queue: {
+            release: async () => true,
+          },
+          repository: enabledCommercialServices.repository,
+          taskService: enabledCommercialServices.taskService,
+          workerId,
+          runSimulation: createCommercialWorkerRunSimulation({
+            job: claim.job,
+            services: enabledCommercialServices,
+            getPlatformGateway,
+            platformSecretEncryptionKey: enabledCommercialServices.platformSecretEncryptionKey,
+          }),
+        });
+      } finally {
+        activeClaims.delete(claim.claimId);
+        await recordWorkerHeartbeat();
+      }
     },
   });
 
@@ -96,12 +111,21 @@ async function main(): Promise<void> {
   });
 
   await bullWorker.waitUntilReady();
+  await recordWorkerHeartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void recordWorkerHeartbeat().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[worker] heartbeat failed: ${message}`);
+    });
+  }, workerHeartbeatIntervalMs);
+  heartbeatTimer.unref?.();
   console.log(
     `[worker] ${workerId} listening for commercial simulation tasks with concurrency ${workerConcurrency}`,
   );
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+      clearInterval(heartbeatTimer);
       void bullWorker.close().finally(() => {
         process.exit(0);
       });
@@ -115,6 +139,17 @@ void main().catch((error: unknown) => {
   process.exitCode = 1;
 });
 
+async function recordWorkerHeartbeat(): Promise<void> {
+  const active = [...activeClaims.values()];
+  const activeWeight = active.reduce((total, claim) => total + claim.weight, 0);
+  const currentTaskId = active[0]?.taskId;
+  await enabledCommercialServices.workerMonitoringService.recordHeartbeat({
+    workerId,
+    activeWeight,
+    ...(currentTaskId !== undefined ? { currentTaskId } : {}),
+  });
+}
+
 function resolveWorkerConcurrency(value: string | undefined): number {
   if (!value) {
     return 1;
@@ -122,6 +157,17 @@ function resolveWorkerConcurrency(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error("SIMULATION_WORKER_CONCURRENCY must be a positive integer");
+  }
+  return parsed;
+}
+
+function resolveWorkerHeartbeatIntervalMs(value: string | undefined): number {
+  if (!value) {
+    return 10_000;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("SIMULATION_WORKER_HEARTBEAT_INTERVAL_MS must be a positive integer");
   }
   return parsed;
 }
