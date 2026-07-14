@@ -5,6 +5,7 @@ import {
   cancelSimulationTask,
   createSimulationTask,
   fetchActiveSimulationTask,
+  fetchSimulationTasks,
   getSimulationTaskReport,
   getSimulationTaskStatus,
   isRecoverableSimulationTaskError,
@@ -230,6 +231,33 @@ test("getSimulationTaskStatus marks commercial recoverable failures as resumable
   assert.equal(result.status, "recoverable_failed");
   assert.equal(result.recoverable, true);
   assert.equal(result.errorCode, "model_timeout");
+});
+
+test("fetchSimulationTasks reads the current user's task list", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    return jsonResponse({
+      tasks: [
+        {
+          id: "task_1",
+          scenarioType: "side_hustle",
+          interactionMode: "enabled",
+          status: "recoverable_failed",
+          progressPercent: 42,
+          recoverable: true,
+          updatedAt: "2026-07-14T08:00:00.000Z",
+        },
+      ],
+    });
+  };
+
+  const result = await fetchSimulationTasks(fetchImpl as typeof fetch);
+
+  assert.equal(calls[0]?.url, "/api/simulation-tasks");
+  assert.equal(calls[0]?.init?.credentials, "include");
+  assert.equal(result[0]?.simulationId, "task_1");
+  assert.equal(result[0]?.status, "recoverable_failed");
 });
 
 test("fetchActiveSimulationTask reads the current commercial active task", async () => {
@@ -672,4 +700,8 @@ function makeReport(id: string) {
       shouldDo: "test_small" as const,
     },
   };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200 });
 }

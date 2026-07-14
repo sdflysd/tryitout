@@ -2,6 +2,7 @@ import type {
   CreateSimulationTaskRequest,
   CreateSimulationTaskResponse,
   SimulationReportResponse,
+  SimulationTaskListResponse,
   SimulationTaskStatusResponse,
 } from "./contracts/simulation-task";
 import type {
@@ -37,6 +38,18 @@ export async function getSimulationTaskStatus(
   );
 
   return normalizeSimulationTaskStatusResponse(body);
+}
+
+export async function fetchSimulationTasks(
+  fetchImpl: typeof fetch = fetch,
+): Promise<SimulationTaskStatusResponse[]> {
+  const body = await readJsonResponse<unknown>(
+    await fetchImpl("/api/simulation-tasks", {
+      credentials: "include",
+    }),
+  );
+
+  return normalizeSimulationTaskListResponse(body).tasks;
 }
 
 export async function fetchActiveSimulationTask(
@@ -278,6 +291,19 @@ function normalizeCreateSimulationTaskResponse(
   }
 
   return body as CreateSimulationTaskResponse;
+}
+
+function normalizeSimulationTaskListResponse(
+  body: unknown,
+): SimulationTaskListResponse {
+  if (!isObject(body) || !Array.isArray(body.tasks)) {
+    return { tasks: [] };
+  }
+  return {
+    tasks: body.tasks
+      .filter((task) => isObject(task))
+      .map((task) => normalizeSimulationTaskStatusResponse({ task })),
+  };
 }
 
 function normalizeSimulationTaskStatusResponse(
