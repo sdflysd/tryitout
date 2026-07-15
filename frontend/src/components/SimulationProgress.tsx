@@ -86,7 +86,7 @@ export function getSimulationProgressCopy(
         logs: withDelays([
           "Parsing your relationship status, conflict trigger, and planned message...",
           "Extracting safety, boundaries, and emotional risk zones...",
-          "Generating 7 relationship Agents: you, TA, coach, boundaries, and reality checks...",
+          "Building the core relationship Agent team: you, TA, coach, boundaries, and reality checks...",
           "TA Agent is entering the sandbox to simulate guarded expectations and real responses...",
           "Communication Coach Agent is marking what helps and what hurts...",
           "External Pressure Agent is checking misunderstandings, rivals, and real-life friction...",
@@ -102,7 +102,7 @@ export function getSimulationProgressCopy(
           "Rendering the final relationship decision report and share card...",
         ]),
         heading: "Building the AI relationship multi-agent sandbox...",
-        subHeading: "We are simulating 7 emotional roles over the next 30 days around TA's response, communication rhythm, and relationship safety. Keep this page open while the Agents finish the run.",
+        subHeading: "We are simulating a core emotional Agent team over the next 30 days around TA's response, communication rhythm, and relationship safety. Keep this page open while the Agents finish the run.",
         progressLabel: "Calculating relationship simulation confidence...",
         tipLead: "Relationship sandbox note:",
         tipBody: "We simulate 5 stages because many relationships do not break on one sentence, but on follow-up pressure, old triggers, or unstable pacing. Seeing the rhythm first is cheaper than testing it live.",
@@ -121,7 +121,7 @@ export function getSimulationProgressCopy(
         logs: withDelays([
           "Parsing your options, real resources, and biggest fear...",
           "Extracting opportunity cost, regret risk, and survival assumptions...",
-          "Generating 7 decision Agents: self, route advocates, peers, family, resources, and fear...",
+          "Building the core decision Agent team: self, route advocates, peers, family, resources, and fear...",
           "Primary Route Agent is entering to amplify upside and hidden costs...",
           "Alternative Route Agent is calculating stability and ceiling limits...",
           "Peer Pressure Agent is simulating comparison, FOMO, and mental drag...",
@@ -137,7 +137,7 @@ export function getSimulationProgressCopy(
           "Rendering the final life choice report and share card...",
         ]),
         heading: "Building the AI life-choice multi-agent sandbox...",
-        subHeading: "We are simulating 7 real-world voices over the next 30 days around opportunity cost, stress tolerance, and survival baseline. Keep this page open while the Agents finish the run.",
+        subHeading: "We are simulating a core set of real-world voices over the next 30 days around opportunity cost, stress tolerance, and survival baseline. Keep this page open while the Agents finish the run.",
         progressLabel: "Calculating life-choice simulation confidence...",
         tipLead: "Decision sandbox note:",
         tipBody: "Major choices are rarely hard only at the moment of decision. The hard parts often show up in delayed pressure, regret, and resource limits. Simulating them first helps you move with less fog.",
@@ -155,7 +155,7 @@ export function getSimulationProgressCopy(
       logs: withDelays([
         "Parsing your side-hustle idea and current resources...",
         "Extracting the 4 core business validation assumptions...",
-        "Generating 7 business Agents with different incentives...",
+        "Building the core business Agent team with different incentives...",
         "Target Customer Agent is entering to test pain intensity and budget resistance...",
         "Competitor Agent is checking commoditization and free alternatives...",
         "Platform Traffic Agent is simulating cold-start friction across channels...",
@@ -171,7 +171,7 @@ export function getSimulationProgressCopy(
         "Rendering the final decision report and share card...",
       ]),
       heading: "Building the AI business multi-agent sandbox...",
-      subHeading: "We are simulating 7 roles over the next 30 days around target customer demand, competitors, platform traffic, execution, and cash flow. Keep this page open while the Agents finish the run.",
+      subHeading: "We are simulating role-based Agents over the next 30 days around target customer demand, competitors, platform traffic, execution, and cash flow. Keep this page open while the Agents finish the run.",
       progressLabel: "Calculating sandbox simulation confidence...",
       tipLead: "Sandbox note:",
       tipBody: "We simulate 5 stages because many side-hustle ideas fail after the first traffic test or when energy and cash flow start to bite. A dry run can save real money and time.",
@@ -190,7 +190,7 @@ export function getSimulationProgressCopy(
       logs: withDelays([
         "正在拆解你的恋爱状态、冲突导火索与待发送话术...",
         "正在抽提这段关系里的安全感、边界感与情绪雷区...",
-        "正在生成 7 个情感博弈 Agent：你、TA、情感教练与现实声音...",
+        "正在组建核心情感博弈 Agent 群：你、TA、情感教练与现实声音...",
         "TA Agent 正在入场，模拟慢热、防备、期待与真实回应...",
         "情感教练 Agent 正在标注话术里的加分点和扣分点...",
         "外部干扰 Agent 正在评估误会、竞争者与现实压力...",
@@ -206,7 +206,7 @@ export function getSimulationProgressCopy(
         "正在渲染合成最终情感决策报告与分享卡片...",
       ]),
       heading: "正在构建 AI 恋爱沟通多智能体沙盘...",
-      subHeading: "我们正在模拟 7 种情感角色未来 30 天围绕 TA 回应、沟通节奏与关系安全感的变化。请保持页面打开，Agent 会持续输出运行进度。",
+      subHeading: "我们正在让核心智能体群围绕 TA 回应、沟通节奏与关系安全感，推演未来 30 天变化。请保持页面打开，Agent 会持续输出运行进度。",
       progressLabel: "情感关系演绎置信度计算中...",
       tipLead: "恋爱沙盘提醒：",
       tipBody: "我们推演 5 个阶段，是因为很多关系不是毁在一句话，而是毁在第 4-7 天的追问、第 8-15 天的旧雷区复燃，或第 16-23 天心态失衡。先在沙盘里看清互动节奏，比现实里硬碰硬更值。",
@@ -225,7 +225,7 @@ export function getSimulationProgressCopy(
       logs: withDelays([
         "正在拆解你的几个选择、现实资源与最大恐惧...",
         "正在抽提机会成本、后悔风险与生存底线假设...",
-        "正在生成 7 个抉择博弈 Agent：自我、选项游说家、同辈与长辈声音...",
+        "正在组建核心抉择博弈 Agent 群：自我、选项游说家、同辈与长辈声音...",
         "主推方向 Agent 正在入场，放大它的收益与隐性代价...",
         "备选方向 Agent 正在入场，核算稳定感与天花板限制...",
         "同辈压力 Agent 正在模拟 FOMO、比较与精神内耗...",
@@ -241,7 +241,7 @@ export function getSimulationProgressCopy(
         "正在渲染合成最终人生抉择报告与分享卡片...",
       ]),
       heading: "正在构建 AI 人生抉择多智能体沙盘...",
-      subHeading: "我们正在模拟 7 种现实声音未来 30 天围绕机会成本、心理承受力与生存底线的拉扯。请保持页面打开，Agent 会持续输出运行进度。",
+      subHeading: "我们正在让核心智能体群围绕机会成本、心理承受力与生存底线，推演未来 30 天拉扯。请保持页面打开，Agent 会持续输出运行进度。",
       progressLabel: "人生抉择演绎置信度计算中...",
       tipLead: "抉择沙盘提醒：",
       tipBody: "我们推演 5 个阶段，是因为重大选择最难的不是做决定那一秒，而是第 8-15 天痛点爆发、第 16-23 天后悔感反扑。提前把代价摊开，才能少被情绪牵着走。",
@@ -259,7 +259,7 @@ export function getSimulationProgressCopy(
     logs: withDelays([
       "正在拆解分析你的副业想法与现存一手资源...",
       "正在抽提该项目的 4 个核心商业验证底层假设...",
-      "正在生成 7 个态度迥异的利益博弈 Agent 智能体角色...",
+      "正在组建核心利益博弈 Agent 群，拉开不同立场的压力测试...",
       "目标客户 Agent 正在加入世界线，模拟痛点真实度与预算抗阻...",
       "竞品 Agent 正在入场博弈，检测同质化免费替代方案威胁...",
       "平台流量 Agent 开始运算，演绎小红书/闲鱼算法冷启动摩擦...",
@@ -275,7 +275,7 @@ export function getSimulationProgressCopy(
       "正在渲染合成最终深度决策报告与多渠道分享卡片...",
     ]),
     heading: "正在构建 AI 利益博弈多智能体沙盘...",
-    subHeading: "我们正在用 Gemini 超脑模拟 7 种角色未来 30 天在目标渠道下的摩擦演变。请保持页面打开，Agent 会持续输出运行进度。",
+    subHeading: "我们正在让核心智能体群围绕目标渠道、现金流和执行压力，推演未来 30 天摩擦演变。请保持页面打开，Agent 会持续输出运行进度。",
     progressLabel: "沙盘演绎置信度计算中...",
     tipLead: "兄弟懂门道：",
     tipBody: "为什么我们要推演 5 个阶段？因为 90% 的副业想法都在第 8-15 天（获客期发现没流量）或者第 16-23 天（精力不够/心态崩溃）死掉。提前在沙盘模拟一次死法，能在现实中帮你省下大笔冤枉钱和时间。",
@@ -526,7 +526,7 @@ function getChineseAgentCreationCopy(
 ): FriendlyProgressCopy {
   if (simulationType === "dating") {
     return {
-      activeMessage: `正在创建 7 个情感沟通智能体${suffix}`,
+      activeMessage: `正在组建核心情感沟通智能体群${suffix}`,
       logs: [
         "TA Agent 正在入场，模拟慢热、防备、期待与真实回应...",
         "情感教练 Agent 正在标注话术里的加分点和扣分点...",
@@ -537,7 +537,7 @@ function getChineseAgentCreationCopy(
 
   if (simulationType === "life_choice") {
     return {
-      activeMessage: `正在创建 7 个人生抉择智能体${suffix}`,
+      activeMessage: `正在组建核心人生抉择智能体群${suffix}`,
       logs: [
         "主推方向 Agent 正在入场，放大收益与隐性代价...",
         "备选方向 Agent 正在核算稳定感与天花板限制...",
@@ -547,7 +547,7 @@ function getChineseAgentCreationCopy(
   }
 
   return {
-    activeMessage: `正在创建 7 个商业智能体${suffix}`,
+    activeMessage: `正在组建核心商业智能体群${suffix}`,
     logs: [
       "目标客户 Agent 正在入场，测试痛点真实度与预算抗阻...",
       "竞品 Agent 正在检查同质化和免费替代方案威胁...",
@@ -562,7 +562,7 @@ function getEnglishAgentCreationCopy(
 ): FriendlyProgressCopy {
   if (simulationType === "dating") {
     return {
-      activeMessage: `Creating 7 relationship Agents${suffix}`,
+      activeMessage: `Building the core relationship Agent team${suffix}`,
       logs: [
         "TA Agent is entering to model guarded expectations and real responses...",
         "Communication Coach Agent is marking what helps and what hurts...",
@@ -573,7 +573,7 @@ function getEnglishAgentCreationCopy(
 
   if (simulationType === "life_choice") {
     return {
-      activeMessage: `Creating 7 life-choice Agents${suffix}`,
+      activeMessage: `Building the core life-choice Agent team${suffix}`,
       logs: [
         "Primary Route Agent is entering to amplify upside and hidden costs...",
         "Alternative Route Agent is calculating stability and ceiling limits...",
@@ -583,7 +583,7 @@ function getEnglishAgentCreationCopy(
   }
 
   return {
-    activeMessage: `Creating 7 business Agents${suffix}`,
+    activeMessage: `Building the core business Agent team${suffix}`,
     logs: [
       "Target Customer Agent is entering to test pain intensity and budget resistance...",
       "Competitor Agent is checking commoditization and free alternatives...",

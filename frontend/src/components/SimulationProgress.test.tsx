@@ -206,7 +206,7 @@ test("progress display state explains backend steps with concrete user-facing ac
   const state = getProgressDisplayState(event, "zh-CN", "side_hustle");
 
   assert.equal(state.percent, 20);
-  assert.match(state.activeMessage, /正在创建 7 个商业智能体/);
+  assert.match(state.activeMessage, /正在组建核心商业智能体群/);
   assert.match(state.logs.join("\n"), /目标客户 Agent 正在入场/);
   assert.doesNotMatch(state.logs.join("\n"), /generate_agents/);
 });

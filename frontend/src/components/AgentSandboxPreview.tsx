@@ -91,7 +91,7 @@ export default function AgentSandboxPreview({
               {isEnglish ? "AI Starmap Sandbox" : "AI 星图沙盘"}
             </h2>
             <p className={`text-xs font-semibold ${accent.mutedText}`}>
-              {scenario.title} · {isEnglish ? "7 agents are building a worldline around your choice" : "7 个智能体正在围绕你的选择建立世界线"}
+              {scenario.title} · {isEnglish ? "Multiple agents are collaborating on the simulation" : "多位智能体正在协作推演"}
             </p>
           </div>
         </div>

@@ -319,8 +319,8 @@ export default function HomeView({
 
               <p id="home-subtitle" className="mt-5 max-w-xl text-sm leading-7 text-white/68 md:text-base">
                 {heroCopy.subtitle} {isEnglish
-                  ? "7 agents build a worldline around your choice so you can see the consequences before acting."
-                  : "7 个智能体正在围绕你的选择建立世界线，先把后果推演一遍，再决定要不要真的行动。"}
+                  ? "Agents with different viewpoints stress-test your choice so you can see likely consequences before acting."
+                  : "多位不同立场的智能体会围绕你的选择展开博弈，帮你看清可能的后果，再决定要不要真的行动。"}
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">

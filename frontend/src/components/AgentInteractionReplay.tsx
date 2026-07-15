@@ -112,12 +112,25 @@ function formatStateDelta(delta: WorldStateDelta, simulationType: SimulationType
   return formatWorldStateDelta(delta, simulationType, " · ");
 }
 
+function looksLikeInternalId(value: string): boolean {
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/i.test(value);
+}
+
+function formatAgentReference(
+  agentId: string,
+  agentDisplayNameById: Map<string, string> | undefined,
+): string {
+  return agentDisplayNameById?.get(agentId) ?? (looksLikeInternalId(agentId) ? "某个推演角色" : agentId);
+}
+
 export default function AgentInteractionReplay({
   stage,
   simulationType = "side_hustle",
+  agentDisplayNameById,
 }: {
   stage: SimulationStage;
   simulationType?: SimulationType;
+  agentDisplayNameById?: Map<string, string>;
 }) {
   if (!stage.interactions) {
     return null;
@@ -171,8 +184,8 @@ export default function AgentInteractionReplay({
                       <span>{getAgentActionLabel(action.type)}</span>
                     </span>
                     <span className="text-3xs font-mono text-gray-400 truncate">
-                      {action.actorAgentId}
-                      {action.targetAgentId ? ` -> ${action.targetAgentId}` : ""}
+                      {formatAgentReference(action.actorAgentId, agentDisplayNameById)}
+                      {action.targetAgentId ? ` -> ${formatAgentReference(action.targetAgentId, agentDisplayNameById)}` : ""}
                     </span>
                   </div>
                   <p className="text-2xs md:text-xs text-gray-800 leading-relaxed font-medium">
@@ -207,7 +220,7 @@ export default function AgentInteractionReplay({
                   </span>
                 </div>
                 <p className="text-3xs font-mono text-gray-500 truncate">
-                  {vote.agentId}
+                  {formatAgentReference(vote.agentId, agentDisplayNameById)}
                 </p>
                 <p className="text-2xs md:text-xs text-gray-700 leading-relaxed">
                   {vote.rationale}

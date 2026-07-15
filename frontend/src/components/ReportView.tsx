@@ -5,7 +5,7 @@ import {
   MessageSquare, UserCheck, ShieldAlert, Sparkles, CheckCircle2, 
   RefreshCw, ArrowUpRight, Share2, HelpCircle, ChevronRight, Play, PencilLine
 } from "lucide-react";
-import { Simulation, Agent, SimulationStage } from "../types";
+import type { Agent, Report, Simulation, SimulationStage, SimulationType } from "../types";
 import { postValidationEvent } from "../validation-events";
 import AgentInteractionReplay from "./AgentInteractionReplay";
 import RouteComparisonPanel from "./RouteComparisonPanel";
@@ -34,10 +34,448 @@ interface ReportViewProps {
   onEditInput: () => void;
 }
 
+type ReportScores = Report["scores"];
+type ReportActionPlanItem = Report["actionPlan7Days"][number];
+type ReportPivotSuggestion = Report["pivotSuggestions"][number];
+type ReportAgentEvidence = NonNullable<Report["agentEvidence"]>[number];
+
+const neutralScores: ReportScores = {
+  demandStrength: 50,
+  willingnessToPay: 50,
+  acquisitionDifficulty: 50,
+  competitionPressure: 50,
+  executionFit: 50,
+  monetizationClarity: 50,
+};
+
+const reportFallbacks: Record<
+  SimulationType,
+  {
+    projectName: string;
+    expectedRevenue: string;
+    finalRecommendation: string;
+    finalOutcome: string;
+    opportunities: string[];
+    risks: string[];
+    pivotSuggestions: ReportPivotSuggestion[];
+    actionPlan7Days: ReportActionPlanItem[];
+  }
+> = {
+  side_hustle: {
+    projectName: "当前方案",
+    expectedRevenue: "待补充",
+    finalRecommendation: "先保持原计划的小步验证，等报告字段补齐后再做重投入。",
+    finalOutcome: "报告字段不完整，当前结论仅作初步参考。",
+    opportunities: ["已有推演结果可作为初步判断依据。"],
+    risks: ["报告字段不完整，关键结论需要结合原始输入复核。"],
+    pivotSuggestions: [
+      {
+        title: "先补齐验证信号",
+        description: "围绕真实反馈、成本和风险再补一次小样本验证。",
+      },
+    ],
+    actionPlan7Days: [
+      {
+        day: 1,
+        title: "先按最终建议做一次最小验证",
+        action: "用低成本方式验证关键假设，并记录真实反馈后再继续推进。",
+      },
+    ],
+  },
+  dating: {
+    projectName: "当前关系议题",
+    expectedRevenue: "待补充",
+    finalRecommendation: "先放慢节奏，按当前建议做一次低压力沟通验证。",
+    finalOutcome: "报告字段不完整，当前结论仅作初步参考。",
+    opportunities: ["现有推演仍可作为关系沟通的初步参考。"],
+    risks: ["报告字段不完整，具体话术需要结合真实聊天语境复核。"],
+    pivotSuggestions: [
+      {
+        title: "先降低沟通压力",
+        description: "用一次轻量、无逼迫感的回应观察对方真实反馈。",
+      },
+    ],
+    actionPlan7Days: [
+      {
+        day: 1,
+        title: "先按最终建议做一次最小验证",
+        action: "发送低压力回应，观察对方反馈后再决定下一步。",
+      },
+    ],
+  },
+  life_choice: {
+    projectName: "当前人生选择",
+    expectedRevenue: "待补充",
+    finalRecommendation: "先保留退路，按当前建议做一次可逆的小步验证。",
+    finalOutcome: "报告字段不完整，当前结论仅作初步参考。",
+    opportunities: ["现有推演仍可作为选择方向的初步参考。"],
+    risks: ["报告字段不完整，重大选择需要结合现金流、家庭支持和退出条件复核。"],
+    pivotSuggestions: [
+      {
+        title: "先设计可逆验证",
+        description: "把选择拆成一个短周期试探，避免立刻进入不可逆投入。",
+      },
+    ],
+    actionPlan7Days: [
+      {
+        day: 1,
+        title: "先按最终建议做一次最小验证",
+        action: "列出退路和停止条件，再执行一个可逆的小测试。",
+      },
+    ],
+  },
+};
+
+const fallbackWorldState: SimulationStage["stateAfter"] = {
+  day: 30,
+  productClarity: 50,
+  executionEnergy: 50,
+  trafficProgress: 50,
+  trialUsers: 0,
+  paidUsers: 0,
+  revenue: 0,
+  riskLevel: 50,
+  confidence: 50,
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function getOptionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function getScore(value: unknown, fallback = 50): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function looksLikeInternalId(value: string): boolean {
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/i.test(value);
+}
+
+function getReadableAgentName(agent: Agent): string {
+  if (!looksLikeInternalId(agent.name)) {
+    return agent.name;
+  }
+  if (!looksLikeInternalId(agent.role)) {
+    return agent.role;
+  }
+  return "某个推演角色";
+}
+
+function buildAgentDisplayNameById(agents: Agent[]): Map<string, string> {
+  return new Map(
+    agents
+      .filter((agent) => looksLikeInternalId(agent.id))
+      .map((agent) => [agent.id, getReadableAgentName(agent)]),
+  );
+}
+
+function sanitizeAgentReferences(text: string, agentDisplayNameById: Map<string, string>): string {
+  const knownIds = [...agentDisplayNameById.entries()].sort((a, b) => b[0].length - a[0].length);
+  const withKnownIdsHidden = knownIds.reduce((current, [agentId, agentName]) => {
+    const idPattern = new RegExp(`(^|[^A-Za-z0-9_])(${escapeRegExp(agentId)})(?=$|[^A-Za-z0-9_])`, "g");
+    return current.replace(idPattern, `$1${agentName}`);
+  }, text);
+
+  return withKnownIdsHidden.replace(
+    /(^|[^A-Za-z0-9_])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?=$|[^A-Za-z0-9_])/gi,
+    "$1某个推演角色",
+  );
+}
+
+function normalizeSimulationType(value: unknown): SimulationType {
+  return value === "dating" || value === "life_choice" ? value : "side_hustle";
+}
+
+function normalizeStringArray(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function normalizeActionPlan(
+  value: unknown,
+  fallback: ReportActionPlanItem[],
+): ReportActionPlanItem[] {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item, index) => ({
+      day: getScore(item.day, index + 1),
+      title: getText(item.title, fallback[0]?.title ?? "先做一次低成本验证"),
+      action: getText(item.action, fallback[0]?.action ?? "记录真实反馈后再继续推进。"),
+    }));
+}
+
+function normalizePivotSuggestions(
+  value: unknown,
+  fallback: ReportPivotSuggestion[],
+): ReportPivotSuggestion[] {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item) => ({
+      title: getText(item.title, fallback[0]?.title ?? "先补齐验证信号"),
+      description: getText(item.description, fallback[0]?.description ?? "先做一次低成本复核。"),
+    }));
+}
+
+function normalizeAgentEvidence(value: unknown): Report["agentEvidence"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const rows: ReportAgentEvidence[] = value.filter(isRecord).map((item) => ({
+    conclusion: getText(item.conclusion, "报告结论待补齐"),
+    supportingAgentIds: normalizeStringArray(item.supportingAgentIds, []),
+    opposingAgentIds: normalizeStringArray(item.opposingAgentIds, []),
+    evidence: getText(item.evidence, "暂无结构化证据。"),
+  }));
+
+  return rows.length > 0 ? rows : undefined;
+}
+
+function normalizeScores(value: unknown): ReportScores {
+  const rawScores = isRecord(value) ? value : {};
+  return {
+    demandStrength: getScore(rawScores.demandStrength, neutralScores.demandStrength),
+    willingnessToPay: getScore(rawScores.willingnessToPay, neutralScores.willingnessToPay),
+    acquisitionDifficulty: getScore(rawScores.acquisitionDifficulty, neutralScores.acquisitionDifficulty),
+    competitionPressure: getScore(rawScores.competitionPressure, neutralScores.competitionPressure),
+    executionFit: getScore(rawScores.executionFit, neutralScores.executionFit),
+    monetizationClarity: getScore(rawScores.monetizationClarity, neutralScores.monetizationClarity),
+  };
+}
+
+function normalizeRiskLevel(value: unknown): Report["riskLevel"] {
+  return value === "low" || value === "medium" || value === "high" || value === "very_high"
+    ? value
+    : "medium";
+}
+
+function normalizeShouldDo(value: unknown): Report["shouldDo"] {
+  return value === "strong_yes" ||
+    value === "test_small" ||
+    value === "not_directly" ||
+    value === "change_direction" ||
+    value === "not_recommended"
+    ? value
+    : "test_small";
+}
+
+function sanitizeReportTextFields(report: Report, agentDisplayNameById: Map<string, string>): Report {
+  const sanitize = (text: string) => sanitizeAgentReferences(text, agentDisplayNameById);
+  return {
+    ...report,
+    projectName: sanitize(report.projectName),
+    disclaimer: report.disclaimer ? sanitize(report.disclaimer) : undefined,
+    expectedRevenue: sanitize(report.expectedRevenue),
+    finalRecommendation: sanitize(report.finalRecommendation),
+    finalOutcome: sanitize(report.finalOutcome),
+    opportunities: report.opportunities.map(sanitize),
+    risks: report.risks.map(sanitize),
+    pivotSuggestions: report.pivotSuggestions.map((suggestion) => ({
+      title: sanitize(suggestion.title),
+      description: sanitize(suggestion.description),
+    })),
+    agentEvidence: report.agentEvidence?.map((row) => ({
+      ...row,
+      conclusion: sanitize(row.conclusion),
+      evidence: sanitize(row.evidence),
+    })),
+    disagreementSummary: report.disagreementSummary ? sanitize(report.disagreementSummary) : undefined,
+    actionPlan7Days: report.actionPlan7Days.map((item) => ({
+      ...item,
+      title: sanitize(item.title),
+      action: sanitize(item.action),
+    })),
+  };
+}
+
+function normalizeReportForView(
+  value: unknown,
+  type: SimulationType,
+  agentDisplayNameById: Map<string, string>,
+): Report {
+  const rawReport = isRecord(value) ? value : {};
+  const fallback = reportFallbacks[type];
+
+  const report: Report = {
+    projectName: getText(rawReport.projectName, fallback.projectName),
+    disclaimer: getOptionalText(rawReport.disclaimer),
+    successProbability: getScore(rawReport.successProbability, 0),
+    expectedRevenue: getText(rawReport.expectedRevenue, fallback.expectedRevenue),
+    riskLevel: normalizeRiskLevel(rawReport.riskLevel),
+    finalRecommendation: getText(rawReport.finalRecommendation, fallback.finalRecommendation),
+    scores: normalizeScores(rawReport.scores),
+    finalOutcome: getText(rawReport.finalOutcome, fallback.finalOutcome),
+    opportunities: normalizeStringArray(rawReport.opportunities, fallback.opportunities),
+    risks: normalizeStringArray(rawReport.risks, fallback.risks),
+    pivotSuggestions: normalizePivotSuggestions(rawReport.pivotSuggestions, fallback.pivotSuggestions),
+    agentEvidence: normalizeAgentEvidence(rawReport.agentEvidence),
+    disagreementSummary: getOptionalText(rawReport.disagreementSummary),
+    actionPlan7Days: normalizeActionPlan(rawReport.actionPlan7Days, fallback.actionPlan7Days),
+    shouldDo: normalizeShouldDo(rawReport.shouldDo),
+  };
+
+  return sanitizeReportTextFields(report, agentDisplayNameById);
+}
+
+function normalizeAgent(value: unknown, index: number): Agent {
+  const rawAgent = isRecord(value) ? value : {};
+  return {
+    id: getText(rawAgent.id, `fallback_agent_${index + 1}`),
+    name: getText(rawAgent.name, index === 0 ? "推演 Agent" : `推演 Agent ${index + 1}`),
+    role: getText(rawAgent.role, "报告复核员"),
+    layer: rawAgent.layer as Agent["layer"],
+    stance: getText(rawAgent.stance, "观望"),
+    personality: getOptionalText(rawAgent.personality),
+    personalityKernel: rawAgent.personalityKernel as Agent["personalityKernel"],
+    roleCard: rawAgent.roleCard as Agent["roleCard"],
+    memory: rawAgent.memory as Agent["memory"],
+    keyJudgment: getText(rawAgent.keyJudgment, "报告字段不完整，建议先做低成本验证并记录反馈。"),
+    objection: getOptionalText(rawAgent.objection),
+    score: typeof rawAgent.score === "number" ? rawAgent.score : undefined,
+  };
+}
+
+function normalizeAgents(value: unknown): Agent[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [normalizeAgent(undefined, 0)];
+  }
+
+  return value.map(normalizeAgent);
+}
+
+function normalizeStageEvent(value: unknown): SimulationStage["events"][number] {
+  const rawEvent = isRecord(value) ? value : {};
+  const impact = rawEvent.impact === "positive" || rawEvent.impact === "negative" ? rawEvent.impact : "neutral";
+  return {
+    type: "execution",
+    title: getText(rawEvent.title, "阶段事件待补齐"),
+    description: getText(rawEvent.description, "暂无事件描述。"),
+    impact,
+  };
+}
+
+function normalizeAgentReaction(value: unknown, index: number): SimulationStage["agentReactions"][number] {
+  const rawReaction = isRecord(value) ? value : {};
+  return {
+    agentId: getText(rawReaction.agentId, `fallback_agent_${index + 1}`),
+    agentName: getText(rawReaction.agentName, `推演 Agent ${index + 1}`),
+    quote: getText(rawReaction.quote, "报告字段不完整。"),
+    interpretation: getText(rawReaction.interpretation, "建议结合原始输入复核。"),
+    fieldAffected: getText(rawReaction.fieldAffected, "confidence"),
+    delta: typeof rawReaction.delta === "number" ? rawReaction.delta : 0,
+  };
+}
+
+function normalizeWorldState(value: unknown): SimulationStage["stateAfter"] {
+  const rawState = isRecord(value) ? value : {};
+  return {
+    day: getScore(rawState.day, fallbackWorldState.day),
+    productClarity: getScore(rawState.productClarity, fallbackWorldState.productClarity),
+    executionEnergy: getScore(rawState.executionEnergy, fallbackWorldState.executionEnergy),
+    trafficProgress: getScore(rawState.trafficProgress, fallbackWorldState.trafficProgress),
+    trialUsers: typeof rawState.trialUsers === "number" && Number.isFinite(rawState.trialUsers)
+      ? Math.max(0, Math.round(rawState.trialUsers))
+      : fallbackWorldState.trialUsers,
+    paidUsers: typeof rawState.paidUsers === "number" && Number.isFinite(rawState.paidUsers)
+      ? Math.max(0, Math.round(rawState.paidUsers))
+      : fallbackWorldState.paidUsers,
+    revenue: typeof rawState.revenue === "number" && Number.isFinite(rawState.revenue)
+      ? Math.max(0, Math.round(rawState.revenue))
+      : fallbackWorldState.revenue,
+    riskLevel: getScore(rawState.riskLevel, fallbackWorldState.riskLevel),
+    confidence: getScore(rawState.confidence, fallbackWorldState.confidence),
+  };
+}
+
+function normalizeStage(value: unknown, index: number): SimulationStage {
+  const rawStage = isRecord(value) ? value : {};
+  return {
+    stageIndex: getScore(rawStage.stageIndex, index + 1),
+    timeRange: getText(rawStage.timeRange, `第 ${index + 1} 阶段`),
+    title: getText(rawStage.title, "阶段推演待补齐"),
+    summary: getText(rawStage.summary, "报告阶段信息仍在补齐，当前先参考已有结论。"),
+    events: Array.isArray(rawStage.events) ? rawStage.events.map(normalizeStageEvent) : [],
+    agentReactions: Array.isArray(rawStage.agentReactions)
+      ? rawStage.agentReactions.map(normalizeAgentReaction)
+      : [],
+    interactions: isRecord(rawStage.interactions)
+      ? rawStage.interactions as unknown as SimulationStage["interactions"]
+      : undefined,
+    stateAfter: normalizeWorldState(rawStage.stateAfter),
+    keyDecision: getText(rawStage.keyDecision, "下一步最关键的选择是什么？"),
+    nextSuggestion: getText(rawStage.nextSuggestion, "先做低成本验证，并记录真实反馈。"),
+  };
+}
+
+function normalizeStages(value: unknown): SimulationStage[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [normalizeStage(undefined, 0)];
+  }
+
+  return value.map(normalizeStage);
+}
+
+function normalizeRouteComparison(value: unknown): Simulation["routeComparison"] {
+  if (!isRecord(value) || !Array.isArray(value.routes) || value.routes.length === 0) {
+    return undefined;
+  }
+
+  return value as unknown as Simulation["routeComparison"];
+}
+
+function normalizeSimulationForReportView(simulation: Simulation): Simulation {
+  const rawSimulation = simulation as Partial<Simulation>;
+  const rawUserInput: Record<string, unknown> = isRecord(rawSimulation.userInput) ? rawSimulation.userInput : {};
+  const type = normalizeSimulationType(rawSimulation.type ?? rawUserInput.type);
+  const agents = normalizeAgents(rawSimulation.agents);
+  const agentDisplayNameById = buildAgentDisplayNameById(agents);
+
+  return {
+    ...simulation,
+    id: getText(rawSimulation.id, "simulation_report"),
+    type,
+    userInput: {
+      ...rawUserInput,
+      type,
+    },
+    agents,
+    stages: normalizeStages(rawSimulation.stages),
+    report: normalizeReportForView(rawSimulation.report, type, agentDisplayNameById),
+    createdAt: getText(rawSimulation.createdAt, new Date(0).toISOString()),
+    routeComparison: normalizeRouteComparison(rawSimulation.routeComparison),
+  };
+}
+
 export default function ReportView({ simulation, onRestart, onOpenShareCard, onEditInput }: ReportViewProps) {
-  const { report, agents, stages } = simulation;
+  const normalizedSimulation = useMemo(() => normalizeSimulationForReportView(simulation), [simulation]);
+  const { report, agents, stages } = normalizedSimulation;
   
-  const simType = simulation.type || simulation.userInput.type || "side_hustle";
+  const simType = normalizedSimulation.type;
 
   const [selectedAgentId, setSelectedAgentId] = useState<string>(agents[1]?.id || agents[0]?.id);
   const [expandedStageIndex, setExpandedStageIndex] = useState<number>(0); // Default expand stage 1
@@ -49,10 +487,10 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
   const agentRailDrag = useMemo(() => createHorizontalDragScrollController(), []);
 
   useEffect(() => {
-    if (reportViewedTracker.shouldPost(simulation)) {
-      void postValidationEvent(buildReportViewedEvent(simulation));
+    if (reportViewedTracker.shouldPost(normalizedSimulation)) {
+      void postValidationEvent(buildReportViewedEvent(normalizedSimulation));
     }
-  }, [simulation]);
+  }, [normalizedSimulation]);
 
   const handleToggleDay = (day: number) => {
     if (checkedDays.includes(day)) {
@@ -65,7 +503,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
   const submitFeedback = (e: React.FormEvent) => {
     e.preventDefault();
     void postValidationEvent(
-      buildFeedbackEvent(simulation, {
+      buildFeedbackEvent(normalizedSimulation, {
         rating: feedbackRating,
         usefulness: feedbackRating,
         price: feedbackPrice,
@@ -199,17 +637,17 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
   const verdict = getShouldDoDetails(report.shouldDo, simType);
   const selectedAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
-  const deepSectionVisible = shouldShowDeepSection(simulation);
+  const deepSectionVisible = shouldShowDeepSection(normalizedSimulation);
   const visibleActionPlan = getVisibleActionPlan(report.actionPlan7Days);
-  const agentEvidence = buildAgentEvidenceRows(simulation);
-  const arbiterEvidence = buildArbiterEvidence(simulation);
-  const keyVariables = buildKeyVariables(simulation);
-  const agentMemoryEvidence = buildAgentMemoryEvidence(simulation);
-  const reportModeSummary = getReportModeSummary(simulation);
+  const agentEvidence = buildAgentEvidenceRows(normalizedSimulation);
+  const arbiterEvidence = buildArbiterEvidence(normalizedSimulation);
+  const keyVariables = buildKeyVariables(normalizedSimulation);
+  const agentMemoryEvidence = buildAgentMemoryEvidence(normalizedSimulation);
+  const reportModeSummary = getReportModeSummary(normalizedSimulation);
   const reportEvidenceRows = report.agentEvidence?.slice(0, 3) ?? [];
-  const agentNameById = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const agentNameById = buildAgentDisplayNameById(agents);
   const formatAgentNames = (agentIds: string[]) =>
-    agentIds.map((agentId) => agentNameById.get(agentId) ?? agentId).join("、") || "无";
+    agentIds.map((agentId) => agentNameById.get(agentId) ?? "某个推演角色").join("、") || "无";
   const coreAgentCount = agents.filter((agent) => agent.layer !== "peripheral").length;
   const peripheralAgentCount = agents.filter((agent) => agent.layer === "peripheral").length;
   const agentPanelDescription =
@@ -318,9 +756,9 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
   }[simType];
 
   const recommendedRoute =
-    simulation.routeComparison?.routes.find(
-      (route) => route.id === simulation.routeComparison?.recommendedRouteId,
-    ) ?? simulation.routeComparison?.routes[0];
+    normalizedSimulation.routeComparison?.routes?.find(
+      (route) => route.id === normalizedSimulation.routeComparison?.recommendedRouteId,
+    ) ?? normalizedSimulation.routeComparison?.routes?.[0];
   const firstAction = visibleActionPlan[0] ?? report.actionPlan7Days[0];
   const actionPreview = visibleActionPlan.slice(0, 3);
   const riskLabel =
@@ -333,7 +771,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           : "极高风险";
   const projectTitle =
     simType === "side_hustle"
-      ? `项目：《${report.projectName || simulation.userInput.projectIdea.slice(0, 15) + "..."}》`
+      ? `项目：《${report.projectName || (normalizedSimulation.userInput.projectIdea ? `${normalizedSimulation.userInput.projectIdea.slice(0, 15)}...` : "当前方案")}》`
       : simType === "dating"
         ? `关系阶段：《${report.projectName || "聊天破冰矛盾解套"}》`
         : `重大抉择天平：《${report.projectName || "天平碰撞抉择"}》`;
@@ -673,7 +1111,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
                 }
               }}
             >
-              {agents.map((agent) => {
+              {agents.map((agent, index) => {
                 const isSelected = agent.id === selectedAgentId;
                 const stanceBadge = agent.stance === "支持"
                   ? "bg-emerald-500"
@@ -685,7 +1123,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
 
                 return (
                   <button
-                    id={`btn-select-agent-${agent.id}`}
+                    id={`btn-select-agent-${index + 1}`}
                     key={agent.id}
                     type="button"
                     onClick={() => setSelectedAgentId(agent.id)}
@@ -838,7 +1276,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         <div className="space-y-4">
           <span className="text-2xs font-bold text-gray-400 uppercase tracking-widest block">Simulation Report</span>
           <h1 id="report-project-name" className="text-xl md:text-2xl font-black text-gray-950 tracking-tight pr-16">
-            {simType === "side_hustle" && `项目：《${report.projectName || simulation.userInput.projectIdea.slice(0, 15) + "..."}》`}
+            {simType === "side_hustle" && `项目：《${report.projectName || (normalizedSimulation.userInput.projectIdea ? `${normalizedSimulation.userInput.projectIdea.slice(0, 15)}...` : "当前方案")}》`}
             {simType === "dating" && `关系阶段：《${report.projectName || "聊天破冰矛盾解套"}》`}
             {simType === "life_choice" && `重大抉择天平：《${report.projectName || "天平碰撞抉择"}》`}
           </h1>
@@ -1005,7 +1443,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
       )}
 
-      <RouteComparisonPanel simulation={simulation} />
+      <RouteComparisonPanel simulation={normalizedSimulation} />
 
       {/* Score Radar / Bar Grid */}
       <div id="report-score-panel" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
@@ -1096,7 +1534,11 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           </p>
 
           {deepSectionVisible ? (
-            <AgentInteractionReplay stage={stages[expandedStageIndex]} simulationType={simType} />
+            <AgentInteractionReplay
+              stage={stages[expandedStageIndex]}
+              simulationType={simType}
+              agentDisplayNameById={agentNameById}
+            />
           ) : null}
 
           {/* Events array */}
@@ -1295,7 +1737,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
         </div>
       </div>
 
-      <OutcomeFeedbackPanel simulation={simulation} />
+      <OutcomeFeedbackPanel simulation={normalizedSimulation} />
 
       {/* User Feedback Panel */}
       <div id="report-feedback-section" className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs text-left">
@@ -1415,7 +1857,7 @@ export default function ReportView({ simulation, onRestart, onOpenShareCard, onE
           </p>
         )}
         <p className="text-2xs text-gray-400 font-mono">
-          试一下 | Powered by Google Gemini 3.5 Flash & Antigravity Agent
+          试一下 | AI 多智能体模拟参考
         </p>
       </div>
       

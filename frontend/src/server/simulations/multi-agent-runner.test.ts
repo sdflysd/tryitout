@@ -533,6 +533,7 @@ test("generate report prompt asks for agent-backed conclusions", async () => {
   assert.match(reportCall.userPrompt, /每个核心结论必须引用至少一个 Agent/);
   assert.match(reportCall.userPrompt, /agentEvidence/);
   assert.match(reportCall.userPrompt, /disagreementSummary/);
+  assert.match(reportCall.userPrompt, /自然语言字段不要输出 agent id/);
 });
 
 test("agent generation prompt keeps composition and role card guards", async () => {

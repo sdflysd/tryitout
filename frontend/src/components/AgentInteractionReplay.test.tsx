@@ -88,6 +88,51 @@ test("AgentInteractionReplay renders interaction summary, actions, and votes", (
   assert.match(markup, /CONF 81%/);
 });
 
+test("AgentInteractionReplay renders display names instead of internal agent ids", () => {
+  const markup = renderToStaticMarkup(
+    <AgentInteractionReplay
+      agentDisplayNameById={new Map([
+        ["arbiter_agent", "裁判角色"],
+        ["optimist_agent", "乐观验证者"],
+      ])}
+      stage={{
+        ...baseStage,
+        interactions: {
+          activatedAgentIds: ["arbiter_agent"],
+          actions: [
+            {
+              id: "act_1",
+              type: "challenge",
+              actorAgentId: "arbiter_agent",
+              targetAgentId: "optimist_agent",
+              content: "你忽略了信任成本。",
+              reason: "证据链不足。",
+              impact: "negative",
+            },
+          ],
+          votes: [
+            {
+              agentId: "arbiter_agent",
+              verdict: "pivot",
+              confidence: 81,
+              stateDeltaVote: { confidence: -8 },
+              rationale: "先手动验证。",
+            },
+          ],
+          relationships: [],
+          mergedVoteDelta: { confidence: -8 },
+          finalDelta: { confidence: -8 },
+          arbiterSummary: "裁判采纳质疑。",
+        },
+      }}
+    />,
+  );
+
+  assert.doesNotMatch(markup, /arbiter_agent|optimist_agent/);
+  assert.match(markup, /裁判角色/);
+  assert.match(markup, /乐观验证者/);
+});
+
 test("AgentInteractionReplay translates life choice vote deltas", () => {
   const markup = renderToStaticMarkup(
     <AgentInteractionReplay

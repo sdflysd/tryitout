@@ -245,6 +245,49 @@ test("report view renders report disclaimer when present", () => {
   assert.match(html, /不构成投资/);
 });
 
+test("report view does not claim a fixed model provider in bottom credits", () => {
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={reportSimulation}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.match(html, /试一下 \| AI 多智能体模拟参考/);
+  assert.doesNotMatch(html, /Powered by/i);
+  assert.doesNotMatch(html, /Google|Gemini|Antigravity/i);
+});
+
+test("report view renders fallback sections when a stored report is missing generated arrays", () => {
+  const incompleteSimulation = {
+    ...reportSimulation,
+    userInput: { type: "side_hustle" },
+    report: {
+      projectName: "",
+      successProbability: 48,
+      expectedRevenue: "待补充",
+      riskLevel: "medium",
+      finalRecommendation: "先保持原计划的小步验证。",
+      finalOutcome: "仍需补齐报告字段",
+      shouldDo: "test_small",
+    },
+  } as unknown as Simulation;
+
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={incompleteSimulation}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.match(html, /先按最终建议做一次最小验证/);
+  assert.match(html, /报告字段不完整/);
+});
+
 test("report view renders agent-backed evidence when present", () => {
   const html = renderToStaticMarkup(
     <ReportView
@@ -272,6 +315,67 @@ test("report view renders agent-backed evidence when present", () => {
   assert.match(html, /Agent 分歧证据/);
   assert.match(html, /先做人工服务验证/);
   assert.match(html, /客户需要真实案例/);
+});
+
+test("report view hides internal agent ids inside generated report prose", () => {
+  const html = renderToStaticMarkup(
+    <ReportView
+      simulation={{
+        ...reportSimulation,
+        agents: [
+          {
+            ...reportSimulation.agents[0],
+            id: "cashflow_agent",
+            name: "现金流教练",
+            role: "家庭现金流顾问",
+          },
+          {
+            ...reportSimulation.agents[1],
+            id: "environment_cashflow_industry",
+            name: "行业环境观察员",
+            role: "职业教育行业观察员",
+          },
+          {
+            id: "self_conflicted_inner",
+            name: "内心冲突观察员",
+            role: "用户内心冲突",
+            stance: "观望",
+            keyJudgment: "担心高压与沉迷。",
+          },
+        ],
+        report: {
+          ...reportSimulation.report,
+          disagreementSummary:
+            "分歧最大的是cashflow_agent、environment_cashflow_industry、alternative_competing_paths与self_conflicted_inner。cashflow_agent担心现金流。",
+          agentEvidence: [
+            {
+              conclusion: "cashflow_agent建议先稳现金流",
+              supportingAgentIds: ["cashflow_agent"],
+              opposingAgentIds: [
+                "environment_cashflow_industry",
+                "alternative_competing_paths",
+                "self_conflicted_inner",
+              ],
+              evidence:
+                "environment_cashflow_industry提醒行业通道，self_conflicted_inner担心游戏消耗。",
+            },
+          ],
+        },
+      }}
+      onRestart={() => undefined}
+      onOpenShareCard={() => undefined}
+      onEditInput={() => undefined}
+    />,
+  );
+
+  assert.doesNotMatch(html, /cashflow_agent/);
+  assert.doesNotMatch(html, /environment_cashflow_industry/);
+  assert.doesNotMatch(html, /alternative_competing_paths/);
+  assert.doesNotMatch(html, /self_conflicted_inner/);
+  assert.match(html, /现金流教练/);
+  assert.match(html, /行业环境观察员/);
+  assert.match(html, /内心冲突观察员/);
+  assert.match(html, /某个推演角色/);
 });
 
 test("report view shows the complete report without an unlock paywall", () => {

@@ -38,7 +38,9 @@ test("homepage hero uses concise decision-sandbox advertising copy", () => {
   assert.match(html, /AI 星图沙盘 · 30 天推演/);
   assert.match(html, /home-ambient-mesh/);
   assert.match(html, /传播级 AI 决策沙盘/);
-  assert.match(html, /先模拟试一次 30 天后的风险、机会和下一步/);
+  assert.match(html, /先模拟 30 天后的风险、机会和下一步推演一遍/);
+  assert.match(html, /多位不同立场的智能体会围绕你的选择展开博弈/);
+  assert.doesNotMatch(html, /7 个智能体/);
   assert.match(html, /home-starmap-shell/);
   assert.match(html, /text-white/);
   assert.doesNotMatch(html, /商业世界线/);
@@ -68,7 +70,7 @@ test("homepage renders agent sandbox preview near the hero", () => {
 
   assert.match(html, /AI 星图沙盘/);
   assert.match(html, /AI 多智能体沙盘预演/);
-  assert.match(html, /7 个智能体正在围绕你的选择建立世界线/);
+  assert.match(html, /多位智能体正在协作推演/);
   assert.match(html, /未来后果可视化/);
   assert.match(html, /agent-sandbox-orb/);
   assert.match(html, /agent-preview-orb-stage-rail/);

@@ -758,6 +758,7 @@ ${JSON.stringify(stages, null, 2)}
 }
 要求：actionPlan7Days 必须正好 7 天；opportunities、risks、pivotSuggestions 各至少 2 条；disclaimer 必须保留“模拟参考、不构成投资/职业/法律/心理建议”的含义。
 每个核心结论必须引用至少一个 Agent；不要把报告写成普通总结，要体现多 Agent 分歧、证据和裁决。
+自然语言字段不要输出 agent id 或下划线标识；conclusion、evidence、disagreementSummary 等正文只能使用 Agent 的 name/role。agent id 只允许出现在 supportingAgentIds 和 opposingAgentIds 数组中。
 `;
 }
 

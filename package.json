@@ -1,0 +1,15 @@
+{
+  "name": "tryitout-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "worker": "npm --prefix frontend run worker",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix frontend run start",
+    "start:worker": "npm --prefix frontend run start:worker",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm --prefix frontend run test",
+    "seed:admin": "npm --prefix frontend run seed:admin",
+    "export:access-codes": "npm --prefix frontend run export:access-codes"
+  }
+}

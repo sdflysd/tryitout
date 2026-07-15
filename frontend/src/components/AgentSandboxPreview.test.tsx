@@ -17,8 +17,8 @@ test("preview sandbox renders an AI starmap for side hustle", () => {
   assert.match(html, /agent-preview-signal-rail/);
   assert.match(html, /viral-signature/);
   assert.match(html, /未来后果可视化/);
-  assert.match(html, /7 个智能体/);
-  assert.match(html, /世界线/);
+  assert.match(html, /多位智能体正在协作推演/);
+  assert.doesNotMatch(html, /7 个智能体/);
   assert.match(html, /bg-\[#050711\]/);
   assert.match(html, /目标客户/);
   assert.match(html, /竞品/);
