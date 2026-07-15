@@ -198,6 +198,10 @@ type UpdatePlatformModelsBody = {
   enabledModelProfileIds: string[];
 };
 
+type UpdateInitialUserCreditsBody = {
+  initialCredits: number;
+};
+
 type SaveAdminModelProviderBody = {
   provider: "gemini" | "anthropic" | "openai_compatible";
   displayName: string;
@@ -1042,6 +1046,35 @@ export async function handleUpdateAdminPlatformModelsRequest(
         settings: await deps.adminService.updatePlatformModels({
           actorUserId: auth.user.id,
           enabledModelProfileIds: parsed.value.enabledModelProfileIds,
+          requestContext: getAdminRequestContext(request),
+        }),
+      },
+    };
+  } catch (error) {
+    return mapAdminError(error);
+  }
+}
+
+export async function handleUpdateAdminInitialUserCreditsRequest(
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ settings: Awaited<ReturnType<CommercialAdminService["getSettings"]>> } | CommercialApiErrorBody>> {
+  const auth = await requireAdmin(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+  const parsed = parseUpdateInitialUserCreditsBody(request.body);
+  if (parsed.ok === false) {
+    return badRequest(parsed.error, "invalid_admin_input");
+  }
+
+  try {
+    return {
+      status: 200,
+      body: {
+        settings: await deps.adminService.updateInitialUserCredits({
+          actorUserId: auth.user.id,
+          initialCredits: parsed.value.initialCredits,
           requestContext: getAdminRequestContext(request),
         }),
       },
@@ -2110,6 +2143,28 @@ function parseUpdatePlatformModelsBody(
   return {
     ok: true,
     value: { enabledModelProfileIds },
+  };
+}
+
+function parseUpdateInitialUserCreditsBody(
+  body: unknown,
+):
+  | { ok: true; value: UpdateInitialUserCreditsBody }
+  | { ok: false; error: string } {
+  if (!isObject(body)) {
+    return { ok: false, error: "request body must be an object" };
+  }
+  if (
+    typeof body.initialCredits !== "number" ||
+    !Number.isInteger(body.initialCredits) ||
+    body.initialCredits < 0
+  ) {
+    return { ok: false, error: "initialCredits must be a non-negative integer" };
+  }
+
+  return {
+    ok: true,
+    value: { initialCredits: body.initialCredits },
   };
 }
 

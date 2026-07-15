@@ -32,6 +32,7 @@ import {
   handleSaveAdminModelProviderRequest,
   handleTestAdminModelProfileRequest,
   handleTestAdminModelProviderRequest,
+  handleUpdateAdminInitialUserCreditsRequest,
   handleUpdateAdminUserRequest,
   handleUpdateAdminPlatformModelsRequest,
   type CommercialApiResult,
@@ -263,6 +264,17 @@ export function registerCommercialAdminRoutes(
       return sendDisabled(res);
     }
     const result = await handleUpdateAdminPlatformModelsRequest(
+      toCommercialRequest(req),
+      services,
+    );
+    sendCommercialApiResult(res, result);
+  });
+
+  app.post("/api/admin/settings/initial-user-credits", async (req, res) => {
+    if (!services.enabled) {
+      return sendDisabled(res);
+    }
+    const result = await handleUpdateAdminInitialUserCreditsRequest(
       toCommercialRequest(req),
       services,
     );

@@ -12,7 +12,7 @@ import type { CommercialRepository } from "./repository.js";
 const SESSION_SECRET = "commercial-session-secret-with-at-least-32-characters";
 const NOW = "2026-07-07T00:00:00.000Z";
 
-test("register normalizes email, hashes password, and creates an empty credit account", async () => {
+test("register normalizes email, hashes password, and creates a default trial credit account", async () => {
   const { repo, service } = makeService();
 
   const result = await service.register({
@@ -43,12 +43,58 @@ test("register normalizes email, hashes password, and creates an empty credit ac
 
   assert.deepEqual(await repo.getCreditAccount("user_1"), {
     userId: "user_1",
-    balance: 0,
+    balance: 3,
     frozenCredits: 0,
-    totalRedeemed: 0,
+    totalRedeemed: 3,
     totalCaptured: 0,
     updatedAt: NOW,
   });
+});
+
+test("register uses configured initial credits for new accounts", async () => {
+  const { repo, service } = makeService();
+  await repo.saveSystemSetting({
+    key: "users.initial_credits",
+    value: 7,
+    description: "Initial available credits for newly registered users",
+    updatedByUserId: "admin_1",
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+
+  await service.register({
+    email: "user@example.test",
+    password: "correct horse battery staple",
+  });
+
+  assert.deepEqual(await repo.getCreditAccount("user_1"), {
+    userId: "user_1",
+    balance: 7,
+    frozenCredits: 0,
+    totalRedeemed: 7,
+    totalCaptured: 0,
+    updatedAt: NOW,
+  });
+});
+
+test("register falls back to trial default when configured initial credits are invalid", async () => {
+  const { repo, service } = makeService();
+  await repo.saveSystemSetting({
+    key: "users.initial_credits",
+    value: -1,
+    description: "Initial available credits for newly registered users",
+    updatedByUserId: "admin_1",
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+
+  await service.register({
+    email: "user@example.test",
+    password: "correct horse battery staple",
+  });
+
+  assert.equal((await repo.getCreditAccount("user_1"))?.balance, 3);
+  assert.equal((await repo.getCreditAccount("user_1"))?.totalRedeemed, 3);
 });
 
 test("register rejects duplicate normalized email", async () => {

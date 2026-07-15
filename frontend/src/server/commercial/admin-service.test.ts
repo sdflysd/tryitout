@@ -1337,6 +1337,44 @@ test("admin can configure platform models exposed to users", async () => {
   );
 });
 
+test("admin can configure initial credits for future registrations", async () => {
+  const { repo, service } = createScenario();
+
+  const settings = await service.updateInitialUserCredits({
+    actorUserId: "admin_1",
+    initialCredits: 5,
+    requestContext: {
+      ipHash: "ip_hash_1",
+      userAgent: "AdminConsole/1.0",
+    },
+  });
+
+  assert.deepEqual(settings.items.find((item) => item.key === "users.initial_credits"), {
+    key: "users.initial_credits",
+    value: 5,
+    description: "Initial available credits for newly registered users",
+    updatedByUserId: "admin_1",
+    configured: true,
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  });
+  assert.equal((await repo.getSystemSetting("users.initial_credits"))?.value, 5);
+  assert.deepEqual(await repo.listAdminAuditLogs(), [
+    {
+      id: "admin_audit_log_1",
+      actorUserId: "admin_1",
+      action: "system_setting_updated",
+      targetType: "system_setting",
+      targetId: "users.initial_credits",
+      metadata: {
+        initialCredits: 5,
+      },
+      ipHash: "ip_hash_1",
+      userAgent: "AdminConsole/1.0",
+      createdAt: "2026-07-07T00:01:00.000Z",
+    },
+  ]);
+});
+
 test("admin can publish repository-backed model profiles to users", async () => {
   const { repo, service } = createScenario();
   const provider = await service.savePlatformModelProvider({

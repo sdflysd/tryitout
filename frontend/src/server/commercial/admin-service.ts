@@ -22,6 +22,11 @@ import {
   encryptSecret,
   maskSecret,
 } from "./secrets.js";
+import {
+  INITIAL_USER_CREDITS_SETTING_DESCRIPTION,
+  INITIAL_USER_CREDITS_SETTING_KEY,
+  resolveInitialUserCredits,
+} from "./system-settings.js";
 import type {
   AccessCodeService,
   CreateAccessCodeBatchInput,
@@ -512,6 +517,12 @@ export interface UpdatePlatformModelsInput {
   requestContext?: AdminRequestContext;
 }
 
+export interface UpdateInitialUserCreditsInput {
+  actorUserId: string;
+  initialCredits: number;
+  requestContext?: AdminRequestContext;
+}
+
 export type AdminPlatformProviderType = Extract<
   AiProviderType,
   "gemini" | "anthropic" | "openai_compatible"
@@ -625,6 +636,7 @@ const KNOWN_SYSTEM_SETTING_KEYS: Array<{
   key: string;
   description: string;
 }> = [
+  { key: INITIAL_USER_CREDITS_SETTING_KEY, description: INITIAL_USER_CREDITS_SETTING_DESCRIPTION },
   { key: PLATFORM_MODEL_SETTING_KEY, description: "Platform model profiles enabled for users" },
   { key: "queue.paused", description: "Pause commercial queue" },
   { key: "commercial.mode", description: "Commercial mode runtime flag" },
@@ -1309,7 +1321,13 @@ export class CommercialAdminService {
     const items = await Promise.all(
       KNOWN_SYSTEM_SETTING_KEYS.map(async (known) => {
         const setting = await this.repository.getSystemSetting(known.key);
-        return toAdminSettingItem(known, setting);
+        return toAdminSettingItem(
+          known,
+          setting,
+          known.key === INITIAL_USER_CREDITS_SETTING_KEY
+            ? resolveInitialUserCredits(setting?.value)
+            : undefined,
+        );
       }),
     );
     const [providers, profileRecords] = await Promise.all([
@@ -1385,6 +1403,40 @@ export class CommercialAdminService {
       targetId: PLATFORM_MODEL_SETTING_KEY,
       metadata: {
         enabledModelProfileIds,
+      },
+      ipHash: input.requestContext?.ipHash,
+      userAgent: input.requestContext?.userAgent,
+    });
+
+    return this.getSettings();
+  }
+
+  async updateInitialUserCredits(
+    input: UpdateInitialUserCreditsInput,
+  ): Promise<AdminSettingsResult> {
+    validateRequired(input.actorUserId, "Actor user id");
+    if (!Number.isInteger(input.initialCredits) || input.initialCredits < 0) {
+      throw new CommercialAdminServiceError(
+        "invalid_admin_input",
+        "Initial credits must be a non-negative integer",
+      );
+    }
+    const nowIso = this.currentDate().toISOString();
+    await this.repository.saveSystemSetting({
+      key: INITIAL_USER_CREDITS_SETTING_KEY,
+      value: input.initialCredits,
+      description: INITIAL_USER_CREDITS_SETTING_DESCRIPTION,
+      updatedByUserId: input.actorUserId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    await this.auditService.append({
+      actorUserId: input.actorUserId,
+      action: "system_setting_updated",
+      targetType: "system_setting",
+      targetId: INITIAL_USER_CREDITS_SETTING_KEY,
+      metadata: {
+        initialCredits: input.initialCredits,
       },
       ipHash: input.requestContext?.ipHash,
       userAgent: input.requestContext?.userAgent,
@@ -2464,11 +2516,12 @@ function toAdminFeedbackItem(
 function toAdminSettingItem(
   known: { key: string; description: string },
   setting: SystemSettingRecord | undefined,
+  defaultValue?: unknown,
 ): AdminSettingItem {
   if (setting === undefined) {
     return {
       key: known.key,
-      value: undefined,
+      value: defaultValue,
       description: known.description,
       configured: false,
     };

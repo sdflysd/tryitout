@@ -32,6 +32,8 @@ import {
 } from "./admin-client.js";
 import { getAdminCopy, type AdminCopy } from "./admin-copy.js";
 
+type UserPanel = "create" | "edit" | "bulk" | "credits";
+
 interface UsersPageProps {
   users?: AdminUserRowDto[];
   fetchUsers?: () => Promise<AdminUserRowDto[]>;
@@ -39,6 +41,8 @@ interface UsersPageProps {
   updateUser?: (userId: string, input: AdminUpdateUserInputDto) => Promise<AdminUserRowDto>;
   bulkUsers?: (input: AdminBulkUsersInputDto) => Promise<{ updatedUserIds: string[]; skipped: Array<{ id: string; reason: string }> }>;
   language?: Language;
+  initialPanel?: UserPanel;
+  initialSelectedUserId?: string;
 }
 
 const EMPTY_USERS: AdminUserRowDto[] = [];
@@ -51,8 +55,6 @@ const FEATURES: AdminCommercialFeatureDto[] = [
   "admin_ops",
 ];
 
-type UserPanel = "create" | "edit" | "bulk" | "credits";
-
 export default function UsersPage({
   users,
   fetchUsers = fetchAdminUsers,
@@ -60,8 +62,11 @@ export default function UsersPage({
   updateUser = updateAdminUser,
   bulkUsers = bulkAdminUsers,
   language,
+  initialPanel,
+  initialSelectedUserId: initialSelectedUserIdProp,
 }: UsersPageProps) {
   const copy = getAdminCopy(language);
+  const initialSelectedUser = users?.find((user) => user.id === initialSelectedUserIdProp) ?? users?.[0];
   const [rows, setRows] = useState<AdminUserRowDto[]>(users ?? EMPTY_USERS);
   const [isLoading, setIsLoading] = useState(users === undefined);
   const [loadError, setLoadError] = useState("");
@@ -84,9 +89,10 @@ export default function UsersPage({
     reason: "",
   });
   const [editForm, setEditForm] = useState({
-    role: "user" as NonNullable<AdminUserRowDto["role"]>,
-    tier: "basic" as AdminUserTierDto,
-    features: [] as AdminCommercialFeatureDto[],
+    role: initialSelectedUser?.role ?? "user" as NonNullable<AdminUserRowDto["role"]>,
+    tier: initialSelectedUser?.tier ?? "basic" as AdminUserTierDto,
+    features: initialSelectedUser?.features ?? [] as AdminCommercialFeatureDto[],
+    creditAdjustmentAmount: 0,
     reason: "",
   });
   const [bulkForm, setBulkForm] = useState({
@@ -97,8 +103,8 @@ export default function UsersPage({
     reason: "",
   });
   const [statusMessage, setStatusMessage] = useState("");
-  const [selectedUserId, setSelectedUserId] = useState(users?.[0]?.id ?? "");
-  const [activePanel, setActivePanel] = useState<UserPanel | undefined>();
+  const [selectedUserId, setSelectedUserId] = useState(initialSelectedUser?.id ?? "");
+  const [activePanel, setActivePanel] = useState<UserPanel | undefined>(initialPanel);
   const selectedUser = rows.find((user) => user.id === selectedUserId) ?? rows[0];
   const visibleRows = rows.filter((user) => {
     const haystack = `${user.email} ${user.id}`.toLowerCase();
@@ -204,12 +210,29 @@ export default function UsersPage({
       return;
     }
     setStatusMessage(copy.users.actions.updating);
-    const updated = await updateUser(selectedUser.id, {
+    let updated = await updateUser(selectedUser.id, {
       role: editForm.role,
       tier: editForm.tier,
       features: editForm.features,
       reason: editForm.reason,
     });
+    if (editForm.creditAdjustmentAmount !== 0) {
+      const result = await adjustAdminUserCredits(selectedUser.id, {
+        amount: editForm.creditAdjustmentAmount,
+        reason: editForm.reason || "admin edit credit adjustment",
+        idempotencyKey: `admin-edit-credit-${selectedUser.id}-${Date.now()}`,
+      });
+      updated = {
+        ...updated,
+        availableCredits: result.account.balance,
+        frozenCredits: result.account.frozenCredits,
+        recentActivityAt: result.ledger.createdAt,
+      };
+      setEditForm((current) => ({
+        ...current,
+        creditAdjustmentAmount: 0,
+      }));
+    }
     replaceRow(updated);
     setActivePanel(undefined);
     setStatusMessage(copy.users.actions.updated);
@@ -415,6 +438,7 @@ export default function UsersPage({
                           role: user.role ?? "user",
                           tier: user.tier,
                           features: user.features ?? [],
+                          creditAdjustmentAmount: 0,
                           reason: "",
                         });
                         setActivePanel("edit");
@@ -536,6 +560,7 @@ interface UserActionDrawerProps {
     role: NonNullable<AdminUserRowDto["role"]>;
     tier: AdminUserTierDto;
     features: AdminCommercialFeatureDto[];
+    creditAdjustmentAmount: number;
     reason: string;
   };
   bulkForm: {
@@ -668,6 +693,7 @@ function UserActionDrawer({
                         role: nextUser.role ?? "user",
                         tier: nextUser.tier,
                         features: nextUser.features ?? [],
+                        creditAdjustmentAmount: 0,
                         reason: editForm.reason,
                       });
                     }
@@ -691,6 +717,26 @@ function UserActionDrawer({
                   features: setSelectedFeatures(editForm.features, feature, checked),
                 })}
               />
+              <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div>
+                  <div className="text-xs font-black text-slate-950">{copy.users.creditAdjustment.title}</div>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-slate-600">{copy.users.creditAdjustment.positiveNegative}</p>
+                </div>
+                <div className="grid gap-2 md:grid-cols-3">
+                  <ActivityCell label={copy.users.creditAdjustment.currentAvailable} value={selectedUser?.availableCredits ?? 0} />
+                  <ActivityCell label={copy.users.creditAdjustment.frozenContext} value={selectedUser?.frozenCredits ?? 0} />
+                  <ActivityCell label={copy.users.creditAdjustment.projectedAvailable} value={(selectedUser?.availableCredits ?? 0) + editForm.creditAdjustmentAmount} />
+                </div>
+                <Field label={copy.users.creditAdjustment.amount}>
+                  <input
+                    name="edit-credit-adjustment"
+                    className="admin-input"
+                    type="number"
+                    value={editForm.creditAdjustmentAmount}
+                    onChange={(event) => setEditForm({ ...editForm, creditAdjustmentAmount: Number(event.target.value) })}
+                  />
+                </Field>
+              </div>
               <Field label={copy.users.form.reason}>
                 <textarea className="admin-input min-h-20" value={editForm.reason} onChange={(event) => setEditForm({ ...editForm, reason: event.target.value })} />
               </Field>

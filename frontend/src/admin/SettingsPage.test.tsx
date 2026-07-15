@@ -14,6 +14,7 @@ import {
   saveAdminModelProvider,
   testAdminModelProfile,
   testAdminModelProvider,
+  updateAdminInitialUserCredits,
 } from "./admin-client.js";
 import type {
   AdminPlatformModelProfileDto,
@@ -251,6 +252,37 @@ test("settings page separates alerts from success messages", () => {
   assert.ok(warningHtml.includes("text-amber-800"));
 });
 
+test("settings page renders initial credits configuration", () => {
+  const html = renderToStaticMarkup(
+    <SettingsPage
+      settings={{
+        ...makeSettings(),
+        items: [
+          {
+            key: "users.initial_credits",
+            value: 3,
+            description: "Initial available credits for newly registered users",
+            configured: false,
+          },
+        ],
+      }}
+      initialModelProviders={[makeProvider()]}
+      initialModelProfiles={[makeProfile()]}
+    />,
+  );
+
+  for (const text of [
+    "New User Initial Credits",
+    "Future public registrations receive this available balance before access-code redemption.",
+    "Built-in default",
+    "Save Initial Credits",
+  ]) {
+    assert.ok(html.includes(text), `Expected page markup to include ${text}`);
+  }
+  assert.ok(html.includes('name="initial-user-credits"'));
+  assert.ok(html.includes('value="3"'));
+});
+
 test("admin client manages model providers, model discovery, and profiles", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -278,6 +310,21 @@ test("admin client manages model providers, model discovery, and profiles", asyn
           modelId: "anthropic/claude-sonnet-4",
           ok: true,
           checkedAt: "2026-07-07T00:03:00.000Z",
+        },
+      });
+    }
+    if (url.endsWith("/settings/initial-user-credits")) {
+      return jsonResponse({
+        settings: {
+          ...makeSettings(),
+          items: [
+            {
+              key: "users.initial_credits",
+              value: 4,
+              description: "Initial available credits for newly registered users",
+              configured: true,
+            },
+          ],
         },
       });
     }
@@ -309,6 +356,7 @@ test("admin client manages model providers, model discovery, and profiles", asyn
   }, fetchImpl as typeof fetch);
   await softDeleteAdminModelProvider(makeProvider(), fetchImpl as typeof fetch);
   await softDeleteAdminModelProfile(makeProfile(), fetchImpl as typeof fetch);
+  await updateAdminInitialUserCredits(4, fetchImpl as typeof fetch);
 
   assert.deepEqual(
     calls.map((call) => ({
@@ -344,6 +392,9 @@ test("admin client manages model providers, model discovery, and profiles", asyn
       { input: "/api/admin/model-profiles/openrouter_deep", method: "PATCH", credentials: "include", body: JSON.stringify({
         ...makeProfile(),
         status: "disabled",
+      }) },
+      { input: "/api/admin/settings/initial-user-credits", method: "POST", credentials: "include", body: JSON.stringify({
+        initialCredits: 4,
       }) },
     ],
   );

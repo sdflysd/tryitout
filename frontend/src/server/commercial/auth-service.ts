@@ -9,6 +9,10 @@ import {
   createSessionToken as defaultCreateSessionToken,
   hashSessionToken as defaultHashSessionToken,
 } from "./tokens.js";
+import {
+  INITIAL_USER_CREDITS_SETTING_KEY,
+  resolveInitialUserCredits,
+} from "./system-settings.js";
 import type { CommercialSessionRecord, CommercialUserRecord } from "./types.js";
 
 const DEFAULT_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -110,6 +114,9 @@ export class CommercialAuthService {
       );
     }
 
+    const initialCredits = resolveInitialUserCredits(
+      (await this.repository.getSystemSetting(INITIAL_USER_CREDITS_SETTING_KEY))?.value,
+    );
     const now = this.currentDate();
     const nowIso = now.toISOString();
     const user: CommercialUserRecord = {
@@ -128,9 +135,9 @@ export class CommercialAuthService {
     try {
       await this.repository.createUserWithCreditAccount(user, {
         userId: user.id,
-        balance: 0,
+        balance: initialCredits,
         frozenCredits: 0,
-        totalRedeemed: 0,
+        totalRedeemed: initialCredits,
         totalCaptured: 0,
         updatedAt: nowIso,
       });

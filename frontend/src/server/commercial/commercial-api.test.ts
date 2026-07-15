@@ -56,6 +56,7 @@ import {
   handleTestModelProviderRequest,
   handleTestAdminModelProviderRequest,
   handleUpdateAdminUserRequest,
+  handleUpdateAdminInitialUserCreditsRequest,
   handleUpdateAdminPlatformModelsRequest,
 } from "./commercial-api.js";
 import { CommercialTaskService } from "./commercial-task-service.js";
@@ -103,7 +104,7 @@ test("register creates a user DTO without returning password hash", async () => 
   if (!("user" in result.body)) return;
   assert.equal(result.body.user.emailNormalized, "user@example.test");
   assert.equal("passwordHash" in result.body.user, false);
-  assert.equal((await deps.repository.getCreditAccount(result.body.user.id))?.balance, 0);
+  assert.equal((await deps.repository.getCreditAccount(result.body.user.id))?.balance, 3);
 });
 
 test("login returns a secure session cookie descriptor without password hash", async () => {
@@ -201,7 +202,7 @@ test("redeem access code requires auth and applies credits through the ledger", 
   assert.equal(redeemed.status, 200);
   assert.equal("account" in redeemed.body, true);
   if (!("account" in redeemed.body)) return;
-  assert.equal(redeemed.body.account.balance, 9);
+  assert.equal(redeemed.body.account.balance, 12);
   assert.equal(redeemed.body.ledger.entryType, "redeem");
   assert.equal(redeemed.body.redemption.credits, 9);
   assert.equal(redeemed.body.user.tier, "business");
@@ -271,9 +272,9 @@ test("credits endpoint requires auth and returns the account balance", async () 
   assert.deepEqual(result.body, {
     account: {
       userId: "user_1",
-      balance: 0,
+      balance: 3,
       frozenCredits: 0,
-      totalRedeemed: 0,
+      totalRedeemed: 3,
       totalCaptured: 0,
       updatedAt: CREATED_AT,
     },
@@ -282,6 +283,13 @@ test("credits endpoint requires auth and returns the account balance", async () 
 
 test("commercial task creation rejects insufficient credits", async () => {
   const deps = makeDeps();
+  await deps.repository.saveSystemSetting({
+    key: "users.initial_credits",
+    value: 0,
+    description: "Initial available credits for newly registered users",
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   const sessionToken = await loginUser(deps);
   await seedPlatformModelsEnabled(deps);
 
@@ -328,7 +336,7 @@ test("commercial task creation holds credits and returns task status", async () 
   if (!("task" in created.body)) return;
   assert.equal(created.body.task.status, "queued");
   assert.equal(created.body.task.creditCost, 3);
-  assert.equal(created.body.account.balance, 6);
+  assert.equal(created.body.account.balance, 9);
   assert.equal(created.body.account.frozenCredits, 3);
 
   const status = await handleGetCommercialTaskStatusRequest(
@@ -367,7 +375,7 @@ test("commercial task creation rejects when no fresh worker is available", async
     error: "Simulation workers are unavailable. Please retry shortly.",
     code: "worker_unavailable",
   });
-  assert.equal((await deps.repository.getCreditAccount("user_1"))?.balance, 9);
+  assert.equal((await deps.repository.getCreditAccount("user_1"))?.balance, 12);
   assert.equal((await deps.repository.getCreditAccount("user_1"))?.frozenCredits, 0);
 });
 
@@ -676,7 +684,7 @@ test("cancel task requires auth and releases held credits", async () => {
   assert.equal("task" in result.body, true);
   if (!("task" in result.body)) return;
   assert.equal(result.body.task.status, "cancelled");
-  assert.equal(result.body.account?.balance, 9);
+  assert.equal(result.body.account?.balance, 12);
   assert.equal(result.body.account?.frozenCredits, 0);
 });
 
@@ -731,7 +739,7 @@ test("admin overview rejects non-admin sessions and returns operating metrics to
   if (!("overview" in overview.body)) return;
   assert.equal(overview.body.overview.users.total, 2);
   assert.equal(overview.body.overview.users.active, 2);
-  assert.equal(overview.body.overview.credits.totalBalance, 0);
+  assert.equal(overview.body.overview.credits.totalBalance, 6);
 });
 
 test("admin read endpoints reject non-admin sessions and return real safe operations data", async () => {
@@ -920,6 +928,34 @@ test("admin platform model settings drive the public platform model list", async
     publicModels.body.models.map((model) => model.id),
     ["anthropic_sonnet_balanced"],
   );
+});
+
+test("admin initial user credits setting updates through the admin API", async () => {
+  const deps = makeDeps();
+  const adminSession = await loginAdmin(deps);
+
+  const updated = await handleUpdateAdminInitialUserCreditsRequest(
+    request({
+      cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: adminSession },
+      body: {
+        initialCredits: 6,
+      },
+    }),
+    deps,
+  );
+
+  assert.equal(updated.status, 200);
+  assert.equal("settings" in updated.body, true);
+  if (!("settings" in updated.body)) return;
+  assert.deepEqual(updated.body.settings.items.find((item) => item.key === "users.initial_credits"), {
+    key: "users.initial_credits",
+    value: 6,
+    description: "Initial available credits for newly registered users",
+    updatedByUserId: "user_1",
+    configured: true,
+    updatedAt: "2026-07-07T00:03:00.000Z",
+  });
+  assert.equal((await deps.repository.getSystemSetting("users.initial_credits"))?.value, 6);
 });
 
 test("repository-backed platform profiles require admin enablement before appearing publicly", async () => {
@@ -1599,7 +1635,7 @@ test("admin can adjust user credits and list resulting audit logs", async () => 
   assert.equal(adjusted.status, 200);
   assert.equal("account" in adjusted.body, true);
   if (!("account" in adjusted.body)) return;
-  assert.equal(adjusted.body.account.balance, 15);
+  assert.equal(adjusted.body.account.balance, 18);
   assert.equal(adjusted.body.ledger.entryType, "adjustment");
   assert.equal(auditLogs.status, 200);
   assert.equal("auditLogs" in auditLogs.body, true);

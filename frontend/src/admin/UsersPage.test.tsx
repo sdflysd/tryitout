@@ -103,6 +103,27 @@ test("UsersPage keeps mutation forms out of the default table workflow", () => {
   assert.match(html, /Available Credit Adjustment/);
 });
 
+test("UsersPage edit drawer exposes audited available credit adjustment", () => {
+  const html = renderToStaticMarkup(
+    <UsersPage
+      users={[makeUser()]}
+      initialPanel="edit"
+      initialSelectedUserId="user_1"
+      language="en-US"
+    />,
+  );
+
+  for (const text of [
+    "Available Credit Adjustment",
+    "Current available",
+    "Projected available balance",
+  ]) {
+    assert.match(html, new RegExp(text));
+  }
+  assert.match(html, /name="edit-credit-adjustment"/);
+  assert.match(html, /value="0"/);
+});
+
 test("admin client adjusts user credits through the admin endpoint", async () => {
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;

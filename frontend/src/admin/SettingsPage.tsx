@@ -20,6 +20,7 @@ import {
   saveAdminModelProvider,
   testAdminModelProfile,
   testAdminModelProvider,
+  updateAdminInitialUserCredits,
   updateAdminPlatformModels,
   type AdminDiscoveredModelDto,
   type AdminModelProfileTestInputDto,
@@ -39,6 +40,7 @@ interface SettingsPageProps {
   initialStatusMessage?: StatusMessage;
   fetchSettings?: () => Promise<AdminSettingsDto>;
   updatePlatformModels?: (enabledModelProfileIds: string[]) => Promise<AdminSettingsDto>;
+  updateInitialUserCredits?: (initialCredits: number) => Promise<AdminSettingsDto>;
   fetchModelProviders?: () => Promise<AdminPlatformModelProviderDto[]>;
   saveModelProvider?: (input: AdminSaveModelProviderInputDto) => Promise<AdminPlatformModelProviderDto>;
   testModelProvider?: (providerId: string) => Promise<AdminPlatformModelProviderDto>;
@@ -94,6 +96,9 @@ const DEFAULT_PROVIDER_FORM: ProviderFormState = {
   status: "active",
 };
 
+const INITIAL_USER_CREDITS_SETTING_KEY = "users.initial_credits";
+const DEFAULT_INITIAL_USER_CREDITS = 3;
+
 export default function SettingsPage({
   settings,
   initialModelProviders,
@@ -102,6 +107,7 @@ export default function SettingsPage({
   initialStatusMessage,
   fetchSettings = fetchAdminSettings,
   updatePlatformModels = updateAdminPlatformModels,
+  updateInitialUserCredits = updateAdminInitialUserCredits,
   fetchModelProviders = fetchAdminModelProviders,
   saveModelProvider = saveAdminModelProvider,
   testModelProvider = testAdminModelProvider,
@@ -124,8 +130,12 @@ export default function SettingsPage({
     settings === undefined || initialModelProviders === undefined || initialModelProfiles === undefined,
   );
   const [isSavingModels, setIsSavingModels] = useState(false);
+  const [isSavingInitialCredits, setIsSavingInitialCredits] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [statusMessage, setStatusMessage] = useState<StatusMessage | undefined>(initialStatusMessage);
+  const [initialUserCredits, setInitialUserCredits] = useState(() =>
+    readInitialUserCredits(settings ?? EMPTY_SETTINGS),
+  );
   const [providerForm, setProviderForm] = useState<ProviderFormState>(DEFAULT_PROVIDER_FORM);
   const [profileForm, setProfileForm] = useState<ProfileFormState>(() => makeDefaultProfileForm(
     (initialModelProviders ?? settings?.platformModelProviders ?? []).filter((provider) => provider.status === "active"),
@@ -152,6 +162,7 @@ export default function SettingsPage({
   const allProfilesSelected = activeModelProfiles.length > 0 && activeModelProfiles.every((profile) => selectedProfileIds.includes(profile.id));
   const needsProviderConnection = activeModelProviders.length === 0;
   const effectiveEditorMode: EditorMode = needsProviderConnection ? "provider" : editorMode;
+  const initialCreditsSetting = resolvedSettings.items.find((item) => item.key === INITIAL_USER_CREDITS_SETTING_KEY);
 
   useEffect(() => {
     if (
@@ -163,6 +174,7 @@ export default function SettingsPage({
       setModelProviders(initialModelProviders);
       setModelProfiles(initialModelProfiles);
       setEnabledModelProfileIds(settings.platformModels?.enabledModelProfileIds ?? []);
+      setInitialUserCredits(readInitialUserCredits(settings));
       setProviderForm((current) => current.providerConfigId ? current : DEFAULT_PROVIDER_FORM);
       setProfileForm((current) => current.providerConfigId ? current : makeDefaultProfileForm(initialModelProviders.filter((provider) => provider.status === "active")));
       setIsLoading(false);
@@ -183,6 +195,7 @@ export default function SettingsPage({
           setModelProviders(nextProviders);
           setModelProfiles(nextProfiles);
           setEnabledModelProfileIds(nextSettings.platformModels?.enabledModelProfileIds ?? []);
+          setInitialUserCredits(readInitialUserCredits(nextSettings));
           setProfileForm((current) => current.providerConfigId ? current : makeDefaultProfileForm(nextProviders.filter((provider) => provider.status === "active")));
           setLoadError("");
         }
@@ -266,6 +279,28 @@ export default function SettingsPage({
       setLoadError(error instanceof Error ? error.message : "Unable to save fallback model configuration");
     } finally {
       setIsSavingModels(false);
+    }
+  };
+
+  const handleSaveInitialCredits = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsSavingInitialCredits(true);
+    setLoadError("");
+    setStatusMessage(undefined);
+    if (!Number.isInteger(initialUserCredits) || initialUserCredits < 0) {
+      setLoadError("Initial credits must be a non-negative integer.");
+      setIsSavingInitialCredits(false);
+      return;
+    }
+    try {
+      const nextSettings = await updateInitialUserCredits(initialUserCredits);
+      setResolvedSettings(nextSettings);
+      setInitialUserCredits(readInitialUserCredits(nextSettings));
+      setStatusMessage({ tone: "success", text: `New registrations now start with ${initialUserCredits} available credit(s).` });
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Unable to save initial user credits");
+    } finally {
+      setIsSavingInitialCredits(false);
     }
   };
 
@@ -554,6 +589,44 @@ export default function SettingsPage({
           stagedCount={enabledModelProfileIds.length}
           publishedCount={publishedProfiles.length}
         />
+      </section>
+
+      <section className="border border-slate-200 bg-white">
+        <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2 text-sm font-black text-slate-950">
+              <Settings className="h-4 w-4 text-slate-500" aria-hidden="true" />
+              <span>New User Initial Credits</span>
+              <span className="rounded-sm bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">
+                {initialCreditsSetting?.configured ? "Custom value" : "Built-in default"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Future public registrations receive this available balance before access-code redemption.
+            </p>
+          </div>
+          <form onSubmit={(event) => void handleSaveInitialCredits(event)} className="grid gap-2 sm:grid-cols-[160px_auto] sm:items-end">
+            <Field label="Initial credits">
+              <input
+                name="initial-user-credits"
+                className="admin-input"
+                type="number"
+                min={0}
+                step={1}
+                value={initialUserCredits}
+                onChange={(event) => setInitialUserCredits(Number(event.target.value))}
+              />
+            </Field>
+            <button
+              type="submit"
+              disabled={isSavingInitialCredits}
+              className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-slate-950 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              <Save className="h-4 w-4" aria-hidden="true" />
+              {isSavingInitialCredits ? "Saving..." : "Save Initial Credits"}
+            </button>
+          </form>
+        </div>
       </section>
 
       <section className="grid gap-4 2xl:grid-cols-[minmax(360px,0.75fr)_minmax(580px,1.25fr)_360px]">
@@ -1274,6 +1347,13 @@ function makeProfileId(providerName: string, modelId: string): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
   return raw || "model_profile";
+}
+
+function readInitialUserCredits(settings: AdminSettingsDto): number {
+  const value = settings.items.find((item) => item.key === INITIAL_USER_CREDITS_SETTING_KEY)?.value;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : DEFAULT_INITIAL_USER_CREDITS;
 }
 
 function formatValue(value: unknown): string {

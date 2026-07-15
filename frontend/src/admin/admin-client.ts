@@ -785,6 +785,23 @@ export async function updateAdminPlatformModels(
   return body.settings as unknown as AdminSettingsDto;
 }
 
+export async function updateAdminInitialUserCredits(
+  initialCredits: number,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<AdminSettingsDto> {
+  const body = await requestAdminJson(
+    "/api/admin/settings/initial-user-credits",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initialCredits }),
+    },
+    fetchImpl,
+  );
+  assertObjectWithProperty(body, "settings", "Invalid initial user credits settings response");
+  return body.settings as unknown as AdminSettingsDto;
+}
+
 export async function fetchAdminModelProviders(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<AdminPlatformModelProviderDto[]> {
