@@ -430,10 +430,13 @@ export class CommercialTaskService {
       await this.queue.enqueue(toSimulationQueueJob(task, { userInput }));
       return { task };
     }
+    if (task.status === "cancelled") {
+      return this.resumeCancelledTask(task);
+    }
     if (task.status !== "recoverable_failed") {
       throw new CommercialTaskServiceError(
         "invalid_task_transition",
-        "Only queued or recoverable failed tasks can be resumed",
+        "Only queued, recoverable failed, or cancelled tasks can be resumed",
       );
     }
     const userInput = task.userInput;
@@ -456,9 +459,41 @@ export class CommercialTaskService {
     await this.repository.saveCommercialTask(queuedTask);
     await this.queue.enqueue(toSimulationQueueJob(queuedTask, {
       userInput,
-      idempotencyKey: `${queuedTask.idempotencyKey ?? queuedTask.id}:resume:${nowIso}`,
+      idempotencyKey: buildQueueSafeIdempotencyKey(
+        queuedTask.idempotencyKey ?? queuedTask.id,
+        "resume",
+        nowIso,
+      ),
     }));
     return { task: queuedTask };
+  }
+
+  async deleteTaskForUser(input: { taskId: string }): Promise<CommercialSimulationTaskRecord> {
+    validateRequired(input.taskId, "Task id");
+    const task = await this.requireTask(input.taskId);
+    if (task.userDeletedAt !== undefined) {
+      return task;
+    }
+    if (
+      task.status !== "completed" &&
+      task.status !== "failed" &&
+      task.status !== "cancelled" &&
+      task.status !== "refunded"
+    ) {
+      throw new CommercialTaskServiceError(
+        "invalid_task_transition",
+        "Only finished tasks can be deleted from the user task list",
+      );
+    }
+
+    const nowIso = this.currentIso();
+    const hiddenTask: CommercialSimulationTaskRecord = {
+      ...task,
+      userDeletedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await this.repository.saveCommercialTask(hiddenTask);
+    return hiddenTask;
   }
 
   async retryTask(input: RetryCommercialTaskInput): Promise<CreateCommercialTaskResult> {
@@ -620,6 +655,87 @@ export class CommercialTaskService {
     });
   }
 
+  private async resumeCancelledTask(
+    task: CommercialSimulationTaskRecord,
+  ): Promise<ResumeCommercialTaskResult> {
+    const userInput = task.userInput;
+    if (userInput === undefined) {
+      throw new CommercialTaskServiceError(
+        "invalid_task_input",
+        "Cancelled task is missing original user input",
+      );
+    }
+
+    const nowIso = this.currentIso();
+    const user = await this.repository.getEffectiveUser(task.userId, nowIso);
+    if (!user || user.status !== "active") {
+      throw new CommercialTaskServiceError("user_not_active", "User is not active");
+    }
+    await this.assertProviderSelectionAllowed({
+      user,
+      providerMode: task.providerMode,
+      modelSelection: task.modelSelection,
+    });
+    const activeTask = await this.repository.findActiveCommercialTaskByUserId(task.userId);
+    if (activeTask !== undefined && activeTask.id !== task.id) {
+      throw new CommercialTaskServiceError(
+        "active_task_exists",
+        "User already has an active simulation task",
+      );
+    }
+
+    const chargeableTask: CommercialSimulationTaskRecord = {
+      ...task,
+      creditHoldLedgerId: undefined,
+      userDeletedAt: undefined,
+      updatedAt: nowIso,
+    };
+    await this.repository.saveCommercialTask(chargeableTask);
+
+    const queueIdempotencyKey = buildQueueSafeIdempotencyKey(
+      task.idempotencyKey ?? task.id,
+      "continue",
+      nowIso,
+    );
+    try {
+      await this.creditService.holdCreditsForTask({
+        userId: task.userId,
+        taskId: task.id,
+        amount: task.creditCost,
+        idempotencyKey: `${queueIdempotencyKey}_hold`,
+        reason: "simulation_task_continue",
+        metadata: { taskId: task.id },
+      });
+    } catch (error) {
+      throw mapCreditError(error);
+    }
+
+    const heldTask = await this.requireTask(task.id);
+    const queuedTask: CommercialSimulationTaskRecord = {
+      ...heldTask,
+      status: "queued",
+      errorCode: undefined,
+      completedAt: undefined,
+      queuedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await this.repository.saveCommercialTask(queuedTask);
+    try {
+      await this.queue.enqueue(toSimulationQueueJob(queuedTask, {
+        userInput,
+        idempotencyKey: queueIdempotencyKey,
+      }));
+    } catch (error) {
+      await this.releaseHoldForFailedEnqueue(queuedTask);
+      throw new CommercialTaskServiceError(
+        "queue_enqueue_failed",
+        error instanceof Error ? error.message : "Queue enqueue failed",
+      );
+    }
+
+    return { task: await this.requireTask(task.id) };
+  }
+
   private async releaseOpenHold(
     task: CommercialSimulationTaskRecord,
     reason: string,
@@ -688,6 +804,16 @@ function requireHoldLedgerId(task: CommercialSimulationTaskRecord): string {
     );
   }
   return task.creditHoldLedgerId;
+}
+
+function buildQueueSafeIdempotencyKey(
+  base: string,
+  action: string,
+  timestamp: string,
+): string {
+  return `${base}_${action}_${timestamp}`
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_");
 }
 
 function validateRequired(value: string, label: string): void {

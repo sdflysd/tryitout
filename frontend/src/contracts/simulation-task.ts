@@ -38,6 +38,7 @@ export interface CreateSimulationTaskResponse {
 
 export interface SimulationTaskStatusResponse {
   simulationId: string;
+  displayTitle?: string;
   scenarioType: SimulationType;
   mode: SimulationExecutionMode;
   status: SimulationTaskStatus;

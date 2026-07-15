@@ -236,10 +236,12 @@ type SaveModelProviderBody = {
 };
 
 type CommercialSimulationTaskStatusDto = CommercialSimulationTaskRecord & {
+  displayTitle?: string;
   currentStageIndex?: number;
   currentStepName?: SimulationProgressStep;
   progressPercent?: number;
   progressMessage?: string;
+  recoverable?: boolean;
 };
 
 const SIMULATION_PROGRESS_STEPS = new Set<SimulationProgressStep>([
@@ -1475,7 +1477,8 @@ export async function handleListCommercialTasksRequest(
   }
 
   try {
-    const tasks = await deps.repository.listCommercialTasks(auth.user.id);
+    const tasks = (await deps.repository.listCommercialTasks(auth.user.id))
+      .filter((task) => task.userDeletedAt === undefined);
     const sorted = [...tasks].sort(compareCommercialTasksForUserList);
     return {
       status: 200,
@@ -1596,6 +1599,31 @@ export async function handleCancelCommercialTaskRequest(
         account: result.release?.account,
         releaseLedger: result.release?.ledger,
       },
+    };
+  } catch (error) {
+    return mapTaskError(error);
+  }
+}
+
+export async function handleDeleteCommercialTaskRequest(
+  taskId: string,
+  request: CommercialApiRequest,
+  deps: CommercialApiDeps,
+): Promise<CommercialApiResult<{ task: CommercialSimulationTaskRecord } | CommercialApiErrorBody>> {
+  const auth = await requireUser(request, deps);
+  if (auth.ok === false) {
+    return auth.result;
+  }
+
+  try {
+    const existingTask = await deps.taskService.getStatus(taskId);
+    if (existingTask.userId !== auth.user.id) {
+      return notFound("Task not found", "task_not_found");
+    }
+
+    return {
+      status: 200,
+      body: { task: await deps.taskService.deleteTaskForUser({ taskId }) },
     };
   } catch (error) {
     return mapTaskError(error);
@@ -2476,6 +2504,7 @@ async function decorateTaskProgress(
 
   return {
     ...task,
+    displayTitle: getTaskDisplayTitle(task),
     ...(latestProgressRun && isSimulationProgressStep(latestProgressRun.stepName)
       ? { currentStepName: latestProgressRun.stepName }
       : {}),
@@ -2484,7 +2513,25 @@ async function decorateTaskProgress(
       : {}),
     progressPercent: progressPercent ?? getCommercialTaskProgressPercent(task.status),
     ...(progressMessage !== undefined ? { progressMessage } : {}),
+    recoverable: isTaskResumable(task),
   };
+}
+
+function getTaskDisplayTitle(task: CommercialSimulationTaskRecord): string | undefined {
+  const summaryTitle = typeof task.inputSummary?.title === "string"
+    ? task.inputSummary.title
+    : undefined;
+  const title = summaryTitle ?? (task.userInput ? titleForUserInput(task.userInput) : undefined);
+  const normalized = title?.trim();
+  return normalized ? normalized.slice(0, 120) : undefined;
+}
+
+function isTaskResumable(task: CommercialSimulationTaskRecord): boolean {
+  return (
+    task.status === "queued" ||
+    task.status === "recoverable_failed" ||
+    (task.status === "cancelled" && task.userInput !== undefined)
+  );
 }
 
 function findLatestProgressStepRun(

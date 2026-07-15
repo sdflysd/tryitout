@@ -2,10 +2,13 @@ import React from "react";
 import {
   Activity,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
   FileText,
   ListChecks,
   LoaderCircle,
   RefreshCcw,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
@@ -25,6 +28,7 @@ interface TaskCenterProps {
   onRetry: (task: SimulationTaskStatusResponse) => void;
   onCancel: (task: SimulationTaskStatusResponse) => void;
   onViewReport: (task: SimulationTaskStatusResponse) => void;
+  onDelete?: (task: SimulationTaskStatusResponse) => void;
 }
 
 type TaskCenterCopy = {
@@ -38,10 +42,15 @@ type TaskCenterCopy = {
   retry: string;
   cancel: string;
   report: string;
+  continueTask: string;
+  delete: string;
+  expand: (count: number) => string;
+  collapse: string;
   progressActionLabel: (taskId: string) => string;
   retryActionLabel: (taskId: string) => string;
   cancelActionLabel: (taskId: string) => string;
   reportActionLabel: (taskId: string) => string;
+  deleteActionLabel: (taskId: string) => string;
   progressbarLabel: (taskId: string) => string;
   mode: Record<SimulationTaskStatusResponse["mode"], string>;
   scenario: Record<SimulationTaskStatusResponse["scenarioType"], string>;
@@ -60,10 +69,15 @@ const TASK_CENTER_COPY = {
     retry: "重试",
     cancel: "取消",
     report: "报告",
+    continueTask: "继续",
+    delete: "删除",
+    expand: (count: number) => `展开全部 ${count} 个`,
+    collapse: "收起",
     progressActionLabel: (taskId: string) => `查看任务进度 ${taskId}`,
     retryActionLabel: (taskId: string) => `重试任务 ${taskId}`,
     cancelActionLabel: (taskId: string) => `取消任务 ${taskId}`,
     reportActionLabel: (taskId: string) => `查看报告 ${taskId}`,
+    deleteActionLabel: (taskId: string) => `删除任务 ${taskId}`,
     progressbarLabel: (taskId: string) => `任务进度 ${taskId}`,
     mode: {
       enabled: "智能体",
@@ -95,10 +109,15 @@ const TASK_CENTER_COPY = {
     retry: "Retry",
     cancel: "Cancel",
     report: "Report",
+    continueTask: "Continue",
+    delete: "Delete",
+    expand: (count: number) => `Show all ${count}`,
+    collapse: "Collapse",
     progressActionLabel: (taskId: string) => `View progress ${taskId}`,
     retryActionLabel: (taskId: string) => `Retry task ${taskId}`,
     cancelActionLabel: (taskId: string) => `Cancel task ${taskId}`,
     reportActionLabel: (taskId: string) => `View report ${taskId}`,
+    deleteActionLabel: (taskId: string) => `Delete task ${taskId}`,
     progressbarLabel: (taskId: string) => `Task progress ${taskId}`,
     mode: {
       enabled: "Agent",
@@ -121,6 +140,8 @@ const TASK_CENTER_COPY = {
   },
 } satisfies Record<Language, TaskCenterCopy>;
 
+const DEFAULT_VISIBLE_TASK_COUNT = 5;
+
 const STATUS_TONE = {
   queued: "border-slate-300/25 bg-slate-300/10 text-slate-100",
   running: "border-cyan-300/30 bg-cyan-300/12 text-cyan-100",
@@ -141,12 +162,20 @@ export default function TaskCenter({
   onRetry,
   onCancel,
   onViewReport,
+  onDelete,
 }: TaskCenterProps) {
+  const [isExpanded, setIsExpanded] = React.useState(false);
+
   if (tasks.length === 0 && !error && !isLoading) {
     return null;
   }
 
   const copy = TASK_CENTER_COPY[language];
+  const canFold = tasks.length > DEFAULT_VISIBLE_TASK_COUNT;
+  const visibleTasks = canFold && !isExpanded
+    ? tasks.slice(0, DEFAULT_VISIBLE_TASK_COUNT)
+    : tasks;
+  const hiddenTaskCount = tasks.length - visibleTasks.length;
 
   return (
     <section
@@ -167,17 +196,34 @@ export default function TaskCenter({
           </div>
         </div>
 
-        {onRefresh && (
-          <button
-            id="btn-task-center-refresh"
-            type="button"
-            onClick={onRefresh}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-[11px] font-black text-white/66 transition-colors hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-100"
-          >
-            <RefreshCcw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} aria-hidden="true" />
-            <span>{copy.refresh}</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canFold && (
+            <button
+              id="btn-task-center-toggle"
+              type="button"
+              aria-expanded={isExpanded}
+              onClick={() => setIsExpanded((current) => !current)}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-[11px] font-black text-white/66 transition-colors hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-100"
+            >
+              {isExpanded
+                ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />}
+              <span>{isExpanded ? copy.collapse : copy.expand(tasks.length)}</span>
+            </button>
+          )}
+
+          {onRefresh && (
+            <button
+              id="btn-task-center-refresh"
+              type="button"
+              onClick={onRefresh}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-[11px] font-black text-white/66 transition-colors hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-100"
+            >
+              <RefreshCcw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} aria-hidden="true" />
+              <span>{copy.refresh}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -189,14 +235,20 @@ export default function TaskCenter({
 
       {tasks.length > 0 && (
         <div className="mt-4 divide-y divide-white/10">
-          {tasks.map((task) => renderTaskRow({
+          {visibleTasks.map((task) => renderTaskRow({
             task,
             copy,
             onViewProgress,
             onRetry,
             onCancel,
             onViewReport,
+            onDelete,
           }))}
+        </div>
+      )}
+      {hiddenTaskCount > 0 && (
+        <div className="mt-3 text-center text-[11px] font-semibold text-white/38">
+          {copy.expand(hiddenTaskCount)}
         </div>
       )}
     </section>
@@ -210,6 +262,7 @@ function renderTaskRow({
   onRetry,
   onCancel,
   onViewReport,
+  onDelete,
 }: {
   task: SimulationTaskStatusResponse;
   copy: TaskCenterCopy;
@@ -217,12 +270,20 @@ function renderTaskRow({
   onRetry: (task: SimulationTaskStatusResponse) => void;
   onCancel: (task: SimulationTaskStatusResponse) => void;
   onViewReport: (task: SimulationTaskStatusResponse) => void;
+  onDelete?: (task: SimulationTaskStatusResponse) => void;
 }) {
-  const canViewProgress = task.status !== "completed";
+  const canViewProgress = task.status === "queued" || task.status === "running" || task.status === "paused";
   const canRetry = task.status === "queued" || task.recoverable;
   const canCancel = task.status === "running";
   const canViewReport = task.status === "completed";
+  const canDelete =
+    onDelete !== undefined &&
+    (task.status === "completed" || task.status === "failed" || task.status === "cancelled");
   const progressPercent = clampProgress(task.progressPercent);
+  const displayTitle = getTaskDisplayTitle(task, copy);
+  const retryLabel = task.status === "cancelled" || task.status === "recoverable_failed"
+    ? copy.continueTask
+    : copy.retry;
 
   return (
     <div
@@ -243,12 +304,12 @@ function renderTaskRow({
           </span>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center">
-          <span className="truncate font-mono text-xs font-black text-white/80">
-            {task.simulationId}
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className="truncate text-xs font-black text-white/84">
+            {displayTitle}
           </span>
-          <span className="font-mono text-[10px] font-semibold text-white/34">
-            {copy.updated} {formatTaskTime(task.updatedAt)}
+          <span className="truncate font-mono text-[10px] font-semibold text-white/34">
+            {task.simulationId} · {copy.updated} {formatTaskTime(task.updatedAt)}
           </span>
         </div>
 
@@ -286,7 +347,7 @@ function renderTaskRow({
         {canRetry && (
           <TaskActionButton
             id={`btn-task-retry-${task.simulationId}`}
-            label={copy.retry}
+            label={retryLabel}
             accessibleLabel={copy.retryActionLabel(task.simulationId)}
             tone="amber"
             onClick={() => onRetry(task)}
@@ -313,12 +374,33 @@ function renderTaskRow({
             icon={<FileText className="h-3.5 w-3.5" aria-hidden="true" />}
           />
         )}
+        {canDelete && (
+          <TaskActionButton
+            id={`btn-task-delete-${task.simulationId}`}
+            label={copy.delete}
+            accessibleLabel={copy.deleteActionLabel(task.simulationId)}
+            tone="rose"
+            onClick={() => onDelete(task)}
+            icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+          />
+        )}
         {task.status === "running" && (
           <LoaderCircle className="h-4 w-4 animate-spin text-cyan-100/72" aria-hidden="true" />
         )}
       </div>
     </div>
   );
+}
+
+function getTaskDisplayTitle(
+  task: SimulationTaskStatusResponse,
+  copy: TaskCenterCopy,
+): string {
+  const title = task.displayTitle?.trim();
+  if (title) {
+    return title;
+  }
+  return `${copy.scenario[task.scenarioType]} ${task.simulationId.slice(-8)}`;
 }
 
 function TaskActionButton({

@@ -16,6 +16,7 @@ Current order:
 6. `006_timed_access_code_entitlements.sql` adds post-redemption entitlement windows for time-limited access-code grants.
 7. `007_user_model_provider_test_error.sql` stores BYOK provider test diagnostics.
 8. `008_commercial_simulation_checkpoints.sql` adds recoverable commercial simulation checkpoints.
+9. `009_commercial_task_user_deleted_at.sql` lets users hide completed task rows from their task list.
 
 `001_commercial_mvp.sql` is a legacy MVP schema kept for historical compatibility. New platform deployments should start from `001_platformized_commercial.sql`; do not apply both initial schemas to the same database.
 
@@ -62,6 +63,7 @@ psql "$DATABASE_URL" -f frontend/db/migrations/005_backfill_access_code_redempti
 psql "$DATABASE_URL" -f frontend/db/migrations/006_timed_access_code_entitlements.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/007_user_model_provider_test_error.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/008_commercial_simulation_checkpoints.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/009_commercial_task_user_deleted_at.sql
 ```
 
 ## Reset Workflow
@@ -81,6 +83,7 @@ psql "$DATABASE_URL" -f frontend/db/migrations/005_backfill_access_code_redempti
 psql "$DATABASE_URL" -f frontend/db/migrations/006_timed_access_code_entitlements.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/007_user_model_provider_test_error.sql
 psql "$DATABASE_URL" -f frontend/db/migrations/008_commercial_simulation_checkpoints.sql
+psql "$DATABASE_URL" -f frontend/db/migrations/009_commercial_task_user_deleted_at.sql
 ```
 
 Never run a drop/reset workflow against staging or production. Production recovery should use backups, point-in-time restore, or forward migrations.

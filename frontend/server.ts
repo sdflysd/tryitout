@@ -25,6 +25,7 @@ import { registerCommercialAdminRoutes } from "./src/server/commercial/admin-rou
 import {
   handleCancelCommercialTaskRequest,
   handleCreateCommercialTaskRequest,
+  handleDeleteCommercialTaskRequest,
   handleDeleteModelProviderRequest,
   handleGetActiveCommercialTaskRequest,
   handleGetCommercialTaskReportRequest,
@@ -518,6 +519,27 @@ app.post("/api/simulation-tasks/:id/cancel", async (req, res) => {
     service: taskService,
   });
   res.status(result.status).json(result.body);
+});
+
+app.delete("/api/simulation-tasks/:id", async (req, res) => {
+  if (resolveSimulationTaskRouteMode(process.env) !== "commercial_task") {
+    return res.status(404).json({
+      error: "Commercial task deletion is unavailable",
+      code: "commercial_task_deletion_unavailable",
+    });
+  }
+  if (!commercialServices.enabled) {
+    return res.status(503).json({
+      error: "Commercial services are unavailable",
+      code: "commercial_services_unavailable",
+    });
+  }
+  const result = await handleDeleteCommercialTaskRequest(
+    req.params.id,
+    toCommercialRequest(req),
+    commercialServices,
+  );
+  return sendCommercialApiResult(res, result);
 });
 
 app.get("/api/simulation-tasks/:id/report", async (req, res) => {

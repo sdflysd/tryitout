@@ -27,6 +27,7 @@ interface HomeViewProps {
   onTaskRetry?: (task: SimulationTaskStatusResponse) => void;
   onTaskCancel?: (task: SimulationTaskStatusResponse) => void;
   onTaskViewReport?: (task: SimulationTaskStatusResponse) => void;
+  onTaskDelete?: (task: SimulationTaskStatusResponse) => void;
 }
 
 type TemplateItem = {
@@ -254,6 +255,7 @@ export default function HomeView({
   onTaskRetry = () => undefined,
   onTaskCancel = () => undefined,
   onTaskViewReport = () => undefined,
+  onTaskDelete = () => undefined,
 }: HomeViewProps) {
   const [activeTab, setActiveTab] = useState<SimulationType>("side_hustle");
   const isEnglish = language === "en-US";
@@ -442,6 +444,7 @@ export default function HomeView({
             onRetry={onTaskRetry}
             onCancel={onTaskCancel}
             onViewReport={onTaskViewReport}
+            onDelete={onTaskDelete}
           />
 
           {historyList.length > 0 && (

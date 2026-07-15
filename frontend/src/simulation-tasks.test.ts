@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   cancelSimulationTask,
   createSimulationTask,
+  deleteSimulationTask,
   fetchActiveSimulationTask,
   fetchSimulationTasks,
   getSimulationTaskReport,
@@ -260,6 +261,25 @@ test("fetchSimulationTasks reads the current user's task list", async () => {
   assert.equal(result[0]?.status, "recoverable_failed");
 });
 
+test("fetchSimulationTasks preserves readable task titles from commercial task summaries", async () => {
+  const fetchImpl = async () => jsonResponse({
+    tasks: [
+      {
+        id: "task_named",
+        scenarioType: "dating",
+        interactionMode: "enabled",
+        status: "completed",
+        inputSummary: { title: "冷战三天后的破冰沟通" },
+        updatedAt: "2026-07-14T08:00:00.000Z",
+      },
+    ],
+  });
+
+  const result = await fetchSimulationTasks(fetchImpl as typeof fetch);
+
+  assert.equal(result[0]?.displayTitle, "冷战三天后的破冰沟通");
+});
+
 test("fetchActiveSimulationTask reads the current commercial active task", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl = async (url: string, init?: RequestInit) => {
@@ -328,7 +348,7 @@ test("getSimulationTaskReport normalizes commercial report responses", async () 
   assert.equal(result.report?.id, "commercial_task_1");
 });
 
-test("resume, cancel, and report clients call durable task endpoints", async () => {
+test("resume, cancel, delete, and report clients call durable task endpoints", async () => {
   const calls: string[] = [];
   const fetchImpl = async (url: string, init?: RequestInit) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
@@ -337,11 +357,13 @@ test("resume, cancel, and report clients call durable task endpoints", async () 
 
   await resumeSimulationTask("sim/a", fetchImpl as typeof fetch);
   await cancelSimulationTask("sim/a", fetchImpl as typeof fetch);
+  await deleteSimulationTask("sim/a", fetchImpl as typeof fetch);
   await getSimulationTaskReport("sim/a", fetchImpl as typeof fetch);
 
   assert.deepEqual(calls, [
     "POST /api/simulation-tasks/sim%2Fa/resume",
     "POST /api/simulation-tasks/sim%2Fa/cancel",
+    "DELETE /api/simulation-tasks/sim%2Fa",
     "GET /api/simulation-tasks/sim%2Fa/report",
   ]);
 });

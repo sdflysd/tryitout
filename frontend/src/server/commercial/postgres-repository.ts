@@ -1694,11 +1694,11 @@ export class PostgresCommercialRepository implements CommercialRepository {
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
           idempotency_key, model_selection, user_input, input_summary, error_code,
-          queued_at, started_at, completed_at, created_at, updated_at
+          queued_at, started_at, completed_at, user_deleted_at, created_at, updated_at
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20
+          $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20, $21
         )
         on conflict (id) do update set
           user_id = excluded.user_id,
@@ -1718,6 +1718,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           queued_at = excluded.queued_at,
           started_at = excluded.started_at,
           completed_at = excluded.completed_at,
+          user_deleted_at = excluded.user_deleted_at,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `,
@@ -1740,6 +1741,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
         task.queuedAt ?? task.createdAt,
         task.startedAt ?? null,
         task.completedAt ?? null,
+        task.userDeletedAt ?? null,
         task.createdAt,
         task.updatedAt,
       ],
@@ -1755,7 +1757,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
           idempotency_key, model_selection, user_input, input_summary, error_code,
-          queued_at, started_at, completed_at, created_at, updated_at
+          queued_at, started_at, completed_at, user_deleted_at, created_at, updated_at
         from simulation_tasks
         where id = $1
       `,
@@ -1774,7 +1776,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
           idempotency_key, model_selection, user_input, input_summary, error_code,
-          queued_at, started_at, completed_at, created_at, updated_at
+          queued_at, started_at, completed_at, user_deleted_at, created_at, updated_at
         from simulation_tasks
         ${userId === undefined ? "" : "where user_id = $1"}
         order by created_at desc, id asc
@@ -1793,7 +1795,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
           idempotency_key, model_selection, user_input, input_summary, error_code,
-          queued_at, started_at, completed_at, created_at, updated_at
+          queued_at, started_at, completed_at, user_deleted_at, created_at, updated_at
         from simulation_tasks
         where idempotency_key = $1
       `,
@@ -1811,7 +1813,7 @@ export class PostgresCommercialRepository implements CommercialRepository {
           id, user_id, scenario_type, interaction_mode, provider_mode, status,
           credit_cost, credit_hold_ledger_id, priority, queue_weight,
           idempotency_key, model_selection, user_input, input_summary, error_code,
-          queued_at, started_at, completed_at, created_at, updated_at
+          queued_at, started_at, completed_at, user_deleted_at, created_at, updated_at
         from simulation_tasks
         where user_id = $1
           and status in ('queued', 'running', 'recoverable_failed')
@@ -3139,6 +3141,7 @@ function mapCommercialTask(row: DbRow): CommercialSimulationTaskRecord {
   assignIfDefined(record, "queuedAt", optionalTimestampField(row, "queued_at", table));
   assignIfDefined(record, "startedAt", optionalTimestampField(row, "started_at", table));
   assignIfDefined(record, "completedAt", optionalTimestampField(row, "completed_at", table));
+  assignIfDefined(record, "userDeletedAt", optionalTimestampField(row, "user_deleted_at", table));
   return record;
 }
 

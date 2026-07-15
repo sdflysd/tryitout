@@ -54,6 +54,8 @@ test("fresh platformized commercial schema includes admin management columns and
 
   assert.match(sql, /'recoverable_failed'/i);
   assert.match(sql, /user_input\s+jsonb/i);
+  assert.match(sql, /user_deleted_at\s+timestamptz/i);
+  assert.match(sql, /simulation_tasks_user_id_user_deleted_at_idx/i);
   assert.match(sql, /simulation_tasks_user_input_object_check/i);
   assert.match(sql, /create\s+table\s+simulation_checkpoints/i);
   assert.match(sql, /simulation_checkpoints_checkpoint_object_check/i);
@@ -91,6 +93,14 @@ test("commercial checkpoint migration adds recoverable status and checkpoint sto
   assert.match(sql, /create\s+table\s+if\s+not\s+exists\s+simulation_checkpoints/i);
   assert.match(sql, /checkpoint\s+jsonb\s+not\s+null/i);
   assert.match(sql, /simulation_checkpoints_task_id_created_at_idx/i);
+});
+
+test("commercial task user deletion migration adds user-hidden task timestamp", () => {
+  const sql = readMigration("009_commercial_task_user_deleted_at.sql");
+
+  assert.match(sql, /alter\s+table\s+simulation_tasks/i);
+  assert.match(sql, /add\s+column\s+if\s+not\s+exists\s+user_deleted_at\s+timestamptz/i);
+  assert.match(sql, /simulation_tasks_user_id_user_deleted_at_idx/i);
 });
 
 test("access-code restore migration updates admin audit action constraint", () => {

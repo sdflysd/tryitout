@@ -54,6 +54,7 @@ import {
 } from "./simulation-analytics";
 import {
   cancelSimulationTask,
+  deleteSimulationTask,
   fetchActiveSimulationTask,
   fetchSimulationTasks,
   getSimulationTaskReport,
@@ -1840,6 +1841,23 @@ export default function App({
     }
   };
 
+  const handleDeleteTaskFromList = async (task: SimulationTaskStatusResponse) => {
+    const requestedUserId = commercialUserIdRef.current;
+    setCommercialStartAttempted(false);
+    setCommercialTasksError("");
+    try {
+      await deleteSimulationTask(task.simulationId);
+    } catch (error) {
+      if (shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)) {
+        setCommercialTasksError(getCommercialErrorMessage(error));
+      }
+      return;
+    }
+    if (shouldApplyCommercialUserSideEffect(requestedUserId, commercialUserIdRef.current)) {
+      await refreshCommercialTasks();
+    }
+  };
+
   const handleCommercialLogin = async (input: CommercialCredentialsDto) => {
     setCommercialBusy(true);
     setCommercialError("");
@@ -2176,6 +2194,9 @@ export default function App({
                 }}
                 onTaskViewReport={(task) => {
                   void handleViewTaskReport(task);
+                }}
+                onTaskDelete={(task) => {
+                  void handleDeleteTaskFromList(task);
                 }}
               />
             </motion.div>

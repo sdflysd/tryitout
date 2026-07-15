@@ -42,6 +42,61 @@ test("TaskCenter renders retry actions for queued and recoverable tasks", () => 
   assert.match(html, /btn-task-retry-recoverable_1/);
 });
 
+test("TaskCenter renders readable task titles and folds long task lists", () => {
+  const html = renderToStaticMarkup(
+    <TaskCenter
+      tasks={[
+        makeTask({ simulationId: "task_1", displayTitle: "AI 简历优化小程序" }),
+        makeTask({ simulationId: "task_2", displayTitle: "冷战三天后的破冰沟通" }),
+        makeTask({ simulationId: "task_3", displayTitle: "考公考研还是直接工作" }),
+        makeTask({ simulationId: "task_4", displayTitle: "小红书穿搭账号" }),
+        makeTask({ simulationId: "task_5", displayTitle: "闲鱼虚拟资料项目" }),
+        makeTask({ simulationId: "task_6", displayTitle: "不应默认露出的第六个任务" }),
+      ]}
+      language="zh-CN"
+      onViewProgress={() => undefined}
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+      onViewReport={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  assert.match(html, /AI 简历优化小程序/);
+  assert.match(html, /task_1/);
+  assert.match(html, /btn-task-center-toggle/);
+  assert.match(html, /展开全部/);
+  assert.doesNotMatch(html, /不应默认露出的第六个任务/);
+});
+
+test("TaskCenter lets cancelled tasks continue or delete without opening failed progress", () => {
+  const html = renderToStaticMarkup(
+    <TaskCenter
+      tasks={[
+        makeTask({
+          simulationId: "cancelled_1",
+          status: "cancelled",
+          progressPercent: 90,
+          recoverable: true,
+          displayTitle: "被取消但可继续的报告",
+        }),
+      ]}
+      language="zh-CN"
+      onViewProgress={() => undefined}
+      onRetry={() => undefined}
+      onCancel={() => undefined}
+      onViewReport={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  assert.match(html, /task-center-row-cancelled_1/);
+  assert.match(html, /btn-task-retry-cancelled_1/);
+  assert.match(html, />继续</);
+  assert.match(html, /btn-task-delete-cancelled_1/);
+  assert.doesNotMatch(html, /btn-task-progress-cancelled_1/);
+});
+
 test("TaskCenter exposes report actions for completed tasks and cancel actions for running tasks", () => {
   const html = renderToStaticMarkup(
     <TaskCenter

@@ -515,7 +515,8 @@ test("resumeTask requeues the same recoverable task with original input and no n
   assert.equal(account?.balance, 7);
   assert.equal(account?.frozenCredits, 3);
   assert.equal(claim?.job.taskId, created.task.id);
-  assert.match(claim?.job.idempotencyKey ?? "", /^task-key-1:resume:/);
+  assert.match(claim?.job.idempotencyKey ?? "", /^task-key-1_resume_/);
+  assert.doesNotMatch(claim?.job.idempotencyKey ?? "", /:/);
   assert.deepEqual(claim?.job.userInput, makeUserInput());
 });
 
@@ -555,6 +556,29 @@ test("cancelling recoverable failed task releases its held credits", async () =>
   assert.equal(cancelled.task.status, "cancelled");
   assert.equal(account?.balance, 10);
   assert.equal(account?.frozenCredits, 0);
+});
+
+test("resumeTask can continue a cancelled task with a new hold and safe queue id", async () => {
+  const { queue, repo, service } = await createScenario({ balance: 10 });
+  const created = await service.createTask(makeCreateInput());
+  await queue.claimNext();
+  await service.markRunning({ taskId: created.task.id });
+  await service.cancelTask({ taskId: created.task.id });
+
+  const resumed = await service.resumeTask({ taskId: created.task.id });
+
+  const account = await repo.getCreditAccount("user_1");
+  const stored = await repo.getCommercialTask(created.task.id);
+  const claim = await queue.claimNext();
+  assert.equal(resumed.task.id, created.task.id);
+  assert.equal(resumed.task.status, "queued");
+  assert.equal(stored?.status, "queued");
+  assert.notEqual(stored?.creditHoldLedgerId, created.task.creditHoldLedgerId);
+  assert.equal(account?.balance, 7);
+  assert.equal(account?.frozenCredits, 3);
+  assert.equal(claim?.job.taskId, created.task.id);
+  assert.match(claim?.job.idempotencyKey ?? "", /^task-key-1_continue_/);
+  assert.doesNotMatch(claim?.job.idempotencyKey ?? "", /:/);
 });
 
 test("retry of failed or refunded task creates a new hold and queue job", async () => {

@@ -155,6 +155,7 @@ export interface CommercialSimulationTaskRecord {
   queuedAt?: string;
   startedAt?: string;
   completedAt?: string;
+  userDeletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

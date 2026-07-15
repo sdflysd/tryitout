@@ -12,6 +12,7 @@ import {
   handleCancelCommercialTaskRequest,
   handleCreateAdminAccessCodeBatchRequest,
   handleCreateCommercialTaskRequest,
+  handleDeleteCommercialTaskRequest,
   handleDisableAdminAccessCodeBatchRequest,
   handleGetAdminCostSummaryRequest,
   handleGetAdminCreditOperationsRequest,
@@ -523,6 +524,7 @@ test("commercial task list endpoint decorates progress and sorts newest first", 
     id: "task_newer",
     userId: user.user.id,
     status: "running",
+    inputSummary: { title: "Should I quit my job?" },
     createdAt: "2026-07-14T06:00:00.000Z",
     updatedAt: "2026-07-14T08:00:00.000Z",
   });
@@ -555,6 +557,7 @@ test("commercial task list endpoint decorates progress and sorts newest first", 
   assert.equal(result.body.tasks[0]?.currentStepName, "generate_report");
   assert.equal(result.body.tasks[0]?.progressPercent, 86);
   assert.equal(result.body.tasks[0]?.progressMessage, "Report generation started.");
+  assert.equal(result.body.tasks[0]?.displayTitle, "Should I quit my job?");
   assert.equal(result.body.tasks[1]?.progressPercent, 5);
 });
 
@@ -606,6 +609,29 @@ test("commercial resume endpoint requeues a recoverable task for the owner", asy
   assert.equal((await deps.queue.claimNext())?.job.taskId, task.id);
 });
 
+test("commercial resume endpoint can continue a cancelled task for the owner", async () => {
+  const deps = makeDeps();
+  const sessionToken = await loginUser(deps);
+  await seedCredits(deps, sessionToken);
+  const task = await createPaidTask(deps, sessionToken);
+  await deps.queue.claimNext();
+  await deps.taskService.markRunning({ taskId: task.id });
+  await deps.taskService.cancelTask({ taskId: task.id });
+
+  const result = await handleResumeCommercialTaskRequest(
+    task.id,
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: sessionToken } }),
+    deps,
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal("ok" in result.body, true);
+  if (!("ok" in result.body)) return;
+  assert.equal(result.body.task?.id, task.id);
+  assert.equal(result.body.task?.status, "queued");
+  assert.equal((await deps.queue.claimNext())?.job.taskId, task.id);
+});
+
 test("task report is returned only to the task owner after completion", async () => {
   const deps = makeDeps();
   const sessionToken = await loginUser(deps);
@@ -652,6 +678,33 @@ test("cancel task requires auth and releases held credits", async () => {
   assert.equal(result.body.task.status, "cancelled");
   assert.equal(result.body.account?.balance, 9);
   assert.equal(result.body.account?.frozenCredits, 0);
+});
+
+test("delete commercial task hides finished tasks from the current user's list", async () => {
+  const deps = makeDeps();
+  const user = await createSignedInUser(deps, "current@example.com");
+  await deps.repository.saveCommercialTask(makeCommercialTask({
+    id: "task_to_delete",
+    userId: user.user.id,
+    status: "cancelled",
+    errorCode: "task_cancelled",
+  }));
+
+  const deleted = await handleDeleteCommercialTaskRequest(
+    "task_to_delete",
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: user.cookie } }),
+    deps,
+  );
+  const listed = await handleListCommercialTasksRequest(
+    request({ cookies: { [COMMERCIAL_SESSION_COOKIE_NAME]: user.cookie } }),
+    deps,
+  );
+  const stored = await deps.repository.getCommercialTask("task_to_delete");
+
+  assert.equal(deleted.status, 200);
+  assert.equal("task" in deleted.body, true);
+  assert.match(stored?.userDeletedAt ?? "", /^2026-07-07T00:/);
+  assert.deepEqual("tasks" in listed.body ? listed.body.tasks.map((task) => task.id) : [], []);
 });
 
 test("admin overview rejects non-admin sessions and returns operating metrics to admins", async () => {

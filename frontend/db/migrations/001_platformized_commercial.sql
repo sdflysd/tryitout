@@ -143,6 +143,7 @@ CREATE TABLE simulation_tasks (
   queued_at timestamptz NOT NULL DEFAULT now(),
   started_at timestamptz,
   completed_at timestamptz,
+  user_deleted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT simulation_tasks_interaction_mode_check CHECK (interaction_mode IN ('legacy', 'enabled')),
@@ -159,6 +160,9 @@ CREATE TABLE simulation_tasks (
   CONSTRAINT simulation_tasks_input_summary_object_check CHECK (jsonb_typeof(input_summary) = 'object'),
   CONSTRAINT simulation_tasks_idempotency_key_unique UNIQUE (idempotency_key)
 );
+
+CREATE INDEX simulation_tasks_user_id_user_deleted_at_idx
+  ON simulation_tasks(user_id, user_deleted_at, updated_at DESC);
 
 CREATE TABLE credit_ledger (
   id text PRIMARY KEY,

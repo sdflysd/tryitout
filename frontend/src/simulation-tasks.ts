@@ -105,6 +105,20 @@ export async function cancelSimulationTask(
   );
 }
 
+export async function deleteSimulationTask(
+  simulationId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SimulationTaskStatusResponse> {
+  const body = await readJsonResponse<unknown>(
+    await fetchImpl(`/api/simulation-tasks/${encodeURIComponent(simulationId)}`, {
+      method: "DELETE",
+      credentials: "include",
+    }),
+  );
+
+  return normalizeSimulationTaskStatusResponse(body);
+}
+
 export class RecoverableSimulationTaskError extends Error {
   readonly simulationId: string;
   readonly errorCode?: string;
@@ -318,13 +332,17 @@ function normalizeSimulationTaskStatusResponse(
       typeof task.progressPercent === "number"
         ? task.progressPercent
         : getCommercialTaskProgressPercent(task.status);
+    const displayTitle = normalizeTaskDisplayTitle(task);
     return {
       simulationId: task.id,
+      ...(displayTitle !== undefined ? { displayTitle } : {}),
       scenarioType: normalizeScenarioType(task.scenarioType),
       mode: task.interactionMode === "enabled" ? "enabled" : "legacy",
       status: normalizeTaskStatus(task.status),
       progressPercent,
-      recoverable: task.status === "recoverable_failed",
+      recoverable: typeof task.recoverable === "boolean"
+        ? task.recoverable
+        : task.status === "recoverable_failed",
       ...(typeof task.currentStepName === "string"
         ? { currentStepName: task.currentStepName }
         : {}),
@@ -344,6 +362,35 @@ function normalizeSimulationTaskStatusResponse(
   }
 
   return body as SimulationTaskStatusResponse;
+}
+
+function normalizeTaskDisplayTitle(task: Record<string, unknown>): string | undefined {
+  const directTitle = typeof task.displayTitle === "string" ? task.displayTitle : undefined;
+  const summaryTitle = isObject(task.inputSummary) && typeof task.inputSummary.title === "string"
+    ? task.inputSummary.title
+    : undefined;
+  const userInputTitle = isObject(task.userInput) ? titleForTaskUserInput(task.userInput) : undefined;
+  const title = directTitle ?? summaryTitle ?? userInputTitle;
+  const normalized = title?.trim();
+  return normalized ? normalized.slice(0, 120) : undefined;
+}
+
+function titleForTaskUserInput(userInput: Record<string, unknown>): string | undefined {
+  if (userInput.type === "side_hustle" && typeof userInput.projectIdea === "string") {
+    return userInput.projectIdea;
+  }
+  if (userInput.type === "dating" && typeof userInput.chatLogOrIssue === "string") {
+    return userInput.chatLogOrIssue;
+  }
+  if (userInput.type === "life_choice") {
+    if (typeof userInput.decisionContext === "string") {
+      return userInput.decisionContext;
+    }
+    if (typeof userInput.optionA === "string" && typeof userInput.optionB === "string") {
+      return `${userInput.optionA} vs ${userInput.optionB}`;
+    }
+  }
+  return undefined;
 }
 
 function normalizeSimulationReportResponse(
